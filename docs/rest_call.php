@@ -1,0 +1,1 @@
+CatalogApplication::create()->run();

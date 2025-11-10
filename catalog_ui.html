@@ -1,0 +1,159 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Product Catalog Manager</title>
+    <link rel="stylesheet" href="assets/css/catalog_ui.css">
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+</head>
+<body>
+    <h1>Product Catalog Manager</h1>
+    <div id="status-message"></div>
+    <div class="search-panel">
+        <h2>Search Catalog</h2>
+        <form id="search-form">
+            <div>
+                Keyword:
+                <input type="text" id="search-query" placeholder="Enter keyword or SKU">
+            </div>
+            <div class="search-scope-group">
+                Scope:
+                <label><input type="checkbox" class="search-scope" value="category" checked> Categories</label>
+                <label><input type="checkbox" class="search-scope" value="series" checked> Series</label>
+                <label><input type="checkbox" class="search-scope" value="product" checked> Products</label>
+            </div>
+            <div>
+                Series Filter:
+                <select id="search-series-select">
+                    <option value="">Any Series</option>
+                </select>
+            </div>
+            <div id="search-field-filters">
+                <div class="search-field-placeholder">Select a series to enable custom field filters.</div>
+            </div>
+            <div id="search-series-meta-filters">
+                <div class="search-field-placeholder">Select a series to enable metadata filters.</div>
+            </div>
+            <div>
+                <button type="submit">Search</button>
+                <button type="button" id="search-reset-button">Reset</button>
+            </div>
+        </form>
+        <div id="search-results"></div>
+    </div>
+    <table class="layout-table">
+        <tr>
+            <td>
+                <h2>Hierarchy</h2>
+                <div id="hierarchy-container">Loading...</div>
+                <h3>Add Node</h3>
+                <form id="node-create-form">
+                    <div>Parent ID (leave empty for root): <input type="text" id="create-parent-id" name="parentId"></div>
+                    <div>Name: <input type="text" id="create-node-name" name="name" required></div>
+                    <div>Type:
+                        <select id="create-node-type" name="type">
+                            <option value="category">category</option>
+                            <option value="series">series</option>
+                        </select>
+                    </div>
+                    <div>Display Order: <input type="number" id="create-display-order" name="displayOrder" value="0"></div>
+                    <div><button type="submit">Add Node</button></div>
+                </form>
+                <h3>Update Selected Node</h3>
+                <form id="node-update-form">
+                    <input type="hidden" id="update-node-id">
+                    <input type="hidden" id="update-node-type-value">
+                    <div>Node ID: <span id="update-node-id-text">None</span></div>
+                    <div>Parent ID: <span id="update-node-parent-id">N/A</span></div>
+                    <div>Type: <span id="update-node-type-text">N/A</span></div>
+                    <div>Name: <input type="text" id="update-node-name" required></div>
+                    <div>Display Order: <input type="number" id="update-node-display-order" value="0"></div>
+                    <div><button type="submit" id="node-update-submit">Save Node</button></div>
+                </form>
+                <div><button type="button" id="node-delete-button">Delete Selected Node</button></div>
+            </td>
+            <td>
+                <h2>Selected Node</h2>
+                <div id="selected-node-details">Select a category or series to view details.</div>
+                <div id="series-management" hidden>
+                    <h3>Series Custom Fields</h3>
+                    <table id="series-fields-table"></table>
+                <form id="series-field-form">
+                    <input type="hidden" id="series-field-id">
+                    <div>Field Key: <input type="text" id="series-field-key" required></div>
+                    <div>Label: <input type="text" id="series-field-label" required></div>
+                    <div>Scope:
+                        <select id="series-field-scope">
+                            <option value="product_attribute">Product Attribute</option>
+                            <option value="series_metadata">Series Metadata</option>
+                        </select>
+                    </div>
+                    <div>Sort Order: <input type="number" id="series-field-sort-order" value="0"></div>
+                    <div>Required: <input type="checkbox" id="series-field-required"></div>
+                    <div><button type="submit" id="series-field-submit">Save Field</button>
+                    <button type="button" id="series-field-clear-button">Clear Field Form</button></div>
+                </form>
+                    <h3>Series Metadata</h3>
+                    <table id="series-metadata-fields-table"></table>
+                    <form id="series-metadata-field-form">
+                        <input type="hidden" id="series-metadata-field-id">
+                        <div>Field Key: <input type="text" id="series-metadata-field-key" required></div>
+                        <div>Label: <input type="text" id="series-metadata-field-label" required></div>
+                        <div>Sort Order: <input type="number" id="series-metadata-field-sort-order" value="0"></div>
+                        <div>Required: <input type="checkbox" id="series-metadata-field-required"></div>
+                        <div><button type="submit" id="series-metadata-field-submit">Save Metadata Field</button>
+                        <button type="button" id="series-metadata-field-clear-button">Clear Metadata Field Form</button></div>
+                    </form>
+                    <form id="series-metadata-form">
+                        <div id="series-metadata-values"></div>
+                        <div><button type="submit" id="series-metadata-save-button">Save Metadata</button>
+                        <button type="button" id="series-metadata-reset-button">Reset</button></div>
+                    </form>
+                    <h3>Products</h3>
+                    <table id="product-list-table"></table>
+                    <form id="product-form">
+                        <input type="hidden" id="product-id">
+                        <div>SKU: <input type="text" id="product-sku" required></div>
+                        <div>Name: <input type="text" id="product-name" required></div>
+                        <div>Description:<br><textarea id="product-description" rows="4" cols="40"></textarea></div>
+                        <div id="product-custom-fields"></div>
+                        <div><button type="submit" id="product-submit">Save Product</button>
+                        <button type="button" id="product-clear-button">Clear Product Form</button></div>
+                    </form>
+                    <div><button type="button" id="product-delete-button">Delete Selected Product</button></div>
+                </div>
+            </td>
+        </tr>
+    </table>
+    <div class="csv-section">
+        <h2>CSV Import / Export</h2>
+        <div class="csv-actions">
+            <button type="button" id="csv-export-button">Export Catalog CSV</button>
+            <form id="csv-import-form" enctype="multipart/form-data">
+                <label for="csv-import-file">Import CSV:</label>
+                <input type="file" id="csv-import-file" accept=".csv">
+                <button type="submit" id="csv-import-submit">Import</button>
+            </form>
+        </div>
+        <div class="csv-history">
+            <h3>CSV History</h3>
+            <table id="csv-history-table">
+                <thead>
+                    <tr>
+                        <th>Type</th>
+                        <th>Name</th>
+                        <th>Timestamp</th>
+                        <th>Size (bytes)</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td colspan="5">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <script src="assets/js/catalog_ui.js"></script>
+</body>
+</html>
+
