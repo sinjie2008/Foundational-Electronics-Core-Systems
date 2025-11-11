@@ -25,3 +25,11 @@
 ## 2025-11-12
 - Stakeholder requested a public JSON API that aggregates categories, series, metadata, product labels, and product data in one response for publishing.
 - Decision: introduce `PublicCatalogService` plus `v1.publicCatalogSnapshot` (GET) to pull a synchronized snapshot by composing hierarchy, field definitions, series metadata values, and products; response remains read-only and unauthenticated.
+
+## 2025-11-13
+- CSV format must now match the provided `storage/csv/products.csv` structure exactly: two fixed columns (`category_path`, `product_name`) followed by any number of product attribute columns such as `acf.length` or `acf.measure_result_0_frequency`.
+- `category_path` encodes the full hierarchy, with the final segment representing the series name and all prior segments representing nested categories; no standalone `series_name` column will be supplied.
+- `product_name` doubles as both SKU and display name—imports must set `product.sku = product.name = product_name`, and exports must emit the same single column without adding SKU/description fields.
+- Attribute columns are product-level only; there are no series metadata columns in this format. Column headers map 1:1 to product custom field keys (stored verbatim), and exports must preserve the order observed in the source CSV when possible.
+- The CSV history UI must list stored files from `storage/csv` with Download/Delete plus a new Restore button that re-imports the stored file by ID (backend to expose `v1.restoreCsv` that pipes the stored file back through the import routine).
+- File naming in storage remains `YYYYMMDDHHMMSS_<type>[_original].csv`; new restore behaviour cannot change this convention.

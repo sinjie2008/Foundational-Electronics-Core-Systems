@@ -2543,16 +2543,12 @@ final class PublicCatalogService
 
 final class CatalogCsvService
 {
-    private const PRODUCT_COLUMN_PREFIXES = ['custom:', 'product:', 'product.'];
-    private const SERIES_META_COLUMN_PREFIXES = ['series_meta:', 'series_meta.'];
-
     private string $storageDir;
 
     public function __construct(
         private mysqli $connection,
         private HierarchyService $hierarchyService,
-        private SeriesFieldService $seriesFieldService,
-        private SeriesAttributeService $seriesAttributeService
+        private SeriesFieldService $seriesFieldService
     ) {
         $this->storageDir = CATALOG_CSV_STORAGE;
         $this->ensureStorageDirectory();
@@ -2674,62 +2670,31 @@ final class CatalogCsvService
 
         $categories = $this->fetchAllCategories();
         $productFieldKeys = $this->fetchAllCustomFieldKeys(SERIES_FIELD_SCOPE_PRODUCT);
-        $seriesMetaFieldKeys = $this->fetchAllCustomFieldKeys(SERIES_FIELD_SCOPE_SERIES);
         $products = $this->fetchProductsWithSeries();
         $customValueMap = $this->fetchProductCustomValues();
-        $seriesIds = array_values(
-            array_unique(
-                array_map(
-                    static fn (array $product): int => (int) $product['series_id'],
-                    $products
-                )
-            )
-        );
-        $seriesMetaPayloads = $this->seriesAttributeService->fetchMetadataPayloads($seriesIds);
-        $seriesMetaValueMap = [];
-        foreach ($seriesMetaPayloads as $seriesId => $payload) {
-            $seriesMetaValueMap[$seriesId] = $payload['values'] ?? [];
-        }
 
         $handle = fopen($filePath, 'wb');
         if ($handle === false) {
             throw new CatalogApiException('CSV_WRITE_ERROR', 'Unable to create export file.', 500);
         }
 
-        $header = [
-            'category_path',
-            'series_name',
-            'series_display_order',
-            'product_sku',
-            'product_name',
-            'product_description',
-        ];
+        $header = ['category_path', 'product_name'];
         foreach ($productFieldKeys as $fieldKey) {
-            $header[] = 'product.' . $fieldKey;
-        }
-        foreach ($seriesMetaFieldKeys as $fieldKey) {
-            $header[] = 'series_meta.' . $fieldKey;
+            $header[] = $fieldKey;
         }
         fputcsv($handle, $header);
 
         foreach ($products as $product) {
             $seriesId = (int) $product['series_id'];
             $categoryPath = $this->buildCategoryPath($categories, $seriesId);
+            $productLabel = $product['sku'] !== '' ? $product['sku'] : ($product['name'] ?? '');
             $row = [
                 $categoryPath,
-                $product['series_name'],
-                (string) $product['series_display_order'],
-                $product['sku'],
-                $product['name'],
-                $product['description'] ?? '',
+                $productLabel ?? '',
             ];
             $productCustom = $customValueMap[$product['id']] ?? [];
             foreach ($productFieldKeys as $fieldKey) {
                 $row[] = $productCustom[$fieldKey] ?? '';
-            }
-            $seriesMetaValues = $seriesMetaValueMap[$seriesId] ?? [];
-            foreach ($seriesMetaFieldKeys as $fieldKey) {
-                $row[] = $seriesMetaValues[$fieldKey] ?? '';
             }
             fputcsv($handle, $row);
         }
@@ -2792,6 +2757,22 @@ final class CatalogCsvService
         return $result;
     }
 
+    public function restoreCatalog(string $fileId): array
+    {
+        $this->ensureStorageDirectory();
+        $fileId = trim($fileId);
+        $this->assertValidFileId($fileId);
+        $filePath = $this->buildFilePath($fileId);
+        if (!is_file($filePath)) {
+            throw new CatalogApiException('CSV_NOT_FOUND', 'CSV file not found.', 404);
+        }
+
+        $result = $this->processImport($filePath, $fileId, $this->buildDownloadName($fileId));
+        $result['fileId'] = $fileId;
+
+        return $result;
+    }
+
     public function streamFile(string $fileId, HttpResponder $responder): void
     {
         $fileId = trim($fileId);
@@ -2822,13 +2803,12 @@ final class CatalogCsvService
 
     /**
      * @param array<int, string> $header
-     * @return array{columns: array<string, int>, custom: array<int, string>}
+     * @return array{columns: array<string, int>, attributes: array<int, string>}
      */
     private function analyseHeader(array $header): array
     {
         $columns = [];
-        $productColumns = [];
-        $seriesMetaColumns = [];
+        $attributeColumns = [];
 
         foreach ($header as $index => $rawHeader) {
             $trimmed = trim((string) $rawHeader);
@@ -2840,38 +2820,16 @@ final class CatalogCsvService
                 case 'category_path':
                     $columns['category_path'] = $index;
                     break;
-                case 'series_name':
-                    $columns['series_name'] = $index;
-                    break;
-                case 'series_display_order':
-                    $columns['series_display_order'] = $index;
-                    break;
-                case 'product_sku':
-                    $columns['product_sku'] = $index;
-                    break;
                 case 'product_name':
                     $columns['product_name'] = $index;
                     break;
-                case 'product_description':
-                    $columns['product_description'] = $index;
-                    break;
                 default:
-                    $productFieldKey = $this->extractColumnFieldKey($trimmed, self::PRODUCT_COLUMN_PREFIXES);
-                    if ($productFieldKey !== null) {
-                        $fieldKey = $this->normalizeCustomFieldKey($productFieldKey);
-                        $productColumns[$index] = $fieldKey;
-                        break;
-                    }
-                    $seriesMetaKey = $this->extractColumnFieldKey($trimmed, self::SERIES_META_COLUMN_PREFIXES);
-                    if ($seriesMetaKey !== null) {
-                        $fieldKey = $this->normalizeCustomFieldKey($seriesMetaKey);
-                        $seriesMetaColumns[$index] = $fieldKey;
-                    }
+                    $attributeColumns[$index] = $trimmed;
                     break;
             }
         }
 
-        $required = ['category_path', 'series_name', 'product_sku', 'product_name'];
+        $required = ['category_path', 'product_name'];
         foreach ($required as $column) {
             if (!array_key_exists($column, $columns)) {
                 throw new CatalogApiException(
@@ -2882,20 +2840,8 @@ final class CatalogCsvService
             }
         }
 
-        return ['columns' => $columns, 'custom' => $productColumns, 'seriesMeta' => $seriesMetaColumns];
+        return ['columns' => $columns, 'attributes' => $attributeColumns];
     }
-
-    private function extractColumnFieldKey(string $header, array $prefixes): ?string
-    {
-        foreach ($prefixes as $prefix) {
-            if (stripos($header, $prefix) === 0) {
-                return substr($header, strlen($prefix));
-            }
-        }
-
-        return null;
-    }
-
     private function processImport(string $filePath, string $fileId, string $originalName): array
     {
         $handle = fopen($filePath, 'rb');
@@ -2911,8 +2857,24 @@ final class CatalogCsvService
 
         $analysis = $this->analyseHeader($header);
         $columns = $analysis['columns'];
-        $customColumns = $analysis['custom'];
-        $seriesMetaColumns = $analysis['seriesMeta'];
+        /** @var array<int, string> $attributeColumns */
+        $attributeColumns = $analysis['attributes'];
+        $attributeOrder = [];
+        $order = 0;
+        foreach ($attributeColumns as $index => $fieldKey) {
+            $normalizedKey = trim((string) $fieldKey);
+            if ($normalizedKey === '') {
+                throw new CatalogApiException(
+                    'CSV_PARSE_ERROR',
+                    sprintf('Header column at index %d is blank.', $index),
+                    400
+                );
+            }
+            $attributeColumns[$index] = $normalizedKey;
+            if (!array_key_exists($normalizedKey, $attributeOrder)) {
+                $attributeOrder[$normalizedKey] = $order++;
+            }
+        }
 
         $existingProducts = $this->fetchExistingProductIds();
         $existingSeries = $this->fetchExistingSeriesIds();
@@ -2925,7 +2887,7 @@ final class CatalogCsvService
         $categoryCache = [];
         $seriesCache = [];
         $seriesFieldCache = [];
-        $seriesMetadataValues = [];
+        $fieldSortSynchronized = [];
 
         $createdCategories = 0;
         $createdSeries = 0;
@@ -2941,37 +2903,24 @@ final class CatalogCsvService
                 }
 
                 $categoryPath = trim((string) ($row[$columns['category_path']] ?? ''));
-                $seriesName = trim((string) ($row[$columns['series_name']] ?? ''));
-                $seriesDisplayOrder = isset($columns['series_display_order'])
-                    ? trim((string) ($row[$columns['series_display_order']] ?? ''))
-                    : '';
-                $sku = trim((string) ($row[$columns['product_sku']] ?? ''));
-                $productName = trim((string) ($row[$columns['product_name']] ?? ''));
-                $productDescription = isset($columns['product_description'])
-                    ? trim((string) ($row[$columns['product_description']] ?? ''))
-                    : '';
-
                 $this->assertCsvValue($categoryPath !== '', 'category_path', $lineNumber);
-                $this->assertCsvValue($seriesName !== '', 'series_name', $lineNumber);
-                $this->assertCsvValue($sku !== '', 'product_sku', $lineNumber);
-                $this->assertCsvValue($productName !== '', 'product_name', $lineNumber);
 
-                $categorySegments = array_filter(
-                    array_map('trim', explode('>', $categoryPath)),
-                    static fn (string $segment): bool => $segment !== ''
+                $segments = array_values(
+                    array_filter(
+                        array_map(
+                            static fn (string $segment): string => trim($segment),
+                            explode('>', $categoryPath)
+                        ),
+                        static fn (string $segment): bool => $segment !== ''
+                    )
                 );
+                $this->assertCsvValue($segments !== [], 'category_path', $lineNumber);
 
-                if ($categorySegments === []) {
-                    throw new CatalogApiException(
-                        'VALIDATION_ERROR',
-                        sprintf('Row %d has an invalid category_path.', $lineNumber),
-                        400,
-                        ['row' => $lineNumber, 'field' => 'category_path']
-                    );
-                }
+                $seriesName = array_pop($segments);
+                $this->assertCsvValue($seriesName !== null && $seriesName !== '', 'series_name', $lineNumber);
 
                 $parentId = null;
-                foreach ($categorySegments as $segment) {
+                foreach ($segments as $segment) {
                     $parentId = $this->upsertCategory(
                         $parentId,
                         $segment,
@@ -2981,11 +2930,10 @@ final class CatalogCsvService
                     );
                 }
 
-                $displayOrder = $seriesDisplayOrder !== '' ? (int) $seriesDisplayOrder : 0;
                 $seriesId = $this->upsertSeries(
                     $parentId,
                     $seriesName,
-                    $displayOrder,
+                    0,
                     $seriesCache,
                     $touchedSeries,
                     $createdSeries
@@ -2994,7 +2942,6 @@ final class CatalogCsvService
                 if (!isset($seriesFieldCache[$seriesId])) {
                     $seriesFieldCache[$seriesId] = [
                         SERIES_FIELD_SCOPE_PRODUCT => null,
-                        SERIES_FIELD_SCOPE_SERIES => null,
                     ];
                 }
                 if ($seriesFieldCache[$seriesId][SERIES_FIELD_SCOPE_PRODUCT] === null) {
@@ -3003,20 +2950,14 @@ final class CatalogCsvService
                         SERIES_FIELD_SCOPE_PRODUCT
                     );
                 }
-                if ($seriesFieldCache[$seriesId][SERIES_FIELD_SCOPE_SERIES] === null) {
-                    $seriesFieldCache[$seriesId][SERIES_FIELD_SCOPE_SERIES] = $this->buildSeriesFieldMap(
-                        $seriesId,
-                        SERIES_FIELD_SCOPE_SERIES
-                    );
-                }
 
                 $productFieldMap =& $seriesFieldCache[$seriesId][SERIES_FIELD_SCOPE_PRODUCT];
-                $seriesMetadataFieldMap =& $seriesFieldCache[$seriesId][SERIES_FIELD_SCOPE_SERIES];
 
                 $customValues = [];
-                foreach ($customColumns as $index => $fieldKey) {
+                foreach ($attributeColumns as $index => $fieldKey) {
                     $value = isset($row[$index]) ? trim((string) $row[$index]) : '';
                     $customValues[$fieldKey] = $value;
+                    $desiredOrder = $attributeOrder[$fieldKey] ?? 0;
                     if (!isset($productFieldMap[$fieldKey])) {
                         $label = $this->deriveCustomFieldLabel($fieldKey);
                         $field = $this->seriesFieldService->saveField([
@@ -3026,45 +2967,40 @@ final class CatalogCsvService
                             'fieldType' => 'text',
                             'fieldScope' => SERIES_FIELD_SCOPE_PRODUCT,
                             'isRequired' => false,
-                            'sortOrder' => count($productFieldMap),
+                            'sortOrder' => $desiredOrder,
                         ]);
                         $productFieldMap[$fieldKey] = $field;
+                    } else {
+                        $existingOrder = (int) ($productFieldMap[$fieldKey]['sortOrder'] ?? 0);
+                        if (
+                            $existingOrder !== $desiredOrder
+                            && !isset($fieldSortSynchronized[$seriesId][$fieldKey])
+                        ) {
+                            $field = $this->seriesFieldService->saveField([
+                                'id' => (int) $productFieldMap[$fieldKey]['id'],
+                                'seriesId' => $seriesId,
+                                'fieldKey' => $fieldKey,
+                                'label' => $productFieldMap[$fieldKey]['label'],
+                                'fieldType' => $productFieldMap[$fieldKey]['fieldType'],
+                                'fieldScope' => SERIES_FIELD_SCOPE_PRODUCT,
+                                'defaultValue' => $productFieldMap[$fieldKey]['defaultValue'] ?? null,
+                                'isRequired' => (bool) ($productFieldMap[$fieldKey]['isRequired'] ?? false),
+                                'sortOrder' => $desiredOrder,
+                            ]);
+                            $productFieldMap[$fieldKey] = $field;
+                            $fieldSortSynchronized[$seriesId][$fieldKey] = true;
+                        }
                     }
                 }
 
-                $metadataValues = [];
-                foreach ($seriesMetaColumns as $index => $fieldKey) {
-                    $value = isset($row[$index]) ? trim((string) $row[$index]) : '';
-                    $metadataValues[$fieldKey] = $value;
-                    if (!isset($seriesMetadataFieldMap[$fieldKey])) {
-                        $label = $this->deriveCustomFieldLabel($fieldKey);
-                        $field = $this->seriesFieldService->saveField([
-                            'seriesId' => $seriesId,
-                            'fieldKey' => $fieldKey,
-                            'label' => $label,
-                            'fieldType' => 'text',
-                            'fieldScope' => SERIES_FIELD_SCOPE_SERIES,
-                            'isRequired' => false,
-                            'sortOrder' => count($seriesMetadataFieldMap),
-                        ]);
-                        $seriesMetadataFieldMap[$fieldKey] = $field;
-                    }
-                }
-
-                if ($metadataValues !== []) {
-                    if (!isset($seriesMetadataValues[$seriesId])) {
-                        $seriesMetadataValues[$seriesId] = [];
-                    }
-                    foreach ($metadataValues as $fieldKey => $value) {
-                        $seriesMetadataValues[$seriesId][$fieldKey] = $value;
-                    }
-                }
+                $productLabel = trim((string) ($row[$columns['product_name']] ?? ''));
+                $this->assertCsvValue($productLabel !== '', 'product_name', $lineNumber);
 
                 $productId = $this->upsertProduct(
                     $seriesId,
-                    $sku,
-                    $productName,
-                    $productDescription === '' ? null : $productDescription,
+                    $productLabel,
+                    $productLabel,
+                    null,
                     $customValues,
                     $productFieldMap
                 );
@@ -3074,16 +3010,6 @@ final class CatalogCsvService
             }
 
             fclose($handle);
-
-            foreach ($seriesMetadataValues as $seriesId => $values) {
-                $this->seriesAttributeService->saveAttributes(
-                    [
-                        'seriesId' => $seriesId,
-                        'values' => $values,
-                    ],
-                    false
-                );
-            }
 
             $this->pruneMissingRecords(
                 $existingProducts,
@@ -3096,7 +3022,9 @@ final class CatalogCsvService
 
             $this->connection->commit();
         } catch (Throwable $exception) {
-            fclose($handle);
+            if (is_resource($handle)) {
+                fclose($handle);
+            }
             $this->connection->rollback();
             throw $exception;
         }
@@ -3108,24 +3036,17 @@ final class CatalogCsvService
         ];
     }
 
-    private function normalizeCustomFieldKey(string $raw): string
-    {
-        $normalized = strtolower(trim($raw));
-        $normalized = str_replace([' ', '-'], '_', $normalized);
-        $normalized = preg_replace('/[^a-z0-9_]/', '_', $normalized) ?? '';
-        $normalized = preg_replace('/_+/', '_', $normalized) ?? '';
-        $normalized = trim($normalized, '_');
-
-        if ($normalized === '') {
-            throw new CatalogApiException('CSV_PARSE_ERROR', 'Custom field headers must include a field key.', 400);
-        }
-
-        return $normalized;
-    }
-
     private function deriveCustomFieldLabel(string $fieldKey): string
     {
-        return ucwords(str_replace('_', ' ', $fieldKey));
+        $label = str_replace(['_', '.'], ' ', $fieldKey);
+        $label = preg_replace('/\s+/', ' ', $label) ?? '';
+        $label = trim($label);
+
+        if ($label === '') {
+            return 'Custom Field';
+        }
+
+        return ucwords($label);
     }
 
     /**
@@ -3493,7 +3414,11 @@ final class CatalogCsvService
     private function fetchAllCustomFieldKeys(string $scope = SERIES_FIELD_SCOPE_PRODUCT): array
     {
         $stmt = $this->connection->prepare(
-            'SELECT DISTINCT field_key FROM series_custom_field WHERE field_scope = ? ORDER BY field_key'
+            'SELECT field_key, MIN(sort_order) AS sort_order
+             FROM series_custom_field
+             WHERE field_scope = ?
+             GROUP BY field_key
+             ORDER BY sort_order, field_key'
         );
         $stmt->bind_param('s', $scope);
         $stmt->execute();
@@ -3563,7 +3488,7 @@ final class CatalogCsvService
             return '';
         }
 
-        $path = [];
+        $path = [$categories[$seriesId]['name']];
         $currentId = $categories[$seriesId]['parent_id'] ?? null;
         while ($currentId !== null && isset($categories[$currentId])) {
             array_unshift($path, $categories[$currentId]['name']);
@@ -3610,7 +3535,7 @@ final class CatalogApplication
         $seriesAttributeService = new SeriesAttributeService($connection, $seriesFieldService);
         $productService = new ProductService($connection, $seriesFieldService);
         $searchService = new SearchService($connection, $seriesFieldService, $seriesAttributeService);
-        $csvService = new CatalogCsvService($connection, $hierarchyService, $seriesFieldService, $seriesAttributeService);
+        $csvService = new CatalogCsvService($connection, $hierarchyService, $seriesFieldService);
         $publicCatalogService = new PublicCatalogService(
             $hierarchyService,
             $seriesFieldService,
@@ -3877,6 +3802,14 @@ final class CatalogApplication
                     throw new CatalogApiException('CSV_REQUIRED', 'CSV file upload is required.', 400);
                 }
                 return $this->csvService->importFromUploadedFile($_FILES['file']);
+            case 'v1.restoreCsv':
+                $this->requestReader->requireMethod('POST', $method);
+                $payload = $this->requestReader->readJsonBody();
+                $fileId = isset($payload['id']) ? (string) $payload['id'] : '';
+                if ($fileId === '') {
+                    throw new CatalogApiException('CSV_NOT_FOUND', 'CSV id is required.', 404);
+                }
+                return $this->csvService->restoreCatalog($fileId);
             case 'v1.downloadCsv':
                 $this->requestReader->requireMethod('GET', $method);
                 $fileId = isset($_GET['id']) ? (string) $_GET['id'] : '';

@@ -38,9 +38,9 @@
 9. **Rendering**: Standalone `catalog_ui.html` hosts HTML layout while loading `catalog_ui.js` from `/assets/js` and `catalog_ui.css` from `/assets/css` for behavior and styling.
 10. **Validation & Persistence**: Server-side validation mirrors both field scopes to keep API behavior deterministic for AJAX operations.
 11. **Frontend Interaction**: Single HTML page renders hierarchy pane, detail pane, metadata editor, product grid, and search filters while relying on jQuery AJAX calls; the metadata pane now ships with its own field-definition form (scope locked to `series_metadata`) so administrators can add unlimited metadata inputs without leaving the section.
-13. **Series Context Isolation**: Every async request that hydrates series-specific state (fields, metadata definitions/values) gates its response by the currently selected series ID so background responses from previously selected nodes are ignored, preventing metadata “bleed” across series.
+12. **CSV Import/Export Lifecycle**: `CatalogCsvService` reads/writes the stakeholder-supplied schema (`category_path`, `product_name`, `acf.*` product attribute columns), derives the series name from the last `category_path` segment, maps `product_name` to both SKU and display label, synchronizes only product-attribute fields, and persists timestamped history entries for upload/download/delete/restore actions.
+13. **Series Context Isolation**: Every async request that hydrates series-specific state (fields, metadata definitions/values) gates its response by the currently selected series ID so background responses from previously selected nodes are ignored, preventing metadata "bleed" across series.
 14. **Public Catalog Snapshot**: `PublicCatalogService` aggregates categories, series, metadata definitions/values, product custom field labels, and product data into one JSON payload exposed via a GET-only action for publishing/consumption use cases.
-12. **CSV Import/Export Lifecycle**: `CatalogCsvService` exports/imports hierarchy, series metadata, and product datasets (including both field scopes) while persisting history for download/delete actions.
 
 ## 4. Pseudocode (Critical Paths)
 
@@ -145,57 +145,60 @@ CatalogCsvService::exportCatalog():
     ensure storage/csv directory exists
     categories = repository::fetchAllCategories()
     products = repository::fetchProductsWithSeries()
-    fieldKeys = collect unique custom field keys across all series
+    attributeKeys = fetch product_attribute field keys ordered by sort_order (preserving header order from latest import)
     filename = timestamp + '_export.csv'
     open CSV writer in storage path
-    write header: category_path, series_name, series_display_order, product_sku, product_name, product_description, custom:<fieldKey>...
+    write header: ['category_path', 'product_name'] + attributeKeys (e.g., 'acf.length', 'acf.measure_result_0_frequency', ...)
     foreach product:
-        categoryPath = buildCategoryPath(categories, product.series_id)
+        categoryPath = buildCategoryPath(categories, product.series_id, include series name as last segment)
+        productLabel = product.sku if sku not empty else product.name
         row = [
             categoryPath,
-            product.series_name,
-            product.series_display_order,
-            product.sku,
-            product.name,
-            product.description,
+            productLabel,
         ]
-        foreach fieldKey in fieldKeys:
+        foreach fieldKey in attributeKeys:
             row[] = product.customValues[fieldKey] ?? ''
         write row
     close file and return metadata (fileId, downloadName, size, timestamp)
 ```
 
-### Import Catalog CSV
+### Import Catalog CSV / Restore Stored CSV
 ```text
 CatalogCsvService::importCatalog(uploadPath):
     ensure storage/csv directory exists
     store copy of uploaded file with timestamp prefix
-    read CSV, discover custom columns (prefix custom:)
+    return processCsvFile(storedPath, fileId, originalName)
+
+CatalogCsvService::restoreCatalog(fileId):
+    ensure storage/csv directory exists
+    validate fileId matches YYYYMMDDHHMMSS_(export|import) pattern
+    locate file under storage/csv and ensure readability
+    return processCsvFile(existingPath, fileId, deriveOriginalName(fileId))
+
+CatalogCsvService::processCsvFile(path, fileId, originalName):
+    read CSV header; expect column[0] = category_path, column[1] = product_name
+    attributeColumns = header columns starting at index 2; preserve header text verbatim as product field_key
     begin transaction
     touchedProducts = touchedSeries = touchedCategories = empty sets
     foreach row in CSV:
-        categorySegments = split(row.category_path, '>')
+        if row is empty -> continue
+        categorySegments = split(row.category_path, '>'), trim whitespace, drop empty segments
+        require >= 2 segments (first categories, last series)
+        seriesName = last segment
         parentId = null
-        foreach segment in categorySegments:
-            parentId = upsertCategory(parentId, trim(segment), touchedCategories)
-        seriesId = upsertSeries(parentId, row.series_name, row.series_display_order, touchedSeries)
-        ensure series custom fields exist for each custom column; create when missing
-        product = find product by seriesId + row.product_sku
-        payload = {
-            id: product?.id,
-            seriesId: seriesId,
-            sku: row.product_sku,
-            name: row.product_name,
-            description: row.product_description,
-            customValues: map custom columns to values
-        }
-        saved = ProductService::saveProduct(payload)
-        touchedProducts add saved.id
-        touchedCategories add parent chain ids
-    delete products where id not in touchedProducts
-    delete series with no remaining products and not in touchedSeries
-    prune empty categories not in touchedCategories from leaf upward
-    commit transaction
+        foreach segment in categorySegments except last:
+            parentId = upsertCategory(parentId, segment, touchedCategories)
+        seriesId = upsertSeries(parentId, seriesName, display_order = 0, touchedSeries)
+        ensure product_attribute field definitions exist per attribute column:
+            label = derive label from header (title case)
+            create definition if missing with scope=product_attribute and sort_order = column index - 2
+        skuAndName = trim(row.product_name)
+        productId = upsertProduct(seriesId, skuAndName, skuAndName, description = null)
+        customValues = foreach attribute column -> trimmed value
+        persist product_attribute values for product
+        touchedProducts += productId
+    prune products/series/categories not referenced
+    commit transaction and return counts + fileId metadata
 ```
 
 ## CSV File Format & Storage
@@ -203,16 +206,12 @@ CatalogCsvService::importCatalog(uploadPath):
 - **Location**: All exported/imported CSV files are stored under `storage/csv` with filenames `YYYYMMDDHHMMSS_<type>[_original].csv` (type is `export` or `import`).
 - **History**: Files remain until deleted via UI/API; metadata is inferred from filename and filesystem attributes (timestamp, size).
 - **Columns**:
-  - `category_path` — hierarchical categories separated by `>` (e.g. `General Products > EMC Components`).
-  - `series_name` — series node label (created beneath the final category).
-  - `series_display_order` — optional integer; defaults to `0` when omitted.
-  - `product_sku` — unique per series; used to update existing products.
-  - `product_name` — product title.
-  - `product_description` — optional free text.
-  - `custom:<field_key>` — dynamic columns for custom fields; header suffix defines `field_key`. New fields are created with labels derived from the key (title case).
-- **Import Semantics**: Each row upserts the hierarchy. After processing, products/series/categories not referenced are pruned so the catalog mirrors the CSV.
-- **Export Semantics**: Full catalog exported with consistent headers (including every discovered custom field). Consumers can re-import without column reordering.
-- **Download/Delete**: API actions expose file list with timestamp and size, plus endpoints to stream or remove stored CSVs.
+  - `category_path` - hierarchical categories separated by `>`; final segment is treated as the series node name while preceding segments map to nested categories.
+  - `product_name` - single text field that maps to both SKU and display label (the same string is persisted to `product.sku` and `product.name`).
+  - `<attribute headers>` - every remaining column represents a product attribute keyed exactly by the header text (`acf.length`, `acf.width`, `acf.measure_result_0_frequency`, etc.). Headers are stored verbatim as `series_custom_field.field_key` entries (scope `product_attribute`), and sort order follows the column order from the CSV to preserve the sample schema layout.
+- **Import Semantics**: Each row upserts categories, derives the series from the last path segment, creates product-attribute definitions for any unseen attribute headers, inserts/updates a product using the shared `product_name` value for both SKU and label, synchronizes attribute values, and prunes orphaned hierarchy nodes not touched by the CSV.
+- **Export Semantics**: Full catalog exported back into the same schema—`category_path`, `product_name`, and the ordered list of attribute headers aggregated from all product_attribute definitions. No series metadata columns are emitted.
+- **Download/Delete/Restore**: API actions expose file list with timestamp and size, plus endpoints to stream, delete, or restore any stored CSV (restore re-runs the import pipeline against the stored file bytes).
 
 ## Deployment Artifacts
 
@@ -399,7 +398,9 @@ classDiagram
     class CatalogCsvService {
         +exportCatalog(): array
         +importCatalog(uploadPath): array
+        +restoreCatalog(fileId): array
         +listHistory(): array
+        +streamFile(fileId): void
         +deleteFile(fileId): void
     }
     class SearchService {

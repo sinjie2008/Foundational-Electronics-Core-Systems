@@ -408,7 +408,7 @@ Metadata field creation/updates use the same request with `fieldScope` fixed to 
 ```
 - **Notes**:
   - Use the returned `id` with `v1.downloadCsv` to retrieve the file; entry is appended to history automatically.
-  - Exported rows contain hierarchy columns, `series_meta.<field_key>` columns for series-level values, and `product.<field_key>` columns for product attributes.
+  - Exported rows contain exactly the stakeholder sample schema: `category_path`, `product_name`, and the ordered list of product attribute headers (e.g., `acf.length`, `acf.measure_result_0_frequency`, ...). The single `product_name` column doubles as SKU + label on import.
 
 ### 14. Import Catalog CSV
 - **Action**: `v1.importCsv`
@@ -429,9 +429,9 @@ Metadata field creation/updates use the same request with `fieldScope` fixed to 
 }
 ```
 - **Behaviour**:
-  - Hierarchy is rebuilt/merged: categories and series are created when missing and pruned when absent from the CSV.
-  - Series metadata values are synchronised from `series_meta.<field_key>` columns (definition rows auto-created if missing).
-  - Products are updated (by SKU) or created; custom fields are synchronised by `product.<field_key>` columns with scope enforcement.
+  - Hierarchy is rebuilt/merged: categories are created from every path segment except the last, the final segment becomes/updates the series, and nodes not referenced are pruned.
+  - Attribute definitions are generated for every attribute header (column index ≥ 2) if the series lacks them; headers are stored verbatim as `field_key` and scoped to `product_attribute`.
+  - Products are updated/created by using the `product_name` value as both SKU and name; custom field values are synchronized column-by-column using the preserved header order.
   - Uploaded files are archived with timestamped filenames.
 - **Errors**:
     - `CSV_REQUIRED`
@@ -489,8 +489,9 @@ Metadata field creation/updates use the same request with `fieldScope` fixed to 
 ```
 - **Errors**:
     - `CSV_NOT_FOUND`
+    - `CSV_DELETE_ERROR`
 
-### 18. Public Catalog Snapshot
+### 19. Public Catalog Snapshot
 - **Action**: `v1.publicCatalogSnapshot`
 - **Method**: `GET`
 - **Description**: Returns a read-only JSON snapshot containing every category, series, series-level metadata (definitions + values), product field labels, and product rows for downstream publication.
@@ -588,3 +589,34 @@ Invoke-RestMethod -Uri "http://localhost/catalog.php?action=v1.saveSeriesAttribu
 ```
 
 
+- `CSV_NOT_FOUND`
+- `CSV_DELETE_ERROR`
+
+### 18. Restore CSV File
+- **Action**: `v1.restoreCsv`
+- **Method**: `POST`
+- **Body**:
+```json
+{
+  "id": "20251113094500_import_products.csv"
+}
+```
+- **Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "importedProducts": 125,
+    "createdSeries": 4,
+    "createdCategories": 6,
+    "fileId": "20251113094500_import_products.csv"
+  }
+}
+```
+- **Behaviour**:
+  - Validates the `id`, reuses the stored CSV bytes under `storage/csv`, and runs the same pipeline as `v1.importCsv` (counts reflect this re-import).
+  - Useful for “Restore” buttons in the UI so stakeholders can quickly replay a previous snapshot without uploading.
+- **Errors**:
+  - `CSV_NOT_FOUND`
+  - `CSV_PARSE_ERROR`
+  - `VALIDATION_ERROR`

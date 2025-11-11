@@ -228,9 +228,9 @@ $product = $productService->saveProduct([
     );
 
     $importSku = 'IMP-' . $uniqueSuffix;
-    $importCsv = "category_path,series_name,series_display_order,product_sku,product_name,product_description\n"
-        . "Imported Root,Imported Series,1,$importSku,Imported Product $uniqueSuffix,Imported description\n"
-        . "Imported Root,Imported Series,1,{$importSku}-2,Imported Product {$uniqueSuffix} B,\n";
+    $importCsv = "category_path,product_name,acf.length,acf.width\n"
+        . "Imported Root > Imported Series,$importSku,10,5\n"
+        . "Imported Root > Imported Series,{$importSku}-2,15,7\n";
     $tmpCsvPath = tempnam(sys_get_temp_dir(), 'catalog_csv');
     file_put_contents($tmpCsvPath, $importCsv);
 
@@ -247,11 +247,16 @@ $product = $productService->saveProduct([
     $skuCheck->close();
     catalog_test_assert((int) ($skuResult['total'] ?? 0) === 1, 'Imported product must exist.');
 
-    $restorePath = CATALOG_CSV_STORAGE . '/' . $exportMeta['id'];
-    $restoreResult = $csvService->importFromPath($restorePath, $exportMeta['name']);
+    $restoreResult = $csvService->restoreCatalog($exportMeta['id']);
+    catalog_test_assert(
+        isset($restoreResult['fileId']) && $restoreResult['fileId'] === $exportMeta['id'],
+        'CSV restore should reference the original file id.'
+    );
 
     $csvService->deleteFile($importResult['fileId']);
-    $csvService->deleteFile($restoreResult['fileId']);
+    if (isset($restoreResult['fileId']) && $restoreResult['fileId'] !== $exportMeta['id']) {
+        $csvService->deleteFile($restoreResult['fileId']);
+    }
     $csvService->deleteFile($exportMeta['id']);
     unlink($tmpCsvPath);
 

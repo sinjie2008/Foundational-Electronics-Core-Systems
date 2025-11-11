@@ -840,8 +840,9 @@
 
                 var $actions = $('<td></td>');
                 var $download = $('<button type="button">Download</button>').attr('data-csv-download', file.id);
+                var $restore = $('<button type="button">Restore</button>').attr('data-csv-restore', file.id);
                 var $delete = $('<button type="button">Delete</button>').attr('data-csv-delete', file.id);
-                $actions.append($download).append(' ').append($delete);
+                $actions.append($download).append(' ').append($restore).append(' ').append($delete);
                 $row.append($actions);
 
                 $tbody.append($row);
@@ -1403,6 +1404,39 @@
             $('#csv-history-table').on('click', 'button[data-csv-download]', function () {
                 var fileId = $(this).attr('data-csv-download');
                 triggerCsvDownload(fileId);
+            });
+
+            $('#csv-history-table').on('click', 'button[data-csv-restore]', function () {
+                var fileId = $(this).attr('data-csv-restore');
+                if (!fileId) {
+                    return;
+                }
+                var $button = $(this);
+                $button.prop('disabled', true);
+                postAction('v1.restoreCsv', { id: fileId })
+                    .done(function (response) {
+                        if (!response.success) {
+                            handleErrorResponse(response);
+                            return;
+                        }
+                        var data = response.data || {};
+                        var message = 'CSV restore completed.';
+                        if (typeof data.importedProducts !== 'undefined') {
+                            message = 'CSV restore completed (' +
+                                data.importedProducts + ' products, ' +
+                                (data.createdSeries || 0) + ' new series, ' +
+                                (data.createdCategories || 0) + ' new categories).';
+                        }
+                        setStatus(message, false);
+                        loadHierarchy();
+                        loadCsvHistory();
+                    })
+                    .fail(function () {
+                        setStatus('Failed to restore CSV file.', true);
+                    })
+                    .always(function () {
+                        $button.prop('disabled', false);
+                    });
             });
 
             $('#csv-history-table').on('click', 'button[data-csv-delete]', function () {

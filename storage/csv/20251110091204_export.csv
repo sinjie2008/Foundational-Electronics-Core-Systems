@@ -1,5 +1,0 @@
-category_path,series_name,series_display_order,product_sku,product_name,product_description,product.current_rating,product.impedance,product.qa_field,product.tolerance,series_meta.hah,series_meta.qa_series_info,series_meta.series_notes,series_meta.series_voltage
-"General Products > EMC Components > Chip Inductor","C0 SERIES",1,C0-1N0S-E-10,C0-1N0S-E-10,,1,100,,10,,32423,23423,234234
-"General Products > EMC Components > Chip Inductor","C0 SERIES",1,C0-1N2S-E-10,C0-1N2S-E-10,,1,100,,5,,32423,23423,234234
-"General Products > EMC Components > Chip Inductor","C1 SERIES",2,C1-1N0S-E-10,C1-1N0S-E-10,dfdf,1.5,100,,8,222222222,22222222222222,222222222,222
-"General Products > EMC Components > Chip Inductor","C1 SERIES",2,C1-1N2S-E-10,C1-1N2S-E-10,,1.5,100,,6,222222222,22222222222222,222222222,222

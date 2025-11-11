@@ -7,6 +7,7 @@
 - 2025-10-30: Backend refactored to PHP OOP structure with dedicated classes per service/controller (tests + docs updated).
 - 2025-10-31: Documented separation of series metadata fields vs product attribute fields, added field scopes + new API endpoints to `docs/spec.md` and `docs/api.md`, and logged decisions.
 - 2025-11-10: Bug reported that series metadata panes appeared locked to three seeded fields; documentation updated and decision logged to expose metadata field creation controls directly within the metadata UI.
+- 2025-11-13: Stakeholder mandated CSV import/export must match the provided `storage/csv/products.csv` schema (category_path + product_name + `acf.*` attributes) and add a restore-from-history workflow; spec/api/docs refreshed to capture decisions before implementation.
 
 ## Context Reset Checklist (29 Oct 2025)
 - [x] Summarize previous task results in todolist.
@@ -43,6 +44,13 @@
 - [x] Sync repository / clean local state (no pending work besides bugfix).
 - [x] Refresh local understanding of test data/mocks (series metadata + series field flows exercised via existing scripts/manual smoke).
 
+## Context Reset Checklist (13 Nov 2025 - CSV Schema Alignment & Restore)
+- [x] Summarize previous task results in todolist (added 2025-11-13 context bullet).
+- [x] Close or carry over open TODOs (new CSV alignment tasks appended below).
+- [x] Re-read `docs/spec.md` and `docs/api.md` to capture the mandated CSV format + restore flow updates.
+- [x] Sync repository / clean local state (verified no pending uncommitted code changes beyond docs).
+- [x] Refresh test data/mocks and local environment (baseline `.\scripts\run-tests.ps1` referenced for upcoming verification).
+
 ## Tasks
 - [x] Seed database schema & initial hierarchy (tests: integration seeding verification script) - Completed via `php tests/seed_verification.php`
 - [x] Implement PHP backend actions (tests: `php tests/api_backend_test.php`) - Completed
@@ -66,3 +74,5 @@
 - [ ] Document public catalog snapshot API contract and confirm downstream needs (tests: documentation review).
 - [ ] Implement `v1.publicCatalogSnapshot` aggregating categories/series/metadata/products (tests: `php tests/api_backend_test.php` + new assertions).
 - [ ] Extend integration tests to cover snapshot payload (tests: `php tests/api_backend_test.php`).
+- [ ] Rework CatalogCsvService import/export to consume/emit the stakeholder CSV schema (category_path + product_name + ordered `acf.*` attributes, no series metadata columns) while preserving pruning semantics (tests: targeted CSV round-trip test via `php tests/api_backend_test.php` + new CSV fixture using `storage/csv/products.csv`).
+- [ ] Add CSV history restore endpoint/UI button that replays stored files via `v1.restoreCsv` and expose status counts in the grid (tests: `php tests/api_backend_test.php` restore case + manual UI verification of new Restore button + history refresh).
