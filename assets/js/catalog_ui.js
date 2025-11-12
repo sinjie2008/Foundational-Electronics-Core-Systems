@@ -1,1471 +1,1334 @@
 /**
  * catalog_ui.js
- * Provides frontend behaviors for the product catalog manager UI.
+ * ES6 module wrapper for the Product Catalog Manager UI.
  */
-(function ($) {
-        var apiBase = 'catalog.php';
-        var FIELD_SCOPE_PRODUCT = 'product_attribute';
-        var FIELD_SCOPE_SERIES = 'series_metadata';
-        // state caches hierarchy data, current selections, and reusable collections.
-        var state = {
-            hierarchy: [],
-            seriesOptions: [],
-            nodeIndex: {},
-            selectedNodeId: null,
-            seriesDataRequestId: 0,
-            seriesFields: [],
-            seriesMetadataFields: [],
-            seriesMetadataValues: {},
-            products: [],
-            selectedProductId: null,
-            search: {
-                fieldMeta: [],
-                filters: {},
-                seriesMetaDefinitions: [],
-                seriesMetaFilters: {},
-                seriesFieldRequestId: 0,
-                currentSeriesId: null
-            }
-        };
+(() => {
+    'use strict';
 
-        function isSeriesRequestCurrent(seriesId, requestId) {
-            return state.selectedNodeId === seriesId && requestId === state.seriesDataRequestId;
+    const apiBase = 'catalog.php';
+    const FIELD_SCOPE = {
+        PRODUCT: 'product_attribute',
+        SERIES: 'series_metadata',
+    };
+    const TRUNCATE_TOKEN = 'TRUNCATE';
+
+    const selectors = {
+        status: '#status-message',
+        hierarchyContainer: '#hierarchy-container',
+        selectedNodeDetails: '#selected-node-details',
+        seriesManagement: '#series-management',
+        nodeCreateForm: '#node-create-form',
+        nodeUpdateForm: '#node-update-form',
+        nodeDeleteButton: '#node-delete-button',
+        createParentId: '#create-parent-id',
+        createNodeName: '#create-node-name',
+        createNodeType: '#create-node-type',
+        createDisplayOrder: '#create-display-order',
+        updateNodeId: '#update-node-id',
+        updateNodeIdText: '#update-node-id-text',
+        updateNodeParentId: '#update-node-parent-id',
+        updateNodeTypeText: '#update-node-type-text',
+        updateNodeTypeValue: '#update-node-type-value',
+        updateNodeName: '#update-node-name',
+        updateNodeDisplayOrder: '#update-node-display-order',
+        seriesFieldsTable: '#series-fields-table',
+        seriesFieldForm: '#series-field-form',
+        seriesFieldId: '#series-field-id',
+        seriesFieldKey: '#series-field-key',
+        seriesFieldLabel: '#series-field-label',
+        seriesFieldScope: '#series-field-scope',
+        seriesFieldSortOrder: '#series-field-sort-order',
+        seriesFieldRequired: '#series-field-required',
+        seriesFieldSubmit: '#series-field-submit',
+        seriesFieldClearButton: '#series-field-clear-button',
+        seriesMetadataFieldsTable: '#series-metadata-fields-table',
+        seriesMetadataFieldForm: '#series-metadata-field-form',
+        seriesMetadataFieldId: '#series-metadata-field-id',
+        seriesMetadataFieldKey: '#series-metadata-field-key',
+        seriesMetadataFieldLabel: '#series-metadata-field-label',
+        seriesMetadataFieldSortOrder: '#series-metadata-field-sort-order',
+        seriesMetadataFieldRequired: '#series-metadata-field-required',
+        seriesMetadataFieldSubmit: '#series-metadata-field-submit',
+        seriesMetadataFieldClearButton: '#series-metadata-field-clear-button',
+        seriesMetadataForm: '#series-metadata-form',
+        seriesMetadataValues: '#series-metadata-values',
+        seriesMetadataSaveButton: '#series-metadata-save-button',
+        seriesMetadataResetButton: '#series-metadata-reset-button',
+        productListTable: '#product-list-table',
+        productForm: '#product-form',
+        productId: '#product-id',
+        productSku: '#product-sku',
+        productName: '#product-name',
+        productDescription: '#product-description',
+        productCustomFields: '#product-custom-fields',
+        productSubmit: '#product-submit',
+        productClearButton: '#product-clear-button',
+        productDeleteButton: '#product-delete-button',
+        csvExportButton: '#csv-export-button',
+        csvImportForm: '#csv-import-form',
+        csvImportFile: '#csv-import-file',
+        csvImportSubmit: '#csv-import-submit',
+        csvHistoryTable: '#csv-history-table',
+        truncateButton: '#truncate-button',
+        truncateModal: '#truncate-modal',
+        truncateBackdrop: '#truncate-modal-backdrop',
+        truncateForm: '#truncate-form',
+        truncateConfirmInput: '#truncate-confirm-input',
+        truncateReasonInput: '#truncate-reason-input',
+        truncateCancelButton: '#truncate-cancel-button',
+        truncateConfirmButton: '#truncate-confirm-button',
+        truncateModalError: '#truncate-modal-error',
+        truncateAuditTable: '#truncate-audit-table',
+    };
+
+    const domCache = new Map();
+    const $el = (key) => {
+        if (!domCache.has(key)) {
+            domCache.set(key, $(selectors[key]));
         }
+        return domCache.get(key);
+    };
 
+    const state = {
+        hierarchy: [],
+        nodeIndex: new Map(),
+        selectedNodeId: null,
+        seriesRequestId: 0,
+        seriesFields: [],
+        seriesMetadataFields: [],
+        seriesMetadataValues: {},
+        products: [],
+        selectedProductId: null,
+        truncate: {
+            submitting: false,
+            serverLock: false,
+        },
+    };
+    const escapeHtml = (value = '') =>
+        String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
 
-        function isSearchRequestCurrent(seriesId, requestId) {
-            var normalizedSeries = seriesId ? parseInt(seriesId, 10) : null;
-            return state.search.currentSeriesId === normalizedSeries && requestId === state.search.seriesFieldRequestId;
+    const toInt = (value, fallback = 0) => {
+        const parsed = parseInt(value, 10);
+        return Number.isNaN(parsed) ? fallback : parsed;
+    };
+
+    const formatDateTime = (timestamp) => {
+        if (!timestamp) {
+            return '';
         }
+        const date = new Date(timestamp);
+        return Number.isNaN(date.getTime()) ? '' : date.toLocaleString();
+    };
 
-        function setStatus(message, isError) {
-            var $status = $('#status-message');
-            $status.removeClass('status-info status-error');
-            if (!message) {
-                $status.text('');
-                return;
-            }
-            var prefix = isError ? 'Error: ' : 'Info: ';
-            $status.text(prefix + message);
-            $status.addClass(isError ? 'status-error' : 'status-info');
-        }
+    const createCorrelationId = () =>
+        window.crypto?.randomUUID?.() ?? `truncate-${Date.now()}`;
 
-        function handleErrorResponse(response) {
-            if (!response) {
-                setStatus('Unexpected error occurred.', true);
-                return;
-            }
-            var message = response.message || 'Request failed.';
-            var detailParts = [];
-            if (response.details) {
-                $.each(response.details, function (key, value) {
-                    if (value) {
-                        detailParts.push(value);
-                    }
-                });
-            }
-            if (detailParts.length > 0) {
-                message = message + ' (' + detailParts.join('; ') + ')';
-            }
-            setStatus(message, true);
-        }
+    const toPromise = (jqXHR) =>
+        new Promise((resolve, reject) => {
+            jqXHR.done(resolve).fail(reject);
+        });
 
-        function normalizeChildren(children) {
-            if (!children) {
-                return [];
-            }
-            if (Array.isArray(children)) {
-                return children;
-            }
-            if (typeof children === 'object') {
-                var list = [];
-                $.each(children, function (_, child) {
-                    list.push(child);
-                });
-                return list;
-            }
-            return [];
-        }
+    const requestJson = (params) => toPromise($.getJSON(apiBase, params));
 
-        function rebuildNodeIndex() {
-            state.nodeIndex = {};
-            function walk(nodes) {
-                $.each(nodes, function (_, node) {
-                    state.nodeIndex[node.id] = node;
-                    var children = normalizeChildren(node.children);
-                    if (children.length > 0) {
-                        walk(children);
-                    }
-                });
-            }
-            walk(state.hierarchy);
-        }
-
-        function buildNodeList(nodes) {
-            var $ul = $('<ul></ul>');
-            $.each(nodes, function (_, node) {
-                var $li = $('<li></li>');
-                var nodeName = node.name || node.Name || node.label || '(unnamed)';
-                var nodeType = node.type || node.Type || 'unknown';
-                var label = nodeName + ' [' + nodeType + ']';
-                var $link = $('<a href="#"></a>').text(label);
-                $link.attr('data-node-id', node.id);
-                $li.append($link);
-                var children = normalizeChildren(node.children);
-                if (children.length > 0) {
-                    $li.append(buildNodeList(children));
-                }
-                $ul.append($li);
-            });
-            return $ul;
-        }
-
-        function renderHierarchy() {
-            var $container = $('#hierarchy-container');
-            if (!state.hierarchy || state.hierarchy.length === 0) {
-                $container.text('No categories defined.');
-                return;
-            }
-            $container.empty().append(buildNodeList(state.hierarchy));
-        }
-
-        function rebuildSeriesOptions() {
-            var $select = $('#search-series-select');
-            var previous = $select.val();
-            var options = [];
-            if (state.seriesOptions && state.seriesOptions.length > 0) {
-                options = state.seriesOptions.slice(0);
-            } else {
-                $.each(state.nodeIndex, function (id, node) {
-                    var nodeType = node.type || node.Type;
-                    if (nodeType === 'series') {
-                        options.push({ id: node.id, name: node.name || node.Name || '(unnamed series)' });
-                    }
-                });
-            }
-            options.sort(function (a, b) {
-                return a.name.localeCompare(b.name);
-            });
-            $select.empty();
-            $select.append('<option value="">Any Series</option>');
-            var hasPrevious = false;
-            $.each(options, function (_, option) {
-                var value = String(option.id);
-                var text = option.name || option.Name || '(unnamed series)';
-                var $opt = $('<option></option>').attr('value', value).text(text);
-                if (value === String(previous)) {
-                    hasPrevious = true;
-                }
-                $select.append($opt);
-            });
-            if (hasPrevious) {
-                $select.val(previous);
-            } else {
-                $select.val('');
-                renderSearchFieldFilters([], {});
-            }
-        }
-
-        function selectNode(nodeId) {
-            if (!state.nodeIndex[nodeId]) {
-                state.selectedNodeId = null;
-            } else {
-                state.selectedNodeId = nodeId;
-            }
-            updateSelectedNodePanel();
-        }
-
-        function resetSeriesUI() {
-            state.seriesFields = [];
-            state.seriesMetadataFields = [];
-            state.seriesMetadataValues = {};
-            state.products = [];
-            state.selectedProductId = null;
-            $('#series-fields-table').empty();
-            $('#series-metadata-fields-table').empty();
-            $('#series-metadata-values').empty();
-            resetSeriesFieldForm();
-            resetSeriesMetadataFieldForm();
-            resetSeriesMetadataForm();
-            $('#product-list-table').empty();
-            resetProductForm();
-            $('#series-management').prop('hidden', true);
-        }
-
-        function updateSelectedNodePanel() {
-            var $details = $('#selected-node-details');
-            var node = state.selectedNodeId ? state.nodeIndex[state.selectedNodeId] : null;
-            if (!node) {
-                $details.text('Select a category or series to view details.');
-                $('#update-node-id').val('');
-                $('#update-node-id-text').text('None');
-                $('#update-node-parent-id').text('N/A');
-                $('#update-node-type-text').text('N/A');
-                $('#update-node-type-value').val('');
-                $('#update-node-name').val('');
-                $('#update-node-display-order').val('0');
-                $('#node-update-submit').prop('disabled', true);
-                $('#node-delete-button').prop('disabled', true);
-                $('#create-parent-id').val('');
-                resetSeriesUI();
-                return;
-            }
-
-            var parentLabel = node.parentId !== null ? node.parentId : '(root)';
-            var info = [
-                'ID: ' + node.id,
-                'Parent ID: ' + parentLabel,
-                'Type: ' + node.type,
-                'Display Order: ' + node.displayOrder
-            ];
-            $details.html('<p>' + info.join('</p><p>') + '</p>');
-
-            $('#update-node-id').val(node.id);
-            $('#update-node-id-text').text(String(node.id));
-            $('#update-node-parent-id').text(String(parentLabel));
-            $('#update-node-type-text').text(node.type);
-            $('#update-node-type-value').val(node.type);
-            $('#update-node-name').val(node.name);
-            $('#update-node-display-order').val(node.displayOrder);
-            $('#node-update-submit').prop('disabled', false);
-            $('#node-delete-button').prop('disabled', false);
-            $('#create-parent-id').val(node.id);
-
-            if (node.type === 'series') {
-                $('#series-management').prop('hidden', false);
-                loadSeriesFields(node.id);
-                loadProducts(node.id);
-            } else {
-                resetSeriesUI();
-            }
-        }
-
-        function loadHierarchy() {
-            setStatus('', false);
-            $.getJSON(apiBase, { action: 'v1.listHierarchy' })
-                .done(function (response) {
-                    if (!response.success) {
-                        handleErrorResponse(response);
-                        return;
-                    }
-                    var payload = response.data || {};
-                    state.hierarchy = payload.hierarchy || [];
-                    state.seriesOptions = payload.seriesOptions || [];
-                    rebuildNodeIndex();
-                    if (state.selectedNodeId && !state.nodeIndex[state.selectedNodeId]) {
-                        state.selectedNodeId = null;
-                    }
-                    renderHierarchy();
-                    rebuildSeriesOptions();
-                    updateSelectedNodePanel();
-                })
-                .fail(function () {
-                    setStatus('Unable to load hierarchy.', true);
-                });
-        }
-
-        function postAction(action, payload) {
-            return $.ajax({
-                url: apiBase + '?action=' + encodeURIComponent(action),
+    const postJson = (action, payload = {}) =>
+        toPromise(
+            $.ajax({
+                url: `${apiBase}?action=${encodeURIComponent(action)}`,
                 method: 'POST',
                 contentType: 'application/json',
                 dataType: 'json',
-                data: JSON.stringify(payload || {})
-            });
-        }
+                data: JSON.stringify(payload),
+            })
+        );
 
-        function postMultipart(action, formData) {
-            return $.ajax({
-                url: apiBase + '?action=' + encodeURIComponent(action),
+    const postMultipart = (action, formData) =>
+        toPromise(
+            $.ajax({
+                url: `${apiBase}?action=${encodeURIComponent(action)}`,
                 method: 'POST',
-                data: formData,
-                contentType: false,
                 processData: false,
-                dataType: 'json'
-            });
-        }
+                contentType: false,
+                dataType: 'json',
+                data: formData,
+            })
+        );
 
-        function resetSeriesFieldForm() {
-            $('#series-field-id').val('');
-            $('#series-field-key').val('');
-            $('#series-field-label').val('');
-            $('#series-field-sort-order').val('0');
-            $('#series-field-required').prop('checked', false);
-            $('#series-field-scope').val(FIELD_SCOPE_PRODUCT);
-            $('#series-field-submit').text('Save Field');
+    const setStatus = (message = '', isError = false) => {
+        const $status = $el('status');
+        $status.removeClass('status-info status-error');
+        if (!message) {
+            $status.text('');
+            return;
         }
+        $status
+            .text(`${isError ? 'Error' : 'Info'}: ${message}`)
+            .addClass(isError ? 'status-error' : 'status-info');
+    };
 
-        // Reset metadata field form inputs to their defaults.
-        function resetSeriesMetadataFieldForm() {
-            $('#series-metadata-field-id').val('');
-            $('#series-metadata-field-key').val('');
-            $('#series-metadata-field-label').val('');
-            $('#series-metadata-field-sort-order').val('0');
-            $('#series-metadata-field-required').prop('checked', false);
-            $('#series-metadata-field-submit').text('Save Metadata Field');
+    const handleErrorResponse = (response) => {
+        if (!response) {
+            setStatus('Unexpected error occurred.', true);
+            return;
         }
-
-        function populateSeriesFieldForm(field) {
-            $('#series-field-id').val(field.id);
-            $('#series-field-key').val(field.fieldKey);
-            $('#series-field-label').val(field.label);
-            $('#series-field-sort-order').val(field.sortOrder);
-            $('#series-field-required').prop('checked', field.isRequired);
-            $('#series-field-scope').val(field.fieldScope || FIELD_SCOPE_PRODUCT);
-            $('#series-field-submit').text('Update Field');
-        }
-
-        // Load metadata field details into the dedicated metadata field form.
-        function populateSeriesMetadataFieldForm(field) {
-            $('#series-metadata-field-id').val(field.id);
-            $('#series-metadata-field-key').val(field.fieldKey);
-            $('#series-metadata-field-label').val(field.label);
-            $('#series-metadata-field-sort-order').val(field.sortOrder);
-            $('#series-metadata-field-required').prop('checked', field.isRequired);
-            $('#series-metadata-field-submit').text('Update Metadata Field');
-            var formElement = document.getElementById('series-metadata-field-form');
-            if (formElement && formElement.scrollIntoView) {
-                formElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        let message = response.message || 'Request failed.';
+        if (response.details) {
+            const parts = Object.values(response.details)
+                .filter(Boolean)
+                .map((detail) => detail);
+            if (parts.length) {
+                message = `${message} (${parts.join('; ')})`;
             }
         }
+        setStatus(message, true);
+    };
 
-        function resetSeriesMetadataForm() {
-            $('#series-metadata-values').empty();
-            $('#series-metadata-save-button').prop('disabled', true);
+    const applyCsvLockState = () => {
+        const locked = state.truncate.submitting || state.truncate.serverLock;
+        [
+            'csvExportButton',
+            'csvImportSubmit',
+            'csvImportFile',
+            'truncateButton',
+            'truncateConfirmButton',
+        ].forEach((key) => {
+            $el(key).prop('disabled', locked);
+        });
+        if (locked) {
+            $el('csvHistoryTable').find('button').prop('disabled', true);
+        }
+    };
+
+    const buildNodeIndex = (nodes, parentId = null) => {
+        nodes.forEach((node) => {
+            const normalized = {
+                id: Number(node.id),
+                name: node.name ?? node.Name ?? '(unnamed)',
+                type: node.type ?? node.Type ?? 'category',
+                parentId: node.parentId ?? node.parent_id ?? parentId,
+                displayOrder: node.displayOrder ?? node.display_order ?? 0,
+                children: Array.isArray(node.children) ? node.children : [],
+            };
+            state.nodeIndex.set(normalized.id, normalized);
+            buildNodeIndex(normalized.children, normalized.id);
+        });
+    };
+
+    const buildHierarchyList = (nodes) => {
+        if (!nodes || nodes.length === 0) {
+            return '<div>No categories defined.</div>';
         }
 
-        function getProductFields() {
-            return state.seriesFields || [];
+        const renderList = (list, depth = 0) => {
+            const items = list
+                .map((node) => {
+                    const label = `${escapeHtml(
+                        node.name ?? node.Name ?? '(unnamed)'
+                    )} [${escapeHtml(node.type ?? node.Type ?? 'unknown')}]`;
+                    const children = Array.isArray(node.children)
+                        ? node.children
+                        : [];
+                    const hasAccordion =
+                        node.type === 'category' && children.length > 0;
+                    const expanded = depth === 0;
+                    const childMarkup = hasAccordion
+                        ? `<div class="node-children${expanded ? ' is-open' : ''}" id="node-${node.id}">
+                               ${renderList(children, depth + 1)}
+                           </div>`
+                        : '';
+                    const toggle = hasAccordion
+                        ? `<button type="button"
+                                   class="node-toggle"
+                                   aria-expanded="${expanded}"
+                                   aria-label="Toggle children for ${escapeHtml(
+                                       node.name ?? ''
+                                   )}"
+                                   data-node-toggle="node-${node.id}"></button>`
+                        : '<span class="node-toggle-spacer"></span>';
+
+                    return `<li class="hierarchy-node">
+                                <div class="node-row">
+                                    ${toggle}
+                                    <a href="#" data-node-id="${node.id}">${label}</a>
+                                </div>
+                                ${childMarkup}
+                            </li>`;
+                })
+                .join('');
+
+            return `<ul class="hierarchy-list">${items}</ul>`;
+        };
+
+        return renderList(nodes);
+    };
+
+    const renderHierarchy = () => {
+        $el('hierarchyContainer').html(buildHierarchyList(state.hierarchy));
+    };
+
+    const resetSeriesUI = () => {
+        $el('seriesFieldsTable').empty();
+        $el('seriesMetadataFieldsTable').empty();
+        $el('seriesMetadataValues').empty();
+        $el('productListTable').empty();
+        resetSeriesFieldForm();
+        resetSeriesMetadataFieldForm();
+        resetSeriesMetadataForm();
+        resetProductForm();
+        $el('seriesManagement').prop('hidden', true);
+    };
+
+    const selectNode = (nodeId) => {
+        if (!state.nodeIndex.has(nodeId)) {
+            state.selectedNodeId = null;
+        } else {
+            state.selectedNodeId = nodeId;
+        }
+        updateSelectedNodePanel();
+    };
+
+    const updateSelectedNodePanel = () => {
+        const $details = $el('selectedNodeDetails');
+        const node = state.nodeIndex.get(state.selectedNodeId);
+        if (!node) {
+            $details.text('Select a category or series to view details.');
+            $el('updateNodeId').val('');
+            $el('updateNodeIdText').text('None');
+            $el('updateNodeParentId').text('N/A');
+            $el('updateNodeTypeText').text('N/A');
+            $el('updateNodeTypeValue').val('');
+            $el('updateNodeName').val('');
+            $el('updateNodeDisplayOrder').val('0');
+            $el('nodeDeleteButton').prop('disabled', true);
+            resetSeriesUI();
+            return;
         }
 
-        function getMetadataFields() {
-            return state.seriesMetadataFields || [];
-        }
+        const parentLabel =
+            node.parentId === null || node.parentId === undefined
+                ? '(root)'
+                : node.parentId;
 
-        function findSeriesField(fieldId, scope) {
-            var list = scope === FIELD_SCOPE_SERIES ? getMetadataFields() : getProductFields();
-            var match = null;
-            $.each(list, function (_, field) {
-                if (field.id === fieldId) {
-                    match = field;
-                    return false;
-                }
-            });
-            return match;
-        }
+        const info = [
+            `ID: ${node.id}`,
+            `Parent ID: ${parentLabel}`,
+            `Type: ${node.type}`,
+            `Display Order: ${node.displayOrder}`,
+        ];
+        $details.html(info.map((line) => `<p>${escapeHtml(line)}</p>`).join(''));
 
-        function renderSeriesFields() {
-            var productFields = getProductFields();
-            var $table = $('#series-fields-table');
-            $table.empty();
-            if (productFields.length === 0) {
-                $table.append('<tr><td>No product attribute fields defined for this series.</td></tr>');
-                renderProductFormFields({});
+        $el('updateNodeId').val(node.id);
+        $el('updateNodeIdText').text(String(node.id));
+        $el('updateNodeParentId').text(String(parentLabel));
+        $el('updateNodeTypeText').text(node.type);
+        $el('updateNodeTypeValue').val(node.type);
+        $el('updateNodeName').val(node.name);
+        $el('updateNodeDisplayOrder').val(node.displayOrder);
+        $el('nodeDeleteButton').prop('disabled', false);
+
+        if (node.type === 'series') {
+            $el('seriesManagement').prop('hidden', false);
+            loadSeriesContext(node.id);
+        } else {
+            resetSeriesUI();
+        }
+    };
+
+    const loadHierarchy = async () => {
+        try {
+            setStatus('');
+            const response = await requestJson({ action: 'v1.listHierarchy' });
+            if (!response.success) {
+                handleErrorResponse(response);
                 return;
             }
-            var header = $('<tr></tr>')
-                .append('<th>ID</th>')
-                .append('<th>Key</th>')
-                .append('<th>Label</th>')
-                .append('<th>Required</th>')
-                .append('<th>Sort</th>')
-                .append('<th>Actions</th>');
-            $table.append(header);
-            $.each(productFields, function (_, field) {
-                var requiredText = field.isRequired ? 'yes' : 'no';
-                var $row = $('<tr></tr>');
-                $row.append('<td>' + field.id + '</td>');
-                $row.append('<td>' + field.fieldKey + '</td>');
-                $row.append('<td>' + field.label + '</td>');
-                $row.append('<td>' + requiredText + '</td>');
-                $row.append('<td>' + field.sortOrder + '</td>');
-                var $actions = $('<td></td>');
-                var $edit = $('<button type="button" class="series-field-action">Edit</button>');
-                $edit.attr('data-field-action', 'edit')
-                    .attr('data-field-id', field.id)
-                    .attr('data-field-scope', FIELD_SCOPE_PRODUCT);
-                var $delete = $('<button type="button" class="series-field-action">Delete</button>');
-                $delete.attr('data-field-action', 'delete')
-                    .attr('data-field-id', field.id)
-                    .attr('data-field-scope', FIELD_SCOPE_PRODUCT);
-                $actions.append($edit).append(' ').append($delete);
-                $row.append($actions);
-                $table.append($row);
-            });
-            renderProductFormFields({});
+            const payload = response.data || {};
+            state.hierarchy = Array.isArray(payload.hierarchy)
+                ? payload.hierarchy
+                : [];
+            state.nodeIndex = new Map();
+            buildNodeIndex(state.hierarchy);
+            if (!state.nodeIndex.has(state.selectedNodeId)) {
+                state.selectedNodeId = null;
+            }
+            renderHierarchy();
+            updateSelectedNodePanel();
+        } catch (error) {
+            console.error(error);
+            setStatus('Unable to load hierarchy.', true);
         }
+    };
 
-        function renderSeriesMetadataFields() {
-            var metadataFields = getMetadataFields();
-            var $table = $('#series-metadata-fields-table');
-            $table.empty();
-            if (metadataFields.length === 0) {
-                $table.append('<tr><td>No series metadata fields defined.</td></tr>');
-                renderSeriesMetadataValues();
+    const loadSeriesContext = async (seriesId) => {
+        if (!seriesId) {
+            return;
+        }
+        state.seriesRequestId += 1;
+        const requestId = state.seriesRequestId;
+        state.selectedProductId = null;
+
+        try {
+            const [
+                productFields,
+                metadataFields,
+                metadataValues,
+                products,
+            ] = await Promise.all([
+                requestJson({ action: 'v1.listSeriesFields', seriesId }),
+                requestJson({
+                    action: 'v1.listSeriesFields',
+                    seriesId,
+                    scope: FIELD_SCOPE.SERIES,
+                }),
+                requestJson({ action: 'v1.getSeriesAttributes', seriesId }),
+                requestJson({ action: 'v1.listProducts', seriesId }),
+            ]);
+
+            if (requestId !== state.seriesRequestId) {
                 return;
             }
-            var header = $('<tr></tr>')
-                .append('<th>ID</th>')
-                .append('<th>Key</th>')
-                .append('<th>Label</th>')
-                .append('<th>Required</th>')
-                .append('<th>Sort</th>')
-                .append('<th>Actions</th>');
-            $table.append(header);
-            $.each(metadataFields, function (_, field) {
-                var requiredText = field.isRequired ? 'yes' : 'no';
-                var $row = $('<tr></tr>');
-                $row.append('<td>' + field.id + '</td>');
-                $row.append('<td>' + field.fieldKey + '</td>');
-                $row.append('<td>' + field.label + '</td>');
-                $row.append('<td>' + requiredText + '</td>');
-                $row.append('<td>' + field.sortOrder + '</td>');
-                var $actions = $('<td></td>');
-                var $edit = $('<button type="button" class="series-field-action">Edit</button>');
-                $edit.attr('data-field-action', 'edit')
-                    .attr('data-field-id', field.id)
-                    .attr('data-field-scope', FIELD_SCOPE_SERIES);
-                var $delete = $('<button type="button" class="series-field-action">Delete</button>');
-                $delete.attr('data-field-action', 'delete')
-                    .attr('data-field-id', field.id)
-                    .attr('data-field-scope', FIELD_SCOPE_SERIES);
-                $actions.append($edit).append(' ').append($delete);
-                $row.append($actions);
-                $table.append($row);
-            });
+
+            if (!productFields.success) {
+                handleErrorResponse(productFields);
+                return;
+            }
+            if (!metadataFields.success) {
+                handleErrorResponse(metadataFields);
+                return;
+            }
+            if (!metadataValues.success) {
+                handleErrorResponse(metadataValues);
+                return;
+            }
+            if (!products.success) {
+                handleErrorResponse(products);
+                return;
+            }
+
+            state.seriesFields = productFields.data || [];
+            state.seriesMetadataFields =
+                metadataValues.data?.definitions ??
+                metadataFields.data ??
+                [];
+            state.seriesMetadataValues = metadataValues.data?.values || {};
+            state.products = Array.isArray(products.data) ? products.data : [];
+
+            renderSeriesFieldsTable();
+            renderSeriesMetadataFieldsTable();
             renderSeriesMetadataValues();
+            renderProductList();
+            renderProductFormFields();
+        } catch (error) {
+            console.error(error);
+            setStatus('Unable to load series context.', true);
         }
+    };
+    const getProductFields = () => state.seriesFields || [];
+    const getMetadataFields = () => state.seriesMetadataFields || [];
 
-        function renderSeriesMetadataValues() {
-            var metadataFields = getMetadataFields();
-            var values = state.seriesMetadataValues || {};
-            var $container = $('#series-metadata-values');
-            $container.empty();
-            if (metadataFields.length === 0) {
-                $container.append('<div>No metadata fields to edit.</div>');
-                $('#series-metadata-save-button').prop('disabled', true);
+    const findFieldById = (fieldId, scope) => {
+        const list =
+            scope === FIELD_SCOPE.SERIES ? getMetadataFields() : getProductFields();
+        return list.find((field) => Number(field.id) === Number(fieldId)) || null;
+    };
+
+    const renderSeriesFieldsTable = () => {
+        const fields = getProductFields();
+        const $table = $el('seriesFieldsTable');
+        if (!fields.length) {
+            $table.html('<tr><td>No product attribute fields defined for this series.</td></tr>');
+            renderProductFormFields();
+            return;
+        }
+        const rows = [
+            `<tr><th>ID</th><th>Key</th><th>Label</th><th>Required</th><th>Sort</th><th>Actions</th></tr>`,
+            ...fields.map((field) => {
+                const required = field.isRequired ? 'yes' : 'no';
+                return `<tr>
+                    <td>${field.id}</td>
+                    <td>${escapeHtml(field.fieldKey)}</td>
+                    <td>${escapeHtml(field.label)}</td>
+                    <td>${required}</td>
+                    <td>${field.sortOrder ?? 0}</td>
+                    <td>
+                        <button type="button" class="series-field-action" data-field-action="edit" data-field-id="${field.id}" data-field-scope="${FIELD_SCOPE.PRODUCT}">Edit</button>
+                        <button type="button" class="series-field-action" data-field-action="delete" data-field-id="${field.id}" data-field-scope="${FIELD_SCOPE.PRODUCT}">Delete</button>
+                    </td>
+                </tr>`;
+            }),
+        ];
+        $table.html(rows.join(''));
+        renderProductFormFields();
+    };
+
+    const renderSeriesMetadataFieldsTable = () => {
+        const fields = getMetadataFields();
+        const $table = $el('seriesMetadataFieldsTable');
+        if (!fields.length) {
+            $table.html('<tr><td>No series metadata fields defined.</td></tr>');
+            renderSeriesMetadataValues();
+            return;
+        }
+        const rows = [
+            `<tr><th>ID</th><th>Key</th><th>Label</th><th>Required</th><th>Sort</th><th>Actions</th></tr>`,
+            ...fields.map((field) => {
+                const required = field.isRequired ? 'yes' : 'no';
+                return `<tr>
+                    <td>${field.id}</td>
+                    <td>${escapeHtml(field.fieldKey)}</td>
+                    <td>${escapeHtml(field.label)}</td>
+                    <td>${required}</td>
+                    <td>${field.sortOrder ?? 0}</td>
+                    <td>
+                        <button type="button" class="series-field-action" data-field-action="edit" data-field-id="${field.id}" data-field-scope="${FIELD_SCOPE.SERIES}">Edit</button>
+                        <button type="button" class="series-field-action" data-field-action="delete" data-field-id="${field.id}" data-field-scope="${FIELD_SCOPE.SERIES}">Delete</button>
+                    </td>
+                </tr>`;
+            }),
+        ];
+        $table.html(rows.join(''));
+        renderSeriesMetadataValues();
+    };
+
+    const renderSeriesMetadataValues = () => {
+        const fields = getMetadataFields();
+        const values = state.seriesMetadataValues || {};
+        const $container = $el('seriesMetadataValues');
+        if (!fields.length) {
+            $container.html('<div>No metadata fields to edit.</div>');
+            $el('seriesMetadataSaveButton').prop('disabled', true);
+            return;
+        }
+        const inputs = fields
+            .map((field) => {
+                const required = field.isRequired ? ' *' : '';
+                return `<div class="metadata-field-row">
+                    <label>${escapeHtml(field.label)} (${escapeHtml(field.fieldKey)})${required}: </label>
+                    <input type="text" data-metadata-key="${field.fieldKey}" value="${escapeHtml(
+                        values[field.fieldKey] ?? ''
+                    )}">
+                </div>`;
+            })
+            .join('');
+        $container.html(inputs);
+        $el('seriesMetadataSaveButton').prop('disabled', false);
+    };
+
+    const renderProductFormFields = (values = {}) => {
+        const fields = getProductFields();
+        const $container = $el('productCustomFields');
+        if (!fields.length) {
+            $container.html('<div>No custom fields for this series.</div>');
+            return;
+        }
+        const controls = fields
+            .map((field) => {
+                const required = field.isRequired ? ' *' : '';
+                return `<div>
+                    <label>${escapeHtml(field.label)} (${escapeHtml(field.fieldKey)})${required}: </label>
+                    <input type="text" data-field-key="${field.fieldKey}" value="${escapeHtml(
+                        values[field.fieldKey] ?? ''
+                    )}">
+                </div>`;
+            })
+            .join('');
+        $container.html(controls);
+    };
+
+    const renderProductList = () => {
+        const $table = $el('productListTable');
+        const products = state.products || [];
+        if (!products.length) {
+            $table.html('<tr><td>No products for this series.</td></tr>');
+            return;
+        }
+        const fields = getProductFields();
+        const header =
+            '<tr><th>ID</th><th>SKU</th><th>Name</th>' +
+            fields.map((field) => `<th>${escapeHtml(field.label)}</th>`).join('') +
+            '<th>Actions</th></tr>';
+        const rows = products
+            .map((product) => {
+                const customValues = product.customValues || {};
+                const customCells = fields
+                    .map(
+                        (field) =>
+                            `<td>${escapeHtml(customValues[field.fieldKey] ?? '')}</td>`
+                    )
+                    .join('');
+                return `<tr>
+                    <td>${product.id}</td>
+                    <td>${escapeHtml(product.sku)}</td>
+                    <td>${escapeHtml(product.name)}</td>
+                    ${customCells}
+                    <td>
+                        <button type="button" data-product-action="edit" data-product-id="${product.id}">Edit</button>
+                        <button type="button" data-product-action="delete" data-product-id="${product.id}">Delete</button>
+                    </td>
+                </tr>`;
+            })
+            .join('');
+        $table.html(header + rows);
+    };
+
+    const resetSeriesFieldForm = () => {
+        $el('seriesFieldForm')[0].reset();
+        $el('seriesFieldId').val('');
+        $el('seriesFieldSubmit').text('Save Field');
+    };
+
+    const resetSeriesMetadataFieldForm = () => {
+        $el('seriesMetadataFieldForm')[0].reset();
+        $el('seriesMetadataFieldId').val('');
+        $el('seriesMetadataFieldSubmit').text('Save Metadata Field');
+    };
+
+    const resetSeriesMetadataForm = () => {
+        $el('seriesMetadataForm')[0].reset();
+        renderSeriesMetadataValues();
+    };
+
+    const resetProductForm = () => {
+        $el('productForm')[0].reset();
+        renderProductFormFields();
+        $el('productSubmit').text('Save Product');
+        $el('productDeleteButton').prop('disabled', true);
+        state.selectedProductId = null;
+    };
+
+    const populateSeriesFieldForm = (field, scope) => {
+        $el('seriesFieldId').val(field.id);
+        $el('seriesFieldKey').val(field.fieldKey);
+        $el('seriesFieldLabel').val(field.label);
+        $el('seriesFieldScope').val(scope);
+        $el('seriesFieldSortOrder').val(field.sortOrder ?? 0);
+        $el('seriesFieldRequired').prop('checked', !!field.isRequired);
+        $el('seriesFieldSubmit').text('Update Field');
+    };
+
+    const populateSeriesMetadataFieldForm = (field) => {
+        $el('seriesMetadataFieldId').val(field.id);
+        $el('seriesMetadataFieldKey').val(field.fieldKey);
+        $el('seriesMetadataFieldLabel').val(field.label);
+        $el('seriesMetadataFieldSortOrder').val(field.sortOrder ?? 0);
+        $el('seriesMetadataFieldRequired').prop('checked', !!field.isRequired);
+        $el('seriesMetadataFieldSubmit').text('Update Metadata Field');
+    };
+
+    const populateProductForm = (product) => {
+        $el('productId').val(product.id);
+        $el('productSku').val(product.sku);
+        $el('productName').val(product.name);
+        $el('productDescription').val(product.description || '');
+        renderProductFormFields(product.customValues || {});
+        $el('productSubmit').text('Update Product');
+        $el('productDeleteButton').prop('disabled', false);
+        state.selectedProductId = product.id;
+    };
+
+    const loadProductsOnly = async (seriesId) => {
+        try {
+            const response = await requestJson({
+                action: 'v1.listProducts',
+                seriesId,
+            });
+            if (!response.success) {
+                handleErrorResponse(response);
                 return;
             }
-            $.each(metadataFields, function (_, field) {
-                var wrapper = $('<div></div>').addClass('metadata-field-row');
-                var labelText = field.label + ' (' + field.fieldKey + ')';
-                if (field.isRequired) {
-                    labelText += ' *';
-                }
-                var $label = $('<label></label>').text(labelText + ': ');
-                var $input = $('<input type="text">')
-                    .attr('data-metadata-key', field.fieldKey)
-                    .val(values[field.fieldKey] || '');
-                wrapper.append($label).append($input);
-                $container.append(wrapper);
-            });
-            $('#series-metadata-save-button').prop('disabled', false);
+            state.products = Array.isArray(response.data) ? response.data : [];
+            renderProductList();
+        } catch (error) {
+            console.error(error);
+            setStatus('Unable to load products.', true);
         }
-
-        function loadSeriesFields(seriesId) {
-            state.seriesMetadataValues = {};
-            resetSeriesFieldForm();
-            resetSeriesMetadataFieldForm();
-            var requestId = ++state.seriesDataRequestId;
-            var productRequest = $.getJSON(apiBase, { action: 'v1.listSeriesFields', seriesId: seriesId });
-            var metadataRequest = $.getJSON(apiBase, {
-                action: 'v1.listSeriesFields',
-                seriesId: seriesId,
-                scope: FIELD_SCOPE_SERIES
-            });
-
-            $.when(productRequest, metadataRequest)
-                .done(function (productResponse, metadataResponse) {
-                    if (!isSeriesRequestCurrent(seriesId, requestId)) {
-                        return;
-                    }
-                    var productPayload = productResponse[0];
-                    var metadataPayload = metadataResponse[0];
-                    if (!productPayload.success) {
-                        handleErrorResponse(productPayload);
-                        return;
-                    }
-                    if (!metadataPayload.success) {
-                        handleErrorResponse(metadataPayload);
-                        return;
-                    }
-                    state.seriesFields = productPayload.data || [];
-                    state.seriesMetadataFields = metadataPayload.data || [];
-                    renderSeriesFields();
-                    renderSeriesMetadataFields();
-                    loadSeriesMetadataValues(seriesId, requestId);
-                })
-                .fail(function () {
-                    if (!isSeriesRequestCurrent(seriesId, requestId)) {
-                        return;
-                    }
-                    setStatus('Unable to load series fields.', true);
-                });
+    };
+    const renderCsvHistory = (files) => {
+        const $tbody = $el('csvHistoryTable').find('tbody');
+        if (!files.length) {
+            $tbody.html('<tr><td colspan="5">No CSV files stored.</td></tr>');
+            return;
         }
+        const rows = files
+            .map((file) => {
+                const size = Number(file.size || 0);
+                return `<tr>
+                    <td>${escapeHtml((file.type || '').toString().toUpperCase())}</td>
+                    <td>${escapeHtml(file.name || file.id)}</td>
+                    <td>${formatDateTime(file.timestamp)}</td>
+                    <td>${Number.isNaN(size) ? '0' : size.toLocaleString()}</td>
+                    <td>
+                        <button type="button" data-csv-download="${file.id}">Download</button>
+                        <button type="button" data-csv-restore="${file.id}">Restore</button>
+                        <button type="button" data-csv-delete="${file.id}">Delete</button>
+                    </td>
+                </tr>`;
+            })
+            .join('');
+        $tbody.html(rows);
+    };
 
-        function loadSeriesMetadataValues(seriesId, requestId) {
-            var expectedRequestId = requestId || state.seriesDataRequestId;
-            $.getJSON(apiBase, { action: 'v1.getSeriesAttributes', seriesId: seriesId })
-                .done(function (response) {
-                    if (!isSeriesRequestCurrent(seriesId, expectedRequestId)) {
-                        return;
-                    }
-                    if (!response.success) {
-                        handleErrorResponse(response);
-                        return;
-                    }
-                    var data = response.data || {};
-                    if (data.definitions) {
-                        state.seriesMetadataFields = data.definitions;
-                    }
-                    state.seriesMetadataValues = data.values || {};
-                    renderSeriesMetadataFields();
-                })
-                .fail(function () {
-                    if (!isSeriesRequestCurrent(seriesId, expectedRequestId)) {
-                        return;
-                    }
-                    setStatus('Unable to load series metadata.', true);
-                });
+    const formatDeletedSummary = (deleted = {}) => {
+        const preferred = [
+            'categories',
+            'series',
+            'products',
+            'fieldDefinitions',
+            'productValues',
+            'seriesValues',
+        ];
+        const seen = new Set();
+        const parts = [];
+        preferred.forEach((key) => {
+            if (deleted[key] !== undefined) {
+                parts.push(`${key}: ${deleted[key]}`);
+                seen.add(key);
+            }
+        });
+        Object.keys(deleted).forEach((key) => {
+            if (!seen.has(key)) {
+                parts.push(`${key}: ${deleted[key]}`);
+            }
+        });
+        return parts.length ? parts.join(', ') : 'n/a';
+    };
+
+    const renderTruncateAudits = (audits) => {
+        const $tbody = $el('truncateAuditTable').find('tbody');
+        if (!audits.length) {
+            $tbody.html('<tr><td colspan="4">No truncate actions logged.</td></tr>');
+            return;
         }
+        const rows = audits
+            .map(
+                (audit) => `<tr>
+                <td>${formatDateTime(audit.timestamp)}</td>
+                <td>${escapeHtml(audit.reason || '')}</td>
+                <td>${escapeHtml(formatDeletedSummary(audit.deleted))}</td>
+                <td>${escapeHtml(audit.id || '')}</td>
+            </tr>`
+            )
+            .join('');
+        $tbody.html(rows);
+    };
 
-        function resetProductForm() {
-            $('#product-id').val('');
-            $('#product-sku').val('');
-            $('#product-name').val('');
-            $('#product-description').val('');
-            renderProductFormFields({});
-            $('#product-submit').text('Save Product');
-            $('#product-delete-button').prop('disabled', true);
-            state.selectedProductId = null;
-        }
-
-        function renderProductFormFields(values) {
-            var $container = $('#product-custom-fields');
-            $container.empty();
-            var productFields = getProductFields();
-            if (productFields.length === 0) {
-                $container.append('<div>No custom fields for this series.</div>');
+    const loadCsvHistory = async () => {
+        try {
+            const response = await requestJson({ action: 'v1.listCsvHistory' });
+            if (!response.success) {
+                handleErrorResponse(response);
                 return;
             }
-            $.each(productFields, function (_, field) {
-                var wrapper = $('<div></div>');
-                var labelText = field.label + ' (' + field.fieldKey + ')';
-                if (field.isRequired) {
-                    labelText = labelText + ' *';
-                }
-                var $label = $('<label></label>').text(labelText + ': ');
-                var $input = $('<input type="text">');
-                $input.attr('id', 'product-field-' + field.fieldKey);
-                $input.attr('data-field-key', field.fieldKey);
-                if (values && values[field.fieldKey] !== undefined && values[field.fieldKey] !== null) {
-                    $input.val(values[field.fieldKey]);
-                }
-                wrapper.append($label).append($input);
-                $container.append(wrapper);
-            });
+            const payload = response.data || {};
+            renderCsvHistory(payload.files || []);
+            renderTruncateAudits(payload.audits || []);
+            state.truncate.serverLock = payload.truncateInProgress === true;
+            applyCsvLockState();
+        } catch (error) {
+            console.error(error);
+            setStatus('Unable to load CSV history.', true);
         }
+    };
 
-        function populateProductForm(product) {
-            $('#product-id').val(product.id);
-            $('#product-sku').val(product.sku);
-            $('#product-name').val(product.name);
-            $('#product-description').val(product.description || '');
-            renderProductFormFields(product.customValues || {});
-            $('#product-submit').text('Update Product');
-            $('#product-delete-button').prop('disabled', false);
-            state.selectedProductId = product.id;
+    const triggerCsvDownload = (fileId) => {
+        if (!fileId) {
+            return;
         }
+        window.location = `${apiBase}?action=${encodeURIComponent(
+            'v1.downloadCsv'
+        )}&id=${encodeURIComponent(fileId)}`;
+    };
 
-        function renderProductList() {
-            var $table = $('#product-list-table');
-            $table.empty();
-            if (!state.products || state.products.length === 0) {
-                $table.append('<tr><td>No products for this series.</td></tr>');
+    const openTruncateModal = () => {
+        $el('truncateForm')[0].reset();
+        $el('truncateModalError').text('');
+        $el('truncateConfirmButton').prop('disabled', true);
+        $el('truncateModal').removeAttr('hidden');
+        $el('truncateBackdrop').removeAttr('hidden');
+        window.setTimeout(() => {
+            $el('truncateConfirmInput').trigger('focus');
+        }, 50);
+    };
+
+    const closeTruncateModal = () => {
+        $el('truncateModal').attr('hidden', true);
+        $el('truncateBackdrop').attr('hidden', true);
+    };
+
+    const updateTruncateConfirmState = () => {
+        const token = $el('truncateConfirmInput')
+            .val()
+            .toString()
+            .trim()
+            .toUpperCase();
+        const reason = $el('truncateReasonInput').val().toString().trim();
+        $el('truncateConfirmButton').prop(
+            'disabled',
+            !(token === TRUNCATE_TOKEN && reason.length > 0)
+        );
+        $el('truncateModalError').text('');
+    };
+    const handleSeriesFieldAction = async (event) => {
+        const $button = $(event.target);
+        const action = $button.data('field-action');
+        const fieldId = Number($button.data('field-id'));
+        const scope = $button.data('field-scope');
+        if (!fieldId || !scope) {
+            return;
+        }
+        if (action === 'edit') {
+            const field = findFieldById(fieldId, scope);
+            if (!field) {
+                setStatus('Field not found.', true);
                 return;
             }
-            var fields = getProductFields();
-            var header = $('<tr></tr>')
-                .append('<th>ID</th>')
-                .append('<th>SKU</th>')
-                .append('<th>Name</th>');
-            $.each(fields, function (_, field) {
-                header.append('<th>' + field.label + '</th>');
-            });
-            header.append('<th>Actions</th>');
-            $table.append(header);
-            $.each(state.products, function (_, product) {
-                var $row = $('<tr></tr>');
-                $row.append('<td>' + product.id + '</td>');
-                $row.append('<td>' + product.sku + '</td>');
-                $row.append('<td>' + product.name + '</td>');
-                var customValues = product.customValues || {};
-                $.each(fields, function (_, field) {
-                    var value = customValues[field.fieldKey] || '';
-                    $row.append('<td>' + value + '</td>');
-                });
-                var $actions = $('<td></td>');
-                var $edit = $('<button type="button">Edit</button>');
-                $edit.attr('data-product-action', 'edit').attr('data-product-id', product.id);
-                var $delete = $('<button type="button">Delete</button>');
-                $delete.attr('data-product-action', 'delete').attr('data-product-id', product.id);
-                $actions.append($edit).append(' ').append($delete);
-                $row.append($actions);
-                $table.append($row);
-            });
+            if (scope === FIELD_SCOPE.SERIES) {
+                populateSeriesMetadataFieldForm(field);
+            } else {
+                populateSeriesFieldForm(field, scope);
+            }
+            return;
         }
-
-        function renderSearchFieldFilters(fields, initialValues) {
-            var $container = $('#search-field-filters');
-            var values = initialValues || {};
-            $container.empty();
-            state.search.fieldMeta = fields || [];
-            state.search.filters = $.extend({}, values);
-            if (!fields || fields.length === 0) {
-                $container.append('<div class="search-field-placeholder">Select a series to enable custom field filters.</div>');
+        if (action === 'delete') {
+            if (!window.confirm('Delete this field?')) {
                 return;
             }
-            $.each(fields, function (_, field) {
-                var value = values[field.fieldKey] || '';
-                var $row = $('<div class="search-field-row"></div>');
-                var labelText = field.label + ' (' + field.fieldKey + ')';
-                var $label = $('<label></label>').text(labelText + ': ');
-                var $input = $('<input type="text">')
-                    .attr('data-field-key', field.fieldKey)
-                    .val(value);
-                $row.append($label).append($input);
-                $container.append($row);
-            });
-        }
-
-        function renderSearchSeriesMetaFilters(fields, initialValues) {
-            var $container = $('#search-series-meta-filters');
-            var values = initialValues || {};
-            $container.empty();
-            state.search.seriesMetaDefinitions = fields || [];
-            state.search.seriesMetaFilters = $.extend({}, values);
-            if (!fields || fields.length === 0) {
-                $container.append('<div class="search-field-placeholder">Select a series to enable metadata filters.</div>');
-                return;
-            }
-            $.each(fields, function (_, field) {
-                var value = values[field.fieldKey] || '';
-                var $row = $('<div class="search-field-row"></div>');
-                var labelText = field.label + ' (' + field.fieldKey + ')';
-                var $label = $('<label></label>').text(labelText + ': ');
-                var $input = $('<input type="text">')
-                    .attr('data-metadata-key', field.fieldKey)
-                    .val(value);
-                $row.append($label).append($input);
-                $container.append($row);
-            });
-        }
-
-        function loadSearchFieldMeta(seriesId, initialFieldValues, initialMetadataValues) {
-            var normalizedSeriesId = seriesId ? parseInt(seriesId, 10) : null;
-            state.search.currentSeriesId = normalizedSeriesId;
-            var requestId = ++state.search.seriesFieldRequestId;
-            if (!normalizedSeriesId) {
-                renderSearchFieldFilters([], {});
-                renderSearchSeriesMetaFilters([], {});
-                return;
-            }
-            var productRequest = $.getJSON(apiBase, { action: 'v1.listSeriesFields', seriesId: seriesId });
-            var metadataRequest = $.getJSON(apiBase, {
-                action: 'v1.listSeriesFields',
-                seriesId: seriesId,
-                scope: FIELD_SCOPE_SERIES
-            });
-            $.when(productRequest, metadataRequest)
-                .done(function (productResponse, metadataResponse) {
-                    if (!isSearchRequestCurrent(seriesId, requestId)) {
-                        return;
-                    }
-                    var productPayload = productResponse[0];
-                    var metadataPayload = metadataResponse[0];
-                    if (!productPayload.success) {
-                        handleErrorResponse(productPayload);
-                        return;
-                    }
-                    if (!metadataPayload.success) {
-                        handleErrorResponse(metadataPayload);
-                        return;
-                    }
-                    renderSearchFieldFilters(productPayload.data || [], initialFieldValues || {});
-                    renderSearchSeriesMetaFilters(metadataPayload.data || [], initialMetadataValues || {});
-                })
-                .fail(function () {
-                    if (!isSearchRequestCurrent(seriesId, requestId)) {
-                        return;
-                    }
-                    setStatus('Unable to load series field filters.', true);
-                });
-        }
-
-        function renderSearchResults(data) {
-            var $results = $('#search-results');
-            $results.empty();
-
-            if (!data) {
-                $results.append('<div class="search-field-placeholder">No results.</div>');
-                return;
-            }
-
-            var hasAny = false;
-
-            function addSection(title, items, builder) {
-                if (!items || items.length === 0) {
+            try {
+                const response = await postJson('v1.deleteSeriesField', { id: fieldId });
+                if (!response.success) {
+                    handleErrorResponse(response);
                     return;
                 }
-                hasAny = true;
-                var $section = $('<div class="search-results-section"></div>');
-                $section.append($('<h4></h4>').text(title));
-                var $list = $('<ul class="search-results-list"></ul>');
-                $.each(items, function (_, item) {
-                    $list.append(builder(item));
-                });
-                $section.append($list);
-                $results.append($section);
-            }
-
-            addSection('Categories', data.categories || [], function (item) {
-                var text = item.name + ' (ID ' + item.id + ')';
-                if (item.parentName) {
-                    text += ' — Parent: ' + item.parentName;
-                }
-                return $('<li></li>').text(text);
-            });
-
-            addSection('Series', data.series || [], function (item) {
-                var text = item.name + ' (ID ' + item.id + ')';
-                if (item.parentName) {
-                    text += ' - Category: ' + item.parentName;
-                }
-                var $li = $('<li></li>').text(text);
-                var fieldCount = item.fieldMeta ? item.fieldMeta.length : 0;
-                var metaParts = [fieldCount + ' custom field(s)'];
-                if (item.seriesMeta) {
-                    var snippets = [];
-                    $.each(item.seriesMeta, function (key, value) {
-                        if (value) {
-                            snippets.push(key + '=' + value);
-                        }
-                    });
-                    if (snippets.length > 0) {
-                        metaParts.push(snippets.join(', '));
-                    }
-                }
-                var $meta = $('<span class="search-results-meta"></span>').text(metaParts.join(' | '));
-                var $button = $('<button type="button" class="search-use-series">Use Filters</button>')
-                    .attr('data-series-id', item.id);
-                $li.append($meta).append($button);
-                return $li;
-            });
-
-            addSection('Products', data.products || [], function (item) {
-                var header = item.sku + ' - ' + item.name;
-                var $li = $('<li></li>').text(header);
-                var parts = [];
-                parts.push('Series: ' + item.seriesName);
-                $.each(item.customValues || {}, function (key, value) {
-                    parts.push(key + '=' + value);
-                });
-                var $meta = $('<span class="search-results-meta"></span>').text(parts.join(' | '));
-                $li.append($meta);
-                return $li;
-            });
-
-            if (!hasAny) {
-                $results.append('<div class="search-field-placeholder">No results found.</div>');
-            }
-
-            if (data.seriesMeta) {
-                var metaItems = [];
-                $.each(data.seriesMeta, function (key, value) {
-                    metaItems.push(key + ': ' + (value || ''));
-                });
-                if (metaItems.length > 0) {
-                    var $metaSection = $('<div class="search-results-section"></div>');
-                    $metaSection.append('<h4>Selected Series Metadata</h4>');
-                    var $list = $('<ul class="search-results-list"></ul>');
-                    $.each(metaItems, function (_, item) {
-                        $list.append($('<li></li>').text(item));
-                    });
-                    $metaSection.append($list);
-                    $results.append($metaSection);
-                }
+                setStatus('Series field deleted.', false);
+                loadSeriesContext(state.selectedNodeId);
+            } catch (error) {
+                console.error(error);
+                setStatus('Failed to delete series field.', true);
             }
         }
+    };
 
-        function loadCsvHistory() {
-            $.getJSON(apiBase, { action: 'v1.listCsvHistory' })
-                .done(function (response) {
-                    if (!response.success) {
-                        handleErrorResponse(response);
-                        return;
-                    }
-                    var files = (response.data && response.data.files) ? response.data.files : [];
-                    renderCsvHistory(files);
-                })
-                .fail(function () {
-                    setStatus('Unable to load CSV history.', true);
-                });
+    const handleProductListAction = async (event) => {
+        const $button = $(event.target);
+        const action = $button.data('product-action');
+        const productId = Number($button.data('product-id'));
+        if (!action || !productId) {
+            return;
         }
-
-        function renderCsvHistory(files) {
-            var $tbody = $('#csv-history-table tbody');
-            $tbody.empty();
-            if (!files || files.length === 0) {
-                $tbody.append('<tr><td colspan="5">No CSV files stored.</td></tr>');
+        const product = state.products.find((item) => item.id === productId);
+        if (!product) {
+            setStatus('Product not found.', true);
+            return;
+        }
+        if (action === 'edit') {
+            populateProductForm(product);
+            return;
+        }
+    if (action === 'delete') {
+        if (!window.confirm('Delete this product?')) {
+            return;
+        }
+        try {
+            const response = await postJson('v1.deleteProduct', { id: productId });
+            if (!response.success) {
+                handleErrorResponse(response);
                 return;
             }
-            $.each(files, function (_, file) {
-                var $row = $('<tr></tr>');
-                var typeLabel = (file.type || '').toString().toUpperCase();
-                var nameLabel = file.name || file.id;
-                var sizeValue = Number(file.size || 0);
-                var sizeLabel = !isNaN(sizeValue) ? sizeValue.toLocaleString() : '0';
-                var timestampLabel = '';
-                if (file.timestamp) {
-                    var parsed = new Date(file.timestamp);
-                    if (!isNaN(parsed.getTime())) {
-                        timestampLabel = parsed.toLocaleString();
-                    }
-                }
-
-                $row.append($('<td></td>').text(typeLabel));
-                $row.append($('<td></td>').text(nameLabel));
-                $row.append($('<td></td>').text(timestampLabel));
-                $row.append($('<td></td>').text(sizeLabel));
-
-                var $actions = $('<td></td>');
-                var $download = $('<button type="button">Download</button>').attr('data-csv-download', file.id);
-                var $restore = $('<button type="button">Restore</button>').attr('data-csv-restore', file.id);
-                var $delete = $('<button type="button">Delete</button>').attr('data-csv-delete', file.id);
-                $actions.append($download).append(' ').append($restore).append(' ').append($delete);
-                $row.append($actions);
-
-                $tbody.append($row);
-            });
+            setStatus('Product deleted.', false);
+            resetProductForm();
+            await loadProductsOnly(state.selectedNodeId);
+        } catch (error) {
+            console.error(error);
+            setStatus('Failed to delete product.', true);
         }
+    }
+};
 
-        function triggerCsvDownload(fileId) {
-            if (!fileId) {
-                return;
-            }
-            window.location = apiBase + '?action=' + encodeURIComponent('v1.downloadCsv') + '&id=' + encodeURIComponent(fileId);
-        }
-
-        function loadProducts(seriesId) {
-            var requestId = state.seriesDataRequestId;
-            $.getJSON(apiBase, { action: 'v1.listProducts', seriesId: seriesId })
-                .done(function (response) {
-                    if (!isSeriesRequestCurrent(seriesId, requestId)) {
-                        return;
-                    }
-                    if (!response.success) {
-                        handleErrorResponse(response);
-                        return;
-                    }
-                    state.products = response.data || [];
-                    renderProductList();
-                })
-                .fail(function () {
-                    if (!isSeriesRequestCurrent(seriesId, requestId)) {
-                        return;
-                    }
-                    setStatus('Unable to load products.', true);
-                });
-        }
-
-        $('#hierarchy-container').on('click', 'a[data-node-id]', function (event) {
+    const bindHierarchyEvents = () => {
+        $el('hierarchyContainer').on('click', 'a[data-node-id]', (event) => {
             event.preventDefault();
-            var nodeId = parseInt($(this).attr('data-node-id'), 10);
-            selectNode(nodeId);
+            const nodeId = toInt($(event.currentTarget).data('node-id'));
+            if (nodeId) {
+                selectNode(nodeId);
+            }
         });
 
-        $('#node-create-form').on('submit', function (event) {
+        $el('nodeCreateForm').on('submit', async (event) => {
             event.preventDefault();
-            var parentInput = $('#create-parent-id').val();
-            var parentId = parentInput === '' ? null : parseInt(parentInput, 10);
-            if (parentInput !== '' && isNaN(parentId)) {
-                setStatus('Parent ID must be numeric or empty.', true);
-                return;
-            }
-            var payload = {
-                parentId: parentId,
-                name: $('#create-node-name').val(),
-                type: $('#create-node-type').val(),
-                displayOrder: parseInt($('#create-display-order').val(), 10) || 0
+            const parentValue = $el('createParentId').val();
+            const payload = {
+                parentId:
+                    parentValue === '' ? null : toInt(parentValue, null),
+                name: $el('createNodeName').val(),
+                type: $el('createNodeType').val(),
+                displayOrder: toInt($el('createDisplayOrder').val()),
             };
-            postAction('v1.saveNode', payload)
-                .done(function (response) {
-                    if (!response.success) {
-                        handleErrorResponse(response);
-                        return;
-                    }
-                    setStatus('Node saved successfully.', false);
-                    $('#create-node-name').val('');
-                    $('#create-display-order').val('0');
-                    if (payload.type === 'category') {
-                        $('#create-node-type').val('category');
-                    }
-                    loadHierarchy();
-                })
-                .fail(function () {
-                    setStatus('Failed to save node.', true);
-                });
+            try {
+                const response = await postJson('v1.saveNode', payload);
+                if (!response.success) {
+                    handleErrorResponse(response);
+                    return;
+                }
+                setStatus('Node created.', false);
+                $el('nodeCreateForm')[0].reset();
+                await loadHierarchy();
+            } catch (error) {
+                console.error(error);
+                setStatus('Failed to create node.', true);
+            }
         });
 
-        $('#node-update-form').on('submit', function (event) {
+        $el('nodeUpdateForm').on('submit', async (event) => {
             event.preventDefault();
-            var nodeId = $('#update-node-id').val();
-            if (!nodeId) {
-                setStatus('No node selected.', true);
-                return;
-            }
-            var node = state.nodeIndex[parseInt(nodeId, 10)];
-            if (!node) {
-                setStatus('Selected node no longer exists.', true);
-                return;
-            }
-            var payload = {
-                id: node.id,
-                parentId: node.parentId,
-                name: $('#update-node-name').val(),
-                type: $('#update-node-type-value').val(),
-                displayOrder: parseInt($('#update-node-display-order').val(), 10) || 0
-            };
-            postAction('v1.saveNode', payload)
-                .done(function (response) {
-                    if (!response.success) {
-                        handleErrorResponse(response);
-                        return;
-                    }
-                    setStatus('Node updated successfully.', false);
-                    loadHierarchy();
-                })
-                .fail(function () {
-                    setStatus('Failed to update node.', true);
-                });
-        });
-
-        $('#node-delete-button').on('click', function () {
             if (!state.selectedNodeId) {
-                setStatus('Select a node to delete.', true);
+                setStatus('Select a node to update.', true);
+                return;
+            }
+            const payload = {
+                id: state.selectedNodeId,
+                name: $el('updateNodeName').val(),
+                displayOrder: toInt($el('updateNodeDisplayOrder').val()),
+                type: $el('updateNodeTypeValue').val(),
+            };
+            try {
+                const response = await postJson('v1.saveNode', payload);
+                if (!response.success) {
+                    handleErrorResponse(response);
+                    return;
+                }
+                setStatus('Node updated.', false);
+                await loadHierarchy();
+            } catch (error) {
+                console.error(error);
+                setStatus('Failed to update node.', true);
+            }
+        });
+
+        $el('nodeDeleteButton').on('click', async () => {
+            if (!state.selectedNodeId) {
                 return;
             }
             if (!window.confirm('Delete the selected node?')) {
                 return;
             }
-            postAction('v1.deleteNode', { id: state.selectedNodeId })
-                .done(function (response) {
-                    if (!response.success) {
-                        handleErrorResponse(response);
-                        return;
-                    }
-                    setStatus('Node deleted.', false);
-                    state.selectedNodeId = null;
-                    loadHierarchy();
-                })
-                .fail(function () {
-                    setStatus('Failed to delete node.', true);
+            try {
+                const response = await postJson('v1.deleteNode', {
+                    id: state.selectedNodeId,
                 });
-        });
-
-        $('#search-series-select').on('change', function () {
-            var seriesId = $(this).val();
-            if (seriesId) {
-                loadSearchFieldMeta(
-                    parseInt(seriesId, 10),
-                    state.search.filters || {},
-                    state.search.seriesMetaFilters || {}
-                );
-            } else {
-                renderSearchFieldFilters([], {});
-                renderSearchSeriesMetaFilters([], {});
-            }
-        });
-
-        $('#search-reset-button').on('click', function () {
-            $('#search-query').val('');
-            $('.search-scope').prop('checked', true);
-            $('#search-series-select').val('');
-            state.search.filters = {};
-            state.search.fieldMeta = [];
-            renderSearchFieldFilters([], {});
-            state.search.seriesMetaFilters = {};
-            state.search.seriesMetaDefinitions = [];
-            renderSearchSeriesMetaFilters([], {});
-            $('#search-results').empty();
-            setStatus('', false);
-        });
-
-        $('#search-form').on('submit', function (event) {
-            event.preventDefault();
-            var query = $('#search-query').val();
-            var scope = [];
-            $('.search-scope:checked').each(function () {
-                scope.push($(this).val());
-            });
-            if (scope.length === 0) {
-                setStatus('Select at least one scope to search.', true);
-                return;
-            }
-            var seriesValue = $('#search-series-select').val();
-            var seriesId = seriesValue ? parseInt(seriesValue, 10) : null;
-            var fieldFilters = {};
-            $('#search-field-filters input[data-field-key]').each(function () {
-                var key = $(this).attr('data-field-key');
-                var value = $.trim($(this).val());
-                if (value !== '') {
-                    fieldFilters[key] = value;
+                if (!response.success) {
+                    handleErrorResponse(response);
+                    return;
                 }
-            });
-            var seriesMetaFilters = {};
-            $('#search-series-meta-filters input[data-metadata-key]').each(function () {
-                var key = $(this).attr('data-metadata-key');
-                var value = $.trim($(this).val());
-                if (value !== '') {
-                    seriesMetaFilters[key] = value;
+                setStatus('Node deleted.', false);
+                state.selectedNodeId = null;
+                await loadHierarchy();
+            } catch (error) {
+                console.error(error);
+                setStatus('Failed to delete node.', true);
+            }
+        });
+
+        $el('hierarchyContainer').on('click', '.node-toggle', (event) => {
+            const button = event.currentTarget;
+            const targetId = button.getAttribute('data-node-toggle');
+            const expanded = button.getAttribute('aria-expanded') === 'true';
+            button.setAttribute('aria-expanded', (!expanded).toString());
+            if (targetId) {
+                const target = document.getElementById(targetId);
+                if (target) {
+                    target.classList.toggle('is-open', !expanded);
                 }
-            });
-            if ($.trim(query) === '' && !seriesId && Object.keys(fieldFilters).length === 0 && Object.keys(seriesMetaFilters).length === 0) {
-                setStatus('Enter a keyword or select a series/filter to search.', true);
-                return;
             }
-            var payload = {
-                query: query,
-                scope: scope
-            };
-            if (seriesId) {
-                payload.seriesId = seriesId;
-            }
-            if (Object.keys(fieldFilters).length > 0) {
-                payload.fieldFilters = fieldFilters;
-            }
-            if (Object.keys(seriesMetaFilters).length > 0) {
-                payload.seriesMetaFilters = seriesMetaFilters;
-            }
-            state.search.seriesMetaFilters = seriesMetaFilters;
-            postAction('v1.searchCatalog', payload)
-                .done(function (response) {
-                    if (!response.success) {
-                        handleErrorResponse(response);
-                        return;
-                    }
-                    var data = response.data || {};
-                    if (seriesId) {
-                        renderSearchFieldFilters(data.fieldMeta || [], fieldFilters);
-                        renderSearchSeriesMetaFilters(data.seriesFieldMeta || [], seriesMetaFilters);
-                    } else if (data.fieldMeta && data.fieldMeta.length > 0) {
-                        renderSearchFieldFilters(data.fieldMeta, fieldFilters);
-                    } else if (!seriesId) {
-                        state.search.filters = fieldFilters;
-                    }
-                    if (!seriesId) {
-                        renderSearchSeriesMetaFilters([], {});
-                    }
-                    renderSearchResults(data);
-                    var count = (data.categories ? data.categories.length : 0) +
-                        (data.series ? data.series.length : 0) +
-                        (data.products ? data.products.length : 0);
-                    setStatus('Search complete: ' + count + ' result(s).', false);
-                })
-                .fail(function () {
-                    setStatus('Search request failed.', true);
-                });
         });
+    };
 
-        $('#search-results').on('click', '.search-use-series', function () {
-            var seriesId = $(this).attr('data-series-id');
-            if (!seriesId) {
-                return;
-            }
-            $('#search-series-select').val(String(seriesId));
-            loadSearchFieldMeta(
-                parseInt(seriesId, 10),
-                state.search.filters || {},
-                state.search.seriesMetaFilters || {}
-            );
-        });
+    const bindSeriesFieldEvents = () => {
+        $el('seriesFieldsTable').on('click', '.series-field-action', handleSeriesFieldAction);
+        $el('seriesMetadataFieldsTable').on(
+            'click',
+            '.series-field-action',
+            handleSeriesFieldAction
+        );
 
-        $('#series-field-form').on('submit', function (event) {
+        $el('seriesFieldForm').on('submit', async (event) => {
             event.preventDefault();
             if (!state.selectedNodeId) {
                 setStatus('Select a series first.', true);
                 return;
             }
-            var payload = {
-                id: $('#series-field-id').val() ? parseInt($('#series-field-id').val(), 10) : null,
+            const payload = {
                 seriesId: state.selectedNodeId,
-                fieldKey: $('#series-field-key').val(),
-                label: $('#series-field-label').val(),
-                fieldType: 'text',
-                fieldScope: $('#series-field-scope').val() || FIELD_SCOPE_PRODUCT,
-                sortOrder: parseInt($('#series-field-sort-order').val(), 10) || 0,
-                isRequired: $('#series-field-required').is(':checked')
+                id: toInt($el('seriesFieldId').val(), null),
+                fieldKey: $el('seriesFieldKey').val(),
+                label: $el('seriesFieldLabel').val(),
+                fieldScope: $el('seriesFieldScope').val(),
+                sortOrder: toInt($el('seriesFieldSortOrder').val()),
+                isRequired: $el('seriesFieldRequired').is(':checked'),
             };
-            postAction('v1.saveSeriesField', payload)
-                .done(function (response) {
-                    if (!response.success) {
-                        handleErrorResponse(response);
-                        return;
-                    }
-                    setStatus('Series field saved.', false);
-                    resetSeriesFieldForm();
-                    loadSeriesFields(state.selectedNodeId);
-                })
-                .fail(function () {
-                    setStatus('Failed to save series field.', true);
-                });
+            if (!payload.id) {
+                delete payload.id;
+            }
+            try {
+                const response = await postJson('v1.saveSeriesField', payload);
+                if (!response.success) {
+                    handleErrorResponse(response);
+                    return;
+                }
+                setStatus('Series field saved.', false);
+                resetSeriesFieldForm();
+                await loadSeriesContext(state.selectedNodeId);
+            } catch (error) {
+                console.error(error);
+                setStatus('Failed to save series field.', true);
+            }
         });
 
-        $('#series-field-clear-button').on('click', function () {
+        $el('seriesFieldClearButton').on('click', () => {
             resetSeriesFieldForm();
         });
 
-        $('#series-metadata-field-form').on('submit', function (event) {
+        $el('seriesMetadataFieldForm').on('submit', async (event) => {
             event.preventDefault();
             if (!state.selectedNodeId) {
                 setStatus('Select a series first.', true);
                 return;
             }
-            var payload = {
-                id: $('#series-metadata-field-id').val() ? parseInt($('#series-metadata-field-id').val(), 10) : null,
+            const payload = {
                 seriesId: state.selectedNodeId,
-                fieldKey: $('#series-metadata-field-key').val(),
-                label: $('#series-metadata-field-label').val(),
-                fieldType: 'text',
-                fieldScope: FIELD_SCOPE_SERIES,
-                sortOrder: parseInt($('#series-metadata-field-sort-order').val(), 10) || 0,
-                isRequired: $('#series-metadata-field-required').is(':checked')
+                id: toInt($el('seriesMetadataFieldId').val(), null),
+                fieldKey: $el('seriesMetadataFieldKey').val(),
+                label: $el('seriesMetadataFieldLabel').val(),
+                fieldScope: FIELD_SCOPE.SERIES,
+                sortOrder: toInt($el('seriesMetadataFieldSortOrder').val()),
+                isRequired: $el('seriesMetadataFieldRequired').is(':checked'),
             };
-            postAction('v1.saveSeriesField', payload)
-                .done(function (response) {
-                    if (!response.success) {
-                        handleErrorResponse(response);
-                        return;
-                    }
-                    setStatus('Series metadata field saved.', false);
-                    resetSeriesMetadataFieldForm();
-                    loadSeriesFields(state.selectedNodeId);
-                })
-                .fail(function () {
-                    setStatus('Failed to save metadata field.', true);
-                });
-        });
-
-        $('#series-metadata-field-clear-button').on('click', function () {
-            resetSeriesMetadataFieldForm();
-        });
-
-        $('#series-metadata-form').on('submit', function (event) {
-            event.preventDefault();
-            if (!state.selectedNodeId) {
-                setStatus('Select a series first.', true);
-                return;
+            if (!payload.id) {
+                delete payload.id;
             }
-            var values = {};
-            $('#series-metadata-values input[data-metadata-key]').each(function () {
-                var key = $(this).attr('data-metadata-key');
-                values[key] = $(this).val();
-            });
-            postAction('v1.saveSeriesAttributes', {
-                seriesId: state.selectedNodeId,
-                values: values
-            })
-                .done(function (response) {
-                    if (!response.success) {
-                        handleErrorResponse(response);
-                        return;
-                    }
-                    var data = response.data || {};
-                    state.seriesMetadataValues = data.values || values;
-                    setStatus('Series metadata saved.', false);
-                    renderSeriesMetadataValues();
-                })
-                .fail(function () {
-                    setStatus('Failed to save series metadata.', true);
-                });
-        });
-
-        $('#series-metadata-reset-button').on('click', function () {
-            renderSeriesMetadataValues();
-        });
-
-        $('#series-management').on('click', '.series-field-action', function () {
-            var action = $(this).attr('data-field-action');
-            var fieldId = parseInt($(this).attr('data-field-id'), 10);
-            var scope = $(this).attr('data-field-scope') || FIELD_SCOPE_PRODUCT;
-            var field = findSeriesField(fieldId, scope);
-            if (!field) {
-                setStatus('Field not found.', true);
-                return;
-            }
-            if (action === 'edit') {
-                if (scope === FIELD_SCOPE_SERIES) {
-                    populateSeriesMetadataFieldForm(field);
-                } else {
-                    populateSeriesFieldForm(field);
-                }
-            } else if (action === 'delete') {
-                if (!window.confirm('Delete this field?')) {
+            try {
+                const response = await postJson('v1.saveSeriesField', payload);
+                if (!response.success) {
+                    handleErrorResponse(response);
                     return;
                 }
-                postAction('v1.deleteSeriesField', { id: fieldId })
-                    .done(function (response) {
-                        if (!response.success) {
-                            handleErrorResponse(response);
-                            return;
-                        }
-                        setStatus('Series field deleted.', false);
-                        if (scope === FIELD_SCOPE_SERIES) {
-                            resetSeriesMetadataFieldForm();
-                        } else {
-                            resetSeriesFieldForm();
-                        }
-                        loadSeriesFields(state.selectedNodeId);
-                        if (scope === FIELD_SCOPE_PRODUCT) {
-                            loadProducts(state.selectedNodeId);
-                        } else {
-                            loadSeriesMetadataValues(state.selectedNodeId);
-                        }
-                    })
-                    .fail(function () {
-                        setStatus('Failed to delete series field.', true);
-                    });
+                setStatus('Metadata field saved.', false);
+                resetSeriesMetadataFieldForm();
+                await loadSeriesContext(state.selectedNodeId);
+            } catch (error) {
+                console.error(error);
+                setStatus('Failed to save metadata field.', true);
             }
         });
 
-        $('#product-form').on('submit', function (event) {
+        $el('seriesMetadataFieldClearButton').on('click', () => {
+            resetSeriesMetadataFieldForm();
+        });
+    };
+    const bindMetadataEvents = () => {
+        $el('seriesMetadataForm').on('submit', async (event) => {
             event.preventDefault();
             if (!state.selectedNodeId) {
                 setStatus('Select a series first.', true);
                 return;
             }
-            var payload = {
-                id: $('#product-id').val() ? parseInt($('#product-id').val(), 10) : null,
-                seriesId: state.selectedNodeId,
-                sku: $('#product-sku').val(),
-                name: $('#product-name').val(),
-                description: $('#product-description').val(),
-                customValues: {}
-            };
-            $('#product-custom-fields input[data-field-key]').each(function () {
-                var key = $(this).attr('data-field-key');
-                payload.customValues[key] = $(this).val();
-            });
-
-            postAction('v1.saveProduct', payload)
-                .done(function (response) {
-                    if (!response.success) {
-                        handleErrorResponse(response);
-                        return;
-                    }
-                    setStatus('Product saved.', false);
-                    resetProductForm();
-                    loadProducts(state.selectedNodeId);
-                })
-                .fail(function () {
-                    setStatus('Failed to save product.', true);
+            const values = {};
+            $el('seriesMetadataValues')
+                .find('input[data-metadata-key]')
+                .each((_, input) => {
+                    const $input = $(input);
+                    values[$input.data('metadata-key')] = $input.val();
                 });
+            try {
+                const response = await postJson('v1.saveSeriesAttributes', {
+                    seriesId: state.selectedNodeId,
+                    values,
+                });
+                if (!response.success) {
+                    handleErrorResponse(response);
+                    return;
+                }
+                setStatus('Metadata saved.', false);
+                await loadSeriesContext(state.selectedNodeId);
+            } catch (error) {
+                console.error(error);
+                setStatus('Failed to save metadata.', true);
+            }
         });
 
-        $('#product-clear-button').on('click', function () {
+        $el('seriesMetadataResetButton').on('click', () => {
+            renderSeriesMetadataValues();
+        });
+    };
+
+    const bindProductEvents = () => {
+        $el('productForm').on('submit', async (event) => {
+            event.preventDefault();
+            if (!state.selectedNodeId) {
+                setStatus('Select a series first.', true);
+                return;
+            }
+            const customValues = {};
+            $el('productCustomFields')
+                .find('input[data-field-key]')
+                .each((_, input) => {
+                    const $input = $(input);
+                    customValues[$input.data('field-key')] = $input.val();
+                });
+            const payload = {
+                id: toInt($el('productId').val(), null),
+                seriesId: state.selectedNodeId,
+                sku: $el('productSku').val(),
+                name: $el('productName').val(),
+                description: $el('productDescription').val(),
+                customValues,
+            };
+            if (!payload.id) {
+                delete payload.id;
+            }
+            try {
+                const response = await postJson('v1.saveProduct', payload);
+                if (!response.success) {
+                    handleErrorResponse(response);
+                    return;
+                }
+                setStatus('Product saved.', false);
+                resetProductForm();
+                await loadProductsOnly(state.selectedNodeId);
+            } catch (error) {
+                console.error(error);
+                setStatus('Failed to save product.', true);
+            }
+        });
+
+        $el('productClearButton').on('click', () => {
             resetProductForm();
         });
 
-        $('#product-delete-button').on('click', function () {
+        $el('productDeleteButton').on('click', async () => {
             if (!state.selectedProductId) {
-                setStatus('Select a product to delete.', true);
                 return;
             }
             if (!window.confirm('Delete the selected product?')) {
                 return;
             }
-            postAction('v1.deleteProduct', { id: state.selectedProductId })
-                .done(function (response) {
-                    if (!response.success) {
-                        handleErrorResponse(response);
-                        return;
-                    }
-                    setStatus('Product deleted.', false);
-                    resetProductForm();
-                    loadProducts(state.selectedNodeId);
-                })
-                .fail(function () {
-                    setStatus('Failed to delete product.', true);
+            try {
+                const response = await postJson('v1.deleteProduct', {
+                    id: state.selectedProductId,
                 });
+                if (!response.success) {
+                    handleErrorResponse(response);
+                    return;
+                }
+                setStatus('Product deleted.', false);
+                resetProductForm();
+                await loadProductsOnly(state.selectedNodeId);
+            } catch (error) {
+                console.error(error);
+                setStatus('Failed to delete product.', true);
+            }
         });
 
-        $('#product-list-table').on('click', 'button[data-product-action]', function () {
-            var action = $(this).attr('data-product-action');
-            var productId = parseInt($(this).attr('data-product-id'), 10);
-            var product = null;
-            $.each(state.products, function (_, item) {
-                if (item.id === productId) {
-                    product = item;
-                }
-            });
-            if (!product) {
-                setStatus('Product not found.', true);
+        $el('productListTable').on('click', 'button[data-product-action]', handleProductListAction);
+    };
+    const bindCsvEvents = () => {
+        $el('csvExportButton').on('click', async () => {
+            if (state.truncate.submitting || state.truncate.serverLock) {
+                setStatus('Catalog truncate in progress. Try again after it completes.', true);
                 return;
             }
-            if (action === 'edit') {
-                populateProductForm(product);
-            } else if (action === 'delete') {
-                if (!window.confirm('Delete this product?')) {
+            const $button = $el('csvExportButton');
+            $button.prop('disabled', true);
+            try {
+                const response = await postJson('v1.exportCsv', {});
+                if (!response.success) {
+                    handleErrorResponse(response);
                     return;
                 }
-                postAction('v1.deleteProduct', { id: productId })
-                    .done(function (response) {
-                        if (!response.success) {
-                            handleErrorResponse(response);
-                            return;
-                        }
-                        setStatus('Product deleted.', false);
-                        resetProductForm();
-                        loadProducts(state.selectedNodeId);
-                    })
-                    .fail(function () {
-                        setStatus('Failed to delete product.', true);
-                    });
+                const file = response.data || {};
+                setStatus('Catalog CSV exported.', false);
+                await loadCsvHistory();
+                if (file.id) {
+                    triggerCsvDownload(file.id);
+                }
+            } catch (error) {
+                console.error(error);
+                setStatus('Failed to export catalog CSV.', true);
+            } finally {
+                $button.prop('disabled', false);
             }
         });
 
-        $(function () {
-            $('#node-update-submit').prop('disabled', true);
-            $('#node-delete-button').prop('disabled', true);
-            $('#product-delete-button').prop('disabled', true);
-
-            $('#csv-export-button').on('click', function () {
-                var $button = $(this);
-                $button.prop('disabled', true);
-                postAction('v1.exportCsv', {})
-                    .done(function (response) {
-                        if (!response.success) {
-                            handleErrorResponse(response);
-                            return;
-                        }
-                        var file = response.data || {};
-                        setStatus('Catalog CSV exported.', false);
-                        loadCsvHistory();
-                        if (file.id) {
-                            triggerCsvDownload(file.id);
-                        }
-                    })
-                    .fail(function () {
-                        setStatus('Failed to export catalog CSV.', true);
-                    })
-                    .always(function () {
-                        $button.prop('disabled', false);
-                    });
-            });
-
-            $('#csv-import-form').on('submit', function (event) {
-                event.preventDefault();
-                var $fileInput = $('#csv-import-file');
-                if (!$fileInput[0].files || $fileInput[0].files.length === 0) {
-                    setStatus('Select a CSV file to import.', true);
+        $el('csvImportForm').on('submit', async (event) => {
+            event.preventDefault();
+            if (state.truncate.submitting || state.truncate.serverLock) {
+                setStatus('Catalog truncate in progress. CSV import disabled until it completes.', true);
+                return;
+            }
+            const fileInput = $el('csvImportFile')[0];
+            if (!fileInput.files || !fileInput.files.length) {
+                setStatus('Select a CSV file to import.', true);
+                return;
+            }
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            const $submit = $el('csvImportSubmit');
+            $submit.prop('disabled', true);
+            try {
+                const response = await postMultipart('v1.importCsv', formData);
+                if (!response.success) {
+                    handleErrorResponse(response);
                     return;
                 }
-                var formData = new FormData();
-                formData.append('file', $fileInput[0].files[0]);
-                var $submit = $('#csv-import-submit');
-                $submit.prop('disabled', true);
-                postMultipart('v1.importCsv', formData)
-                    .done(function (response) {
-                        if (!response.success) {
-                            handleErrorResponse(response);
-                            return;
-                        }
-                        var data = response.data || {};
-                        var message = 'CSV import completed.';
-                        if (typeof data.importedProducts !== 'undefined') {
-                            message = 'CSV import completed (' +
-                                data.importedProducts + ' products, ' +
-                                (data.createdSeries || 0) + ' new series, ' +
-                                (data.createdCategories || 0) + ' new categories).';
-                        }
-                        setStatus(message, false);
-                        $fileInput.val('');
-                        loadHierarchy();
-                        loadCsvHistory();
-                    })
-                    .fail(function () {
-                        setStatus('Failed to import CSV.', true);
-                    })
-                    .always(function () {
-                        $submit.prop('disabled', false);
-                    });
-            });
-
-            $('#csv-history-table').on('click', 'button[data-csv-download]', function () {
-                var fileId = $(this).attr('data-csv-download');
-                triggerCsvDownload(fileId);
-            });
-
-            $('#csv-history-table').on('click', 'button[data-csv-restore]', function () {
-                var fileId = $(this).attr('data-csv-restore');
-                if (!fileId) {
-                    return;
-                }
-                var $button = $(this);
-                $button.prop('disabled', true);
-                postAction('v1.restoreCsv', { id: fileId })
-                    .done(function (response) {
-                        if (!response.success) {
-                            handleErrorResponse(response);
-                            return;
-                        }
-                        var data = response.data || {};
-                        var message = 'CSV restore completed.';
-                        if (typeof data.importedProducts !== 'undefined') {
-                            message = 'CSV restore completed (' +
-                                data.importedProducts + ' products, ' +
-                                (data.createdSeries || 0) + ' new series, ' +
-                                (data.createdCategories || 0) + ' new categories).';
-                        }
-                        setStatus(message, false);
-                        loadHierarchy();
-                        loadCsvHistory();
-                    })
-                    .fail(function () {
-                        setStatus('Failed to restore CSV file.', true);
-                    })
-                    .always(function () {
-                        $button.prop('disabled', false);
-                    });
-            });
-
-            $('#csv-history-table').on('click', 'button[data-csv-delete]', function () {
-                var fileId = $(this).attr('data-csv-delete');
-                if (!fileId) {
-                    return;
-                }
-                if (!window.confirm('Delete this CSV file?')) {
-                    return;
-                }
-                postAction('v1.deleteCsv', { id: fileId })
-                    .done(function (response) {
-                        if (!response.success) {
-                            handleErrorResponse(response);
-                            return;
-                        }
-                        setStatus('CSV file deleted.', false);
-                        loadCsvHistory();
-                    })
-                    .fail(function () {
-                        setStatus('Failed to delete CSV file.', true);
-                    });
-            });
-
-            loadHierarchy();
-            loadCsvHistory();
+                const data = response.data || {};
+                const message = `CSV import completed (${data.importedProducts ?? 0} products, ${data.createdSeries ?? 0} new series, ${data.createdCategories ?? 0} new categories).`;
+                setStatus(message, false);
+                fileInput.value = '';
+                await loadHierarchy();
+                await loadCsvHistory();
+            } catch (error) {
+                console.error(error);
+                setStatus('Failed to import CSV.', true);
+            } finally {
+                $submit.prop('disabled', false);
+            }
         });
-    })(jQuery);
 
+        $el('csvHistoryTable').on('click', 'button[data-csv-download]', (event) => {
+            const fileId = $(event.currentTarget).data('csv-download');
+            triggerCsvDownload(fileId);
+        });
 
+        $el('csvHistoryTable').on('click', 'button[data-csv-restore]', async (event) => {
+            const fileId = $(event.currentTarget).data('csv-restore');
+            if (!fileId) {
+                return;
+            }
+            const $button = $(event.currentTarget);
+            $button.prop('disabled', true);
+            try {
+                const response = await postJson('v1.restoreCsv', { id: fileId });
+                if (!response.success) {
+                    handleErrorResponse(response);
+                    return;
+                }
+                const data = response.data || {};
+                const message = `CSV restore completed (${data.importedProducts ?? 0} products, ${data.createdSeries ?? 0} new series, ${data.createdCategories ?? 0} new categories).`;
+                setStatus(message, false);
+                await loadHierarchy();
+                await loadCsvHistory();
+            } catch (error) {
+                console.error(error);
+                setStatus('Failed to restore CSV file.', true);
+            } finally {
+                $button.prop('disabled', false);
+            }
+        });
 
+        $el('csvHistoryTable').on('click', 'button[data-csv-delete]', async (event) => {
+            const fileId = $(event.currentTarget).data('csv-delete');
+            if (!fileId) {
+                return;
+            }
+            if (!window.confirm('Delete this CSV file?')) {
+                return;
+            }
+            try {
+                const response = await postJson('v1.deleteCsv', { id: fileId });
+                if (!response.success) {
+                    handleErrorResponse(response);
+                    return;
+                }
+                setStatus('CSV file deleted.', false);
+                await loadCsvHistory();
+            } catch (error) {
+                console.error(error);
+                setStatus('Failed to delete CSV file.', true);
+            }
+        });
+    };
+    const bindTruncateEvents = () => {
+        $el('truncateButton').on('click', () => {
+            if (state.truncate.submitting || state.truncate.serverLock) {
+                setStatus('Catalog truncate already in progress. Please wait for it to finish.', true);
+                return;
+            }
+            openTruncateModal();
+        });
 
+        $el('truncateConfirmInput').on('input', updateTruncateConfirmState);
+        $el('truncateReasonInput').on('input', updateTruncateConfirmState);
+
+        $el('truncateCancelButton').on('click', () => {
+            closeTruncateModal();
+        });
+
+        $el('truncateForm').on('submit', async (event) => {
+            event.preventDefault();
+            if (state.truncate.submitting || state.truncate.serverLock) {
+                $el('truncateModalError').text('Another truncate is running. Try again once it completes.');
+                return;
+            }
+            const confirmToken = $el('truncateConfirmInput')
+                .val()
+                .toString()
+                .trim()
+                .toUpperCase();
+            const reason = $el('truncateReasonInput').val().toString().trim();
+            if (confirmToken !== TRUNCATE_TOKEN || !reason) {
+                $el('truncateModalError').text('Type TRUNCATE and provide a reason to continue.');
+                return;
+            }
+            const payload = {
+                reason,
+                confirmToken,
+                correlationId: createCorrelationId(),
+            };
+            state.truncate.submitting = true;
+            applyCsvLockState();
+            try {
+                const response = await postJson('v1.truncateCatalog', payload);
+                if (!response.success) {
+                    handleErrorResponse(response);
+                    $el('truncateModalError').text(response.message || 'Truncate failed.');
+                    return;
+                }
+                const auditId = response.data?.auditId || payload.correlationId;
+                setStatus(`Catalog truncated (audit ${auditId}).`, false);
+                closeTruncateModal();
+                state.selectedNodeId = null;
+                resetSeriesUI();
+                await loadHierarchy();
+                await loadCsvHistory();
+            } catch (error) {
+                console.error(error);
+                $el('truncateModalError').text('Unable to truncate catalog.');
+                setStatus('Unable to truncate catalog.', true);
+            } finally {
+                state.truncate.submitting = false;
+                applyCsvLockState();
+            }
+        });
+    };
+
+const bindGlobalEvents = () => {
+    bindHierarchyEvents();
+    bindSeriesFieldEvents();
+    bindMetadataEvents();
+    bindProductEvents();
+    bindCsvEvents();
+        bindTruncateEvents();
+};
+
+    const init = async () => {
+        bindGlobalEvents();
+        resetSeriesUI();
+        await loadHierarchy();
+        await loadCsvHistory();
+    };
+
+    $(init);
+})();

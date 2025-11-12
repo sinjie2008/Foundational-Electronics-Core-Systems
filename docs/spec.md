@@ -5,8 +5,8 @@
 - **Stack**: PHP 8.x, MySQL 8.x, jQuery (minimal DOM handling), HTML5 with a lightweight CSS file served from `/assets/css`.
 - **Rationale**: PHP offers native MySQLi support for direct DB connections; jQuery simplifies dynamic form handling without heavy frontend frameworks; separating static assets into `/assets` keeps HTML lean while remaining framework-light.
 - **Constraints**: Single PHP entry point; MySQL credentials stored in dedicated config; avoid external services due to restricted environment; host custom CSS/JS under `/assets` while continuing to load vendor libraries (jQuery) from a stable CDN.
-- **Structure**: Backend refactored to PHP OOP with discrete classes (`CatalogApplication`, `HttpResponder`, `DatabaseFactory`, `Seeder`, `HierarchyService`, `SeriesFieldService`, `SeriesAttributeService`, `ProductService`, `SearchService`, `CatalogCsvService`, `PublicCatalogService`) to isolate responsibilities and enhance maintainability; `SeriesFieldService` now focuses on field metadata while `SeriesAttributeService` persists series-level values, and `PublicCatalogService` composes data from every domain into a single immutable snapshot.
-- **Asset Storage**: CSV import/export history persisted under `storage/csv` using timestamped filenames to enable download or deletion without extra schema.
+- **Structure**: Backend refactored to PHP OOP with discrete classes (`CatalogApplication`, `HttpResponder`, `DatabaseFactory`, `Seeder`, `HierarchyService`, `SeriesFieldService`, `SeriesAttributeService`, `ProductService`, `CatalogCsvService`, `CatalogTruncateService`, `PublicCatalogService`) to isolate responsibilities and enhance maintainability; `SeriesFieldService` now focuses on field metadata while `SeriesAttributeService` persists series-level values, `CatalogTruncateService` performs destructive resets with confirmation/audit logging, and `PublicCatalogService` composes data from every domain into a single immutable snapshot. The frontend is now a single ES6 module (`CatalogUI`) that wraps all jQuery interactions with cached selectors, arrow-function helpers, and batched render/update pipelines to minimize DOM reflow and repeated AJAX calls.
+- **Asset Storage**: CSV import/export history persisted under `storage/csv` using timestamped filenames to enable download or deletion without extra schema, and destructive truncate events are appended as JSON lines under `storage/csv/truncate_audit.jsonl` so operators can verify who initiated the wipe and what counts were affected.
 - **Trade-offs**: Using a single PHP file centralizes logic but increases complexity-mitigated via modular PHP functions; MySQLi over PDO for simplicity but lacks driver abstraction.
 
 ## 2. Data Model
@@ -33,14 +33,15 @@
 4. **Series Metadata Value Management**: Load/edit/persist values for series-level fields through `SeriesAttributeService`.
 5. **Product Attribute Field Management**: Maintain product-level dynamic fields per series (scope `product_attribute`) to keep product schema flexible.
 6. **Product Management**: Create/edit/delete products while validating dynamic attributes via product field definitions.
-7. **Search Aggregation**: Provide unified querying across categories, series, products, expose both field scopes for advanced filters, and allow series metadata to influence ranking.
-8. **HTTP Request Dispatch**: `CatalogApplication::handleRequest` delegates `action` parameters to service collaborators via controller methods, enforces HTTP verbs, and builds JSON responses through `HttpResponder`.
-9. **Rendering**: Standalone `catalog_ui.html` hosts HTML layout while loading `catalog_ui.js` from `/assets/js` and `catalog_ui.css` from `/assets/css` for behavior and styling.
-10. **Validation & Persistence**: Server-side validation mirrors both field scopes to keep API behavior deterministic for AJAX operations.
-11. **Frontend Interaction**: Single HTML page renders hierarchy pane, detail pane, metadata editor, product grid, and search filters while relying on jQuery AJAX calls; the metadata pane now ships with its own field-definition form (scope locked to `series_metadata`) so administrators can add unlimited metadata inputs without leaving the section.
+7. **HTTP Request Dispatch**: `CatalogApplication::handleRequest` delegates `action` parameters to service collaborators via controller methods, enforces HTTP verbs, and builds JSON responses through `HttpResponder`.
+8. **Rendering**: Standalone `catalog_ui.html` hosts HTML layout while loading `catalog_ui.js` from `/assets/js` and `catalog_ui.css` from `/assets/css` for behavior and styling.
+9. **Validation & Persistence**: Server-side validation mirrors both field scopes to keep API behavior deterministic for AJAX operations.
+10. **Frontend Interaction**: Single HTML page renders hierarchy pane, detail pane, metadata editor, and product grid while relying on a thin jQuery layer; the metadata pane now ships with its own field-definition form (scope locked to `series_metadata`) so administrators can add unlimited metadata inputs without leaving the section.
+11. **Frontend Module Architecture**: `assets/js/catalog_ui.js` exposes a single `CatalogUI` ES6 module that initializes once, caches frequently used DOM nodes, memoizes hierarchy/series lookups, batches AJAX promises with `Promise.all`, and uses arrow functions/template literals to keep rendering lean. All UI updates flow through dedicated `render*` helpers so layout thrashing is minimized.
 12. **CSV Import/Export Lifecycle**: `CatalogCsvService` reads/writes the stakeholder-supplied schema (`category_path`, `product_name`, `acf.*` product attribute columns), derives the series name from the last `category_path` segment, maps `product_name` to both SKU and display label, synchronizes only product-attribute fields, and persists timestamped history entries for upload/download/delete/restore actions.
 13. **Series Context Isolation**: Every async request that hydrates series-specific state (fields, metadata definitions/values) gates its response by the currently selected series ID so background responses from previously selected nodes are ignored, preventing metadata "bleed" across series.
 14. **Public Catalog Snapshot**: `PublicCatalogService` aggregates categories, series, metadata definitions/values, product custom field labels, and product data into one JSON payload exposed via a GET-only action for publishing/consumption use cases.
+15. **Catalog Truncate Workflow**: `CatalogTruncateService` performs a full catalog reset initiated from the CSV tools card, enforces a two-step confirmation in the UI, suspends concurrent CSV import/export calls, disables foreign key checks, truncates every catalog-related table (category, series, products, field definitions, field values, and seed history), leaves the database empty so the next CSV import defines the entire hierarchy, and records an immutable audit entry under `storage/csv/truncate_audit.jsonl` with timestamp, operator-provided reason, and deletion counts.
 
 ## 4. Pseudocode (Critical Paths)
 
@@ -82,61 +83,67 @@ SeriesAttributeService::save(seriesId, payload):
     commit and return merged definitions + values snapshot
 ```
 
-### Search Catalog
+### Truncate Catalog
 ```text
-SearchService::search(query, filters):
-    normalizedQuery = trim(lowercase(query))
-    results = { categories: [], series: [], products: [], seriesMeta: [], productFieldMeta: [] }
-    if normalizedQuery not empty:
-        results.categories = repository::searchCategories(normalizedQuery)
-        results.series = repository::searchSeries(normalizedQuery)
-        results.products = repository::searchProducts(normalizedQuery)
-    if filters.seriesId provided:
-        productMeta = SeriesFieldService::listForSeries(seriesId, scope='product_attribute')
-        seriesMeta = SeriesAttributeService::getValues(seriesId)
-        foreach filter value provided:
-            apply filter clause against product_custom_field_value
-        results.products = repository::searchFilteredProducts(seriesId, filters)
-        results.productFieldMeta = productMeta
-        results.seriesMeta = seriesMeta
-    return limited results ordered by relevance
+CatalogTruncateService::truncateCatalog(reason, correlationId):
+    assert reason provided and <= 256 chars
+    ensure no CSV import/export job currently running
+    capture deleted counts (categories vs series vs products vs fields vs values)
+    begin transaction
+        disable foreign_key_checks
+        truncate tables: product_custom_field_value, series_custom_field_value, product, series_custom_field, category, seed_migration
+        re-enable foreign_key_checks
+    commit
+    auditEntry = {
+        id: correlationId,
+        event: 'catalog_truncate',
+        reason,
+        deleted: {
+            categories: deletedCategories,
+            products: deletedProducts,
+            fieldDefinitions: deletedFields,
+            productValues: deletedProductValues,
+            seriesValues: deletedSeriesValues
+        },
+        timestamp: nowIso8601
+    }
+    append auditEntry as JSON line to storage/csv/truncate_audit.jsonl
+    return auditEntry
 ```
 
 ### Frontend Interaction Loop
 ```text
 on document ready:
+    render Section 1 cards inline (Hierarchy tree with per-category accordions that default to expanded for root (level 0) only, Add Node form, Update Node form, Selected Node details)
     fetch hierarchy via GET v1.listHierarchy (API base: catalog.php)
-    render nested lists and bind click handlers
+    populate node index + bind click handlers
 
 on node select:
-    populate detail panel
+    update Selected Node card
     if node type is series:
-        fetch series metadata definitions + values (scope series_metadata)
-        ignore responses if selected node changes before data arrives
-        render metadata form and metadata field editor
-        fetch product field definitions + products
-        render product grid with dynamic inputs
+        reveal Section 2 + Section 3
+        fetch series fields (product + metadata), metadata values, and products in parallel
+        ignore responses if series selection changes before data arrives
 
-on metadata field form submit:
-    scope = series_metadata (locked)
-    post v1.saveSeriesField payload (create/update)
-    refresh metadata definitions + values and keep editors in sync
+on series field form submit/delete:
+    post v1.saveSeriesField or v1.deleteSeriesField
+    refresh only the Series Custom Fields card (Section 2 column 1) and rerender product form inputs
 
-on metadata value form submit:
-    collect inputs mapped by field key
-    post v1.saveSeriesAttributes
-    refresh metadata snapshot on success
+on metadata field/value submit:
+    post v1.saveSeriesField (scope = series_metadata) or v1.saveSeriesAttributes
+    rerender the Series Metadata card (Section 2 column 2) with updated definitions + inline value inputs
 
-on product/custom field/node form submit:
-    serialize inputs to JSON
-    call corresponding POST action
-    refresh relevant pane on success
-    surface validation errors inline on failure
+on product form/delete submit:
+    post v1.saveProduct or v1.deleteProduct
+    refresh the Products section (list column + form column) while keeping cached state for the active series
 
-search panel interactions:
-    when series selected in filters, fetch v1.listSeriesFields for metadata
-    submit combined query + filters to v1.searchCatalog
-    render grouped results (categories, series, products) with context actions
+on CSV actions:
+    post v1.exportCsv (stream file), post multipart v1.importCsv, post v1.restoreCsv, post v1.deleteCsv
+    refresh history/audit tables after each action, disable controls while truncate lock is active
+
+on truncate:
+    show modal (requires TRUNCATE + reason) -> post v1.truncateCatalog
+    display audit id toast, reset Section 1 selection + hide Sections 2-3 until a series is chosen again
 ```
 
 ### Export Catalog CSV
@@ -213,6 +220,15 @@ CatalogCsvService::processCsvFile(path, fileId, originalName):
 - **Export Semantics**: Full catalog exported back into the same schema—`category_path`, `product_name`, and the ordered list of attribute headers aggregated from all product_attribute definitions. No series metadata columns are emitted.
 - **Download/Delete/Restore**: API actions expose file list with timestamp and size, plus endpoints to stream, delete, or restore any stored CSV (restore re-runs the import pipeline against the stored file bytes).
 
+## Catalog Truncate Workflow
+
+- **Trigger Surface**: The CSV tools panel receives a dedicated `Truncate Catalog` danger-button positioned beside Import/Export. Clicking the button opens a modal that reiterates the destructive scope and requires the operator to type `TRUNCATE` plus a free-form reason before enabling the confirm action.
+- **Backend Action**: The UI POSTs to `v1.truncateCatalog` with `reason`, `correlationId` (GUID from the browser), and `confirmToken` (always `TRUNCATE`). The controller routes to `CatalogTruncateService`, which acquires a short-lived advisory lock so CSV import/export and restore actions cannot run concurrently.
+- **Deletion Order**: Within a transaction the service disables foreign key checks, truncates `product_custom_field_value`, `series_custom_field_value`, `product`, `series_custom_field`, `category`, and `seed_migration`, then reenables the checks. No baseline data is reseeded; the database remains empty (aside from auto-increment resets) until the next CSV import repopulates it.
+- **Audit & Logging**: Every truncate writes a JSON object to `storage/csv/truncate_audit.jsonl` capturing the correlation ID, provided reason, deleted row counts, and precise timestamps. The response echoes the same data so the UI can show a toast containing the audit identifier.
+- **History Surfacing**: `v1.listCsvHistory` returns `audits` (latest truncate entries) and `truncateInProgress` so the UI can present the audit table and disable CSV controls whenever the advisory lock is held.
+- **Post-Action UX**: The modal closes only after the API responds successfully, the CSV history list refreshes (so operators can immediately start a new import), and the new audit entry appears in the UI table for transparency.
+
 ## Deployment Artifacts
 
 - `catalog.php` - PHP backend serving v1 API actions; returns JSON only.
@@ -236,6 +252,7 @@ graph TD
     User[Catalog Manager] -->|HTTP (AJAX)| PHPApp[PHP Catalog Page]
     PHPApp -->|MySQLi| MySQLDB[(MySQL Database)]
     PHPApp -->|Configuration| ConfigFile[db_config.php]
+    PHPApp -->|Audit JSONL| AuditLog[(Truncate Audit Log)]
 ```
 
 ## 6. Container/Deployment Overview
@@ -248,9 +265,11 @@ graph LR
     subgraph Server
         PHPFpm[PHP Runtime (Single Page)]
         MySQLDB[(MySQL 8)]
+        AuditFile[(storage/csv/truncate_audit.jsonl)]
     end
     Browser --> PHPFpm
     PHPFpm --> MySQLDB
+    PHPFpm --> AuditFile
 ```
 
 ## 7. Module Relationship Diagram
@@ -262,17 +281,18 @@ graph TD
     Controller --> SeriesFieldModule[Series Field Service]
     Controller --> SeriesAttributeModule[Series Attribute Service]
     Controller --> ProductModule[Product Service]
-    Controller --> SearchModule[Search Service]
     Controller --> CsvModule[CSV Service]
+    Controller --> TruncateModule[Catalog Truncate Service]
     Controller --> JsonResponder[JSON Responder]
     Seeder --> MySQLDB[(MySQL)]
     HierarchyModule --> MySQLDB
     SeriesFieldModule --> MySQLDB
     SeriesAttributeModule --> MySQLDB
     ProductModule --> MySQLDB
-    SearchModule --> MySQLDB
     CsvModule --> MySQLDB
     CsvModule --> CsvStore[(CSV Storage)]
+    TruncateModule --> MySQLDB
+    TruncateModule --> AuditLog[(Truncate Audit Log)]
 ```
 
 ## 8. Sequence Diagram (Product Save)
@@ -299,9 +319,33 @@ sequenceDiagram
     B-->>U: Render confirmation
 ```
 
+## 8b. Sequence Diagram (Catalog Truncate)
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant B as Browser (CSV Tools)
+    participant P as PHP Controller
+    participant CTS as CatalogTruncateService
+    participant D as MySQL
+    participant A as Audit Log
+    U->>B: Click "Truncate Catalog"
+    B->>U: Show modal + require TRUNCATE + reason
+    U->>B: Provide confirmation text
+    B->>P: POST v1.truncateCatalog(reason, correlationId)
+    P->>CTS: truncateCatalog(command)
+    CTS->>D: BEGIN; disable FK + TRUNCATE tables
+    D-->>CTS: Row counts
+    CTS->>A: append audit entry
+    CTS-->>P: deletion counts + audit id
+    P-->>B: JSON success payload
+    B-->>U: Toast showing audit id + prompt to import CSV
+```
+
 ## 9. ER Diagram
 
 ```mermaid
+%% TruncateCatalog removes rows across the entire hierarchy before the next import rebuilds it.
 erDiagram
     CATEGORY ||--|{ CATEGORY : parent
     CATEGORY ||--o{ PRODUCT : contains
@@ -365,7 +409,6 @@ classDiagram
         -seriesFieldService: SeriesFieldService
         -seriesAttributeService: SeriesAttributeService
         -productService: ProductService
-        -searchService: SearchService
         -csvService: CatalogCsvService
         -seeder: Seeder
         +handleRequest(action, method, body): void
@@ -403,8 +446,8 @@ classDiagram
         +streamFile(fileId): void
         +deleteFile(fileId): void
     }
-    class SearchService {
-        +search(filters): array
+    class CatalogTruncateService {
+        +truncateCatalog(reason, correlationId): array
     }
     DatabaseFactory <|-- Seeder
     DatabaseFactory <|-- HierarchyService
@@ -412,30 +455,34 @@ classDiagram
     DatabaseFactory <|-- SeriesAttributeService
     DatabaseFactory <|-- ProductService
     DatabaseFactory <|-- CatalogCsvService
-    DatabaseFactory <|-- SearchService
+    DatabaseFactory <|-- CatalogTruncateService
     CatalogApplication --> HierarchyService
     CatalogApplication --> SeriesFieldService
     CatalogApplication --> SeriesAttributeService
     CatalogApplication --> ProductService
-    CatalogApplication --> SearchService
     CatalogApplication --> CatalogCsvService
+    CatalogApplication --> CatalogTruncateService
     CatalogApplication --> Seeder
     CatalogApplication --> HttpResponder
     SeriesAttributeService --> SeriesFieldService
     CatalogCsvService --> HttpResponder
 ```
 
-## 11. Flowchart (Hierarchy Node Creation)
+## 11. Flowchart (Catalog Truncate)
 
 ```mermaid
 flowchart TD
-    Start --> LoadDefs[Load series metadata definitions]
-    LoadDefs --> Validate{All required values present?}
-    Validate -->|No| Error[Return validation errors]
-    Validate -->|Yes| Upsert[Upsert each field value]
-    Upsert --> Snapshot[Return metadata snapshot]
-    Error --> End
-    Snapshot --> End
+    Start --> Prompt[User clicks Truncate button]
+    Prompt --> Confirm{Typed TRUNCATE + reason?}
+    Confirm -->|No| Abort[Keep catalog unchanged]
+    Confirm -->|Yes| SendReq[POST v1.truncateCatalog]
+    SendReq --> Lock[Acquire advisory lock]
+    Lock --> Purge[Disable FK + TRUNCATE target tables]
+    Purge --> Audit[Append JSON line to truncate_audit.jsonl]
+    Audit --> Respond[Return counts + audit id]
+    Respond --> UIRefresh[Refresh CSV tools + history]
+    UIRefresh --> End
+    Abort --> End
 ```
 
 ## 12. State Diagram (Product Lifecycle)
@@ -446,7 +493,10 @@ stateDiagram-v2
     Draft --> Persisted: Save
     Persisted --> Draft: Edit (unsaved changes)
     Persisted --> Deleted: Delete
+    Persisted --> Purged: Truncate Catalog
+    Purged --> Draft: Next CSV import recreates data
     Deleted --> [*]
+    Purged --> [*]
 ```
 
 ## Test Approach Overview

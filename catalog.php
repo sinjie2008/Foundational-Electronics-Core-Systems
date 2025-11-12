@@ -5,7 +5,7 @@ declare(strict_types=1);
  * Catalog management entrypoint using object-oriented services.
  *
  * Responsibilities:
- * - Provide service classes for hierarchy, series fields, products, and search flows.
+ * - Provide service classes for hierarchy, series fields, products, and CSV/metadata flows.
  * - Expose a bootstrapped HTTP handler for AJAX-driven UI consumption.
  * - Coordinate schema creation and initial data seeding.
  *
@@ -13,8 +13,11 @@ declare(strict_types=1);
  */
 
 const CATALOG_SEED_NAME = 'initial_catalog_v1';
-const CATALOG_SEARCH_LIMIT = 25;
 const CATALOG_CSV_STORAGE = __DIR__ . '/storage/csv';
+const CATALOG_TRUNCATE_AUDIT_LOG = CATALOG_CSV_STORAGE . '/truncate_audit.jsonl';
+const CATALOG_TRUNCATE_CONFIRM_TOKEN = 'TRUNCATE';
+const CATALOG_TRUNCATE_LOCK_KEY = 'catalog_truncate_lock';
+const CATALOG_TRUNCATE_REASON_MAX = 256;
 const SERIES_FIELD_SCOPE_SERIES = 'series_metadata';
 const SERIES_FIELD_SCOPE_PRODUCT = 'product_attribute';
 
@@ -2059,382 +2062,6 @@ final class ProductService
         return $map;
     }
 }
-/**
- * Handles search aggregation across catalog entities.
- */
-final class SearchService
-{
-    public function __construct(
-        private mysqli $connection,
-        private SeriesFieldService $seriesFieldService,
-        private SeriesAttributeService $seriesAttributeService
-    ) {
-    }
-
-    /**
-     * Executes catalog search across categories, series, and products.
-     *
-     * @param array<string, mixed> $payload
-     *
-     * @return array<string, mixed>
-     */
-    public function search(array $payload): array
-    {
-        $query = isset($payload['query']) ? trim((string) $payload['query']) : '';
-        $scopePayload = $payload['scopes'] ?? $payload['scope'] ?? ['category', 'series', 'product'];
-        $scopes = is_array($scopePayload) ? array_map('strval', $scopePayload) : ['category', 'series', 'product'];
-        $seriesId = isset($payload['seriesId']) ? (int) $payload['seriesId'] : null;
-        $filtersPayload = $payload['fieldFilters'] ?? $payload['filters'] ?? [];
-        $filters = is_array($filtersPayload) ? $filtersPayload : [];
-        $seriesMetaFiltersPayload = $payload['seriesMetaFilters'] ?? [];
-        $seriesMetaFilters = is_array($seriesMetaFiltersPayload) ? $seriesMetaFiltersPayload : [];
-
-        $results = [
-            'categories' => [],
-            'series' => [],
-            'products' => [],
-            'fieldMeta' => [],
-            'productFieldMeta' => [],
-            'seriesFieldMeta' => [],
-            'seriesMeta' => [],
-        ];
-
-        if ($query !== '') {
-            if (in_array('category', $scopes, true)) {
-                $results['categories'] = $this->searchCategories($query);
-            }
-            if (in_array('series', $scopes, true)) {
-                $results['series'] = $this->searchSeries($query);
-            }
-            if (in_array('product', $scopes, true)) {
-                $results['products'] = $this->searchProducts($query);
-            }
-        }
-
-        if ($results['series'] !== []) {
-            $seriesPayloads = $this->seriesAttributeService->fetchMetadataPayloads(
-                array_map(static fn (array $seriesRow): int => (int) $seriesRow['id'], $results['series'])
-            );
-            $enrichedSeries = [];
-            foreach ($results['series'] as $seriesRow) {
-                $seriesIdValue = (int) $seriesRow['id'];
-                $seriesMeta = $seriesPayloads[$seriesIdValue]['values'] ?? [];
-                $seriesRow['seriesMeta'] = $seriesMeta;
-                if ($this->seriesMatchesMetaFilters($seriesMeta, $seriesMetaFilters)) {
-                    $enrichedSeries[] = $seriesRow;
-                }
-            }
-            $results['series'] = $enrichedSeries;
-        }
-
-        if ($seriesId !== null && $seriesId > 0) {
-            $fieldMeta = $this->seriesFieldService->listFields($seriesId, SERIES_FIELD_SCOPE_PRODUCT);
-            $results['productFieldMeta'] = $fieldMeta;
-            $results['fieldMeta'] = $fieldMeta;
-            $results['products'] = $this->searchProductsBySeriesFilters($seriesId, $filters, $query, $fieldMeta);
-
-            $seriesMetaPayload = $this->seriesAttributeService->getAttributes($seriesId);
-            $results['seriesFieldMeta'] = $seriesMetaPayload['definitions'];
-            $results['seriesMeta'] = $seriesMetaPayload['values'];
-        } else {
-            $results['productFieldMeta'] = $results['fieldMeta'];
-        }
-
-        if ($results['fieldMeta'] === [] && $results['productFieldMeta'] !== []) {
-            $results['fieldMeta'] = $results['productFieldMeta'];
-        }
-
-        return $results;
-    }
-
-    /**
-     * @param array<string, mixed> $seriesMeta
-     * @param array<string, mixed> $filters
-     */
-    private function seriesMatchesMetaFilters(array $seriesMeta, array $filters): bool
-    {
-        foreach ($filters as $key => $expected) {
-            $expectedValue = trim((string) $expected);
-            if ($expectedValue === '') {
-                continue;
-            }
-            $actual = isset($seriesMeta[$key]) ? (string) $seriesMeta[$key] : '';
-            if ($actual === '') {
-                return false;
-            }
-            if (stripos($actual, $expectedValue) === false) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    /**
-     * @return array<int, array<string, mixed>>
-     */
-    private function searchCategories(string $query): array
-    {
-        $stmt = $this->connection->prepare(
-            'SELECT id, name FROM category
-             WHERE type = \'category\' AND name LIKE CONCAT(\'%\', ?, \'%\')
-             ORDER BY name LIMIT ?'
-        );
-        $limit = CATALOG_SEARCH_LIMIT;
-        $stmt->bind_param('si', $query, $limit);
-        $stmt->execute();
-        $result = $stmt->get_result();
-
-        $categories = [];
-        while ($row = $result->fetch_assoc()) {
-            $categories[] = [
-                'id' => (int) $row['id'],
-                'name' => (string) $row['name'],
-            ];
-        }
-        $stmt->close();
-
-        return $categories;
-    }
-
-    /**
-     * @return array<int, array<string, mixed>>
-     */
-    private function searchSeries(string $query): array
-    {
-        $stmt = $this->connection->prepare(
-            'SELECT id, name FROM category
-             WHERE type = \'series\' AND name LIKE CONCAT(\'%\', ?, \'%\')
-             ORDER BY name LIMIT ?'
-        );
-        $limit = CATALOG_SEARCH_LIMIT;
-        $stmt->bind_param('si', $query, $limit);
-        $stmt->execute();
-        $result = $stmt->get_result();
-
-        $series = [];
-        while ($row = $result->fetch_assoc()) {
-            $series[] = [
-                'id' => (int) $row['id'],
-                'name' => (string) $row['name'],
-            ];
-        }
-        $stmt->close();
-
-        return $series;
-    }
-
-    /**
-     * @return array<int, array<string, mixed>>
-     */
-    private function searchProducts(string $query): array
-    {
-        $stmt = $this->connection->prepare(
-            'SELECT p.id, p.series_id, p.sku, p.name, c.name AS series_name
-             FROM product p
-             INNER JOIN category c ON c.id = p.series_id
-             WHERE p.sku LIKE CONCAT(\'%\', ?, \'%\') OR p.name LIKE CONCAT(\'%\', ?, \'%\')
-             ORDER BY p.name LIMIT ?'
-        );
-        $limit = CATALOG_SEARCH_LIMIT;
-        $stmt->bind_param('ssi', $query, $query, $limit);
-        $stmt->execute();
-        $result = $stmt->get_result();
-
-        $products = [];
-        while ($row = $result->fetch_assoc()) {
-            $products[] = [
-                'id' => (int) $row['id'],
-                'seriesId' => (int) $row['series_id'],
-                'seriesName' => (string) $row['series_name'],
-                'sku' => (string) $row['sku'],
-                'name' => (string) $row['name'],
-                'customValues' => [],
-            ];
-        }
-        $stmt->close();
-
-        return $products;
-    }
-
-    /**
-     * @param array<string, string> $filtersByKey
-     * @param array<int, array<string, mixed>> $fieldMeta
-     *
-     * @return array<int, array<string, mixed>>
-     */
-    private function searchProductsBySeriesFilters(
-        int $seriesId,
-        array $filtersByKey,
-        string $query,
-        array $fieldMeta
-    ): array {
-        $fieldIdByKey = [];
-        foreach ($fieldMeta as $field) {
-            $fieldIdByKey[$field['fieldKey']] = $field['id'];
-        }
-
-        $conditions = ['p.series_id = ?'];
-        $joinParams = [];
-        $joinTypes = '';
-        $whereParams = [$seriesId];
-        $whereTypes = 'i';
-
-        if ($query !== '') {
-            $conditions[] = '(p.sku LIKE CONCAT(\'%\', ?, \'%\') OR p.name LIKE CONCAT(\'%\', ?, \'%\'))';
-            $whereParams[] = $query;
-            $whereParams[] = $query;
-            $whereTypes .= 'ss';
-        }
-
-        $joins = [];
-        foreach ($filtersByKey as $fieldKey => $value) {
-            if ($value === null || $value === '') {
-                continue;
-            }
-            $fieldId = $fieldIdByKey[$fieldKey] ?? null;
-            if ($fieldId === null) {
-                continue;
-            }
-            $alias = 'pcv' . count($joins);
-            $joins[] = sprintf(
-                'INNER JOIN product_custom_field_value %s ON %s.product_id = p.id AND %s.series_custom_field_id = ?',
-                $alias,
-                $alias,
-                $alias
-            );
-            $conditions[] = sprintf('%s.value LIKE CONCAT(\'%%\', ?, \'%%\')', $alias);
-            $joinParams[] = $fieldId;
-            $joinTypes .= 'i';
-            $whereParams[] = (string) $value;
-            $whereTypes .= 's';
-        }
-
-        $sql = sprintf(
-            'SELECT p.id, p.series_id, p.sku, p.name, c.name AS series_name
-             FROM product p
-             INNER JOIN category c ON c.id = p.series_id
-             %s
-             WHERE %s
-             ORDER BY p.name
-             LIMIT %d',
-            implode(' ', $joins),
-            implode(' AND ', $conditions),
-            CATALOG_SEARCH_LIMIT
-        );
-
-        $stmt = $this->connection->prepare($sql);
-        $params = array_merge($joinParams, $whereParams);
-        $types = $joinTypes . $whereTypes;
-        if ($params !== []) {
-            $stmt->bind_param($types, ...$params);
-        }
-        $stmt->execute();
-        $result = $stmt->get_result();
-
-        $products = [];
-        $productIds = [];
-        while ($row = $result->fetch_assoc()) {
-            $productId = (int) $row['id'];
-            $products[$productId] = [
-                'id' => $productId,
-                'seriesId' => (int) $row['series_id'],
-                'seriesName' => (string) $row['series_name'],
-                'sku' => (string) $row['sku'],
-                'name' => (string) $row['name'],
-                'customValues' => [],
-            ];
-            $productIds[] = $productId;
-        }
-        $stmt->close();
-
-        if ($productIds === []) {
-            return array_values($products);
-        }
-
-        $customValues = $this->fetchProductCustomValuesMap($productIds);
-        foreach ($customValues as $pid => $values) {
-            if (!isset($products[$pid])) {
-                continue;
-            }
-            $normalized = [];
-            foreach ($values as $fieldId => $value) {
-                $fieldKey = null;
-                foreach ($fieldMeta as $field) {
-                    if ($field['id'] === $fieldId) {
-                        $fieldKey = $field['fieldKey'];
-                        break;
-                    }
-                }
-                if ($fieldKey !== null) {
-                    $normalized[$fieldKey] = $value;
-                }
-            }
-            $products[$pid]['customValues'] = $normalized;
-            $products[$pid]['seriesName'] = (string) ($products[$pid]['seriesName'] ?? '');
-        }
-
-        foreach ($products as $id => &$product) {
-            if (!isset($product['seriesName']) || $product['seriesName'] === '') {
-                $product['seriesName'] = $this->fetchSeriesNameById($product['seriesId']);
-            }
-        }
-        unset($product);
-
-        return array_values($products);
-    }
-
-    /**
-     * @param array<int> $productIds
-     *
-     * @return array<int, array<int, string>>
-     */
-    private function fetchProductCustomValuesMap(array $productIds): array
-    {
-        if ($productIds === []) {
-            return [];
-        }
-
-        $placeholders = implode(',', array_fill(0, count($productIds), '?'));
-        $types = str_repeat('i', count($productIds));
-
-        $stmt = $this->connection->prepare(
-            sprintf(
-                'SELECT product_id, series_custom_field_id, value
-                 FROM product_custom_field_value
-                 WHERE product_id IN (%s)',
-                $placeholders
-            )
-        );
-        $stmt->bind_param($types, ...$productIds);
-        $stmt->execute();
-        $result = $stmt->get_result();
-
-        /** @var array<int, array<int, string>> $map */
-        $map = [];
-        while ($row = $result->fetch_assoc()) {
-            $productId = (int) $row['product_id'];
-            $fieldId = (int) $row['series_custom_field_id'];
-            $map[$productId][$fieldId] = (string) $row['value'];
-        }
-        $stmt->close();
-
-        return $map;
-    }
-
-    private function fetchSeriesNameById(int $seriesId): string
-    {
-        $stmt = $this->connection->prepare('SELECT name FROM category WHERE id = ? LIMIT 1');
-        $stmt->bind_param('i', $seriesId);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $row = $result->fetch_assoc();
-        $stmt->close();
-
-        return $row ? (string) $row['name'] : '';
-    }
-}
-
 final class PublicCatalogService
 {
     public function __construct(
@@ -2658,12 +2285,17 @@ final class CatalogCsvService
             }
         );
 
-        return ['files' => $files];
+        return [
+            'files' => $files,
+            'audits' => $this->readTruncateAudits(),
+            'truncateInProgress' => $this->isTruncateInProgress(),
+        ];
     }
 
     public function exportCatalog(): array
     {
         $this->ensureStorageDirectory();
+        $this->assertTruncateNotRunning();
         $timestamp = $this->currentTimestamp();
         $fileId = $this->buildFileId('export', $timestamp);
         $filePath = $this->buildFilePath($fileId);
@@ -2713,6 +2345,7 @@ final class CatalogCsvService
     public function importFromUploadedFile(array $file): array
     {
         $this->ensureStorageDirectory();
+        $this->assertTruncateNotRunning();
         if (!isset($file['tmp_name']) || ($file['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) {
             throw new CatalogApiException('CSV_REQUIRED', 'CSV file upload is required.', 400);
         }
@@ -2738,6 +2371,7 @@ final class CatalogCsvService
     public function importFromPath(string $filePath, string $originalName = 'import.csv'): array
     {
         $this->ensureStorageDirectory();
+        $this->assertTruncateNotRunning();
         if (!is_file($filePath)) {
             throw new CatalogApiException('CSV_NOT_FOUND', 'Import source CSV not found.', 404);
         }
@@ -2760,6 +2394,7 @@ final class CatalogCsvService
     public function restoreCatalog(string $fileId): array
     {
         $this->ensureStorageDirectory();
+        $this->assertTruncateNotRunning();
         $fileId = trim($fileId);
         $this->assertValidFileId($fileId);
         $filePath = $this->buildFilePath($fileId);
@@ -3497,10 +3132,308 @@ final class CatalogCsvService
 
         return implode(' > ', $path);
     }
+
+    private function assertTruncateNotRunning(): void
+    {
+        if ($this->isTruncateInProgress()) {
+            throw new CatalogApiException(
+                'TRUNCATE_IN_PROGRESS',
+                'Catalog truncate in progress. Try again after it completes.',
+                409
+            );
+        }
+    }
+
+    private function isTruncateInProgress(): bool
+    {
+        $stmt = $this->connection->prepare('SELECT IS_USED_LOCK(?) AS lock_owner');
+        $lockKey = CATALOG_TRUNCATE_LOCK_KEY;
+        $stmt->bind_param('s', $lockKey);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $row = $result->fetch_assoc();
+        $stmt->close();
+
+        return ($row['lock_owner'] ?? null) !== null;
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function readTruncateAudits(int $limit = 20): array
+    {
+        $logPath = CATALOG_TRUNCATE_AUDIT_LOG;
+        if (!is_file($logPath)) {
+            return [];
+        }
+
+        $lines = @file($logPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if ($lines === false) {
+            return [];
+        }
+
+        if ($limit <= 0) {
+            $limit = 20;
+        }
+        $lines = array_slice($lines, -$limit);
+        $entries = [];
+        foreach ($lines as $line) {
+            if ($line === '') {
+                continue;
+            }
+            $decoded = json_decode($line, true);
+            if (is_array($decoded)) {
+                $entries[] = $decoded;
+            }
+        }
+
+        usort(
+            $entries,
+            static function (array $a, array $b): int {
+                $left = (string) ($a['timestamp'] ?? '');
+                $right = (string) ($b['timestamp'] ?? '');
+                return strcmp($right, $left);
+            }
+        );
+
+        return $entries;
+    }
 }
 /**
  * Orchestrates dependency wiring and request handling.
  */
+final class CatalogTruncateService
+{
+    private bool $lockHeld = false;
+
+    public function __construct(
+        private mysqli $connection,
+        private string $auditLogPath = CATALOG_TRUNCATE_AUDIT_LOG
+    ) {
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
+    public function truncateCatalog(array $payload): array
+    {
+        $reasonRaw = trim((string) ($payload['reason'] ?? ''));
+        if ($reasonRaw === '') {
+            throw new CatalogApiException(
+                'VALIDATION_ERROR',
+                'Reason is required to truncate the catalog.',
+                400,
+                ['reason' => 'Reason is required.']
+            );
+        }
+        if (mb_strlen($reasonRaw) > CATALOG_TRUNCATE_REASON_MAX) {
+            throw new CatalogApiException(
+                'VALIDATION_ERROR',
+                sprintf('Reason must be %d characters or fewer.', CATALOG_TRUNCATE_REASON_MAX),
+                400,
+                ['reason' => 'Reason too long.']
+            );
+        }
+
+        $confirmToken = strtoupper(trim((string) ($payload['confirmToken'] ?? '')));
+        if ($confirmToken !== CATALOG_TRUNCATE_CONFIRM_TOKEN) {
+            throw new CatalogApiException(
+                'TRUNCATE_CONFIRMATION_REQUIRED',
+                'Confirmation text mismatch. Please type TRUNCATE to proceed.',
+                400,
+                ['confirmToken' => 'INVALID']
+            );
+        }
+
+        $correlationId = trim((string) ($payload['correlationId'] ?? ''));
+        if ($correlationId === '') {
+            $correlationId = bin2hex(random_bytes(16));
+        }
+
+        $reason = $this->sanitizeReason($reasonRaw);
+        $this->ensureAuditDirectory();
+        $this->acquireLock();
+
+        try {
+            $counts = $this->collectDeletionCounts();
+            $this->performTruncate();
+            $timestamp = (new \DateTimeImmutable('now'))->format(\DateTimeInterface::ATOM);
+            $auditEntry = [
+                'event' => 'catalog_truncate',
+                'id' => $correlationId,
+                'reason' => $reason,
+                'deleted' => $counts,
+                'timestamp' => $timestamp,
+            ];
+            $this->appendAuditEntry($auditEntry);
+
+            return [
+                'auditId' => $correlationId,
+                'deleted' => $counts,
+                'timestamp' => $timestamp,
+            ];
+        } catch (CatalogApiException $exception) {
+            throw $exception;
+        } catch (Throwable $exception) {
+            throw new CatalogApiException(
+                'TRUNCATE_ERROR',
+                'Unable to truncate catalog.',
+                500,
+                ['error' => $exception->getMessage()]
+            );
+        } finally {
+            $this->releaseLock();
+        }
+    }
+
+    private function performTruncate(): void
+    {
+        $tables = [
+            'product_custom_field_value',
+            'series_custom_field_value',
+            'product',
+            'series_custom_field',
+            'category',
+            'seed_migration',
+        ];
+
+        $this->connection->begin_transaction();
+        try {
+            $this->setForeignKeyChecks(false);
+            foreach ($tables as $table) {
+                $this->connection->query(sprintf('TRUNCATE TABLE %s', $table));
+            }
+            $this->setForeignKeyChecks(true);
+            $this->connection->commit();
+        } catch (Throwable $exception) {
+            $this->setForeignKeyChecks(true);
+            $this->connection->rollback();
+            throw $exception;
+        }
+    }
+
+    private function setForeignKeyChecks(bool $enabled): void
+    {
+        $value = $enabled ? 1 : 0;
+        $this->connection->query(sprintf('SET FOREIGN_KEY_CHECKS = %d', $value));
+    }
+
+    private function countCategoriesByType(string $type): int
+    {
+        $stmt = $this->connection->prepare('SELECT COUNT(1) AS total FROM category WHERE type = ?');
+        $stmt->bind_param('s', $type);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $count = (int) ($result->fetch_assoc()['total'] ?? 0);
+        $stmt->close();
+
+        return $count;
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    private function collectDeletionCounts(): array
+    {
+        return [
+            'categories' => $this->countCategoriesByType('category'),
+            'series' => $this->countCategoriesByType('series'),
+            'products' => $this->countRows('product'),
+            'fieldDefinitions' => $this->countRows('series_custom_field'),
+            'productValues' => $this->countRows('product_custom_field_value'),
+            'seriesValues' => $this->countRows('series_custom_field_value'),
+        ];
+    }
+
+    private function countRows(string $table): int
+    {
+        $stmt = $this->connection->prepare(sprintf('SELECT COUNT(1) AS total FROM %s', $table));
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $count = (int) ($result->fetch_assoc()['total'] ?? 0);
+        $stmt->close();
+
+        return $count;
+    }
+
+    private function sanitizeReason(string $reason): string
+    {
+        $reason = preg_replace('/[\r\n]+/', ' ', $reason) ?? $reason;
+
+        return trim($reason);
+    }
+
+    private function ensureAuditDirectory(): void
+    {
+        $directory = dirname($this->auditLogPath);
+        if (!is_dir($directory)) {
+            if (!mkdir($directory, 0775, true) && !is_dir($directory)) {
+                throw new CatalogApiException(
+                    'TRUNCATE_ERROR',
+                    'Unable to prepare audit directory.',
+                    500
+                );
+            }
+        }
+    }
+
+    private function appendAuditEntry(array $entry): void
+    {
+        $encoded = json_encode(
+            $entry,
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+        );
+        if ($encoded === false) {
+            throw new CatalogApiException('TRUNCATE_ERROR', 'Failed to encode audit entry.', 500);
+        }
+
+        $result = @file_put_contents(
+            $this->auditLogPath,
+            $encoded . PHP_EOL,
+            FILE_APPEND | LOCK_EX
+        );
+
+        if ($result === false) {
+            throw new CatalogApiException('TRUNCATE_ERROR', 'Failed to write truncate audit.', 500);
+        }
+    }
+
+    private function acquireLock(): void
+    {
+        $stmt = $this->connection->prepare('SELECT GET_LOCK(?, 0) AS lock_obtained');
+        $lockKey = CATALOG_TRUNCATE_LOCK_KEY;
+        $stmt->bind_param('s', $lockKey);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $row = $result->fetch_assoc();
+        $stmt->close();
+
+        if ((int) ($row['lock_obtained'] ?? 0) !== 1) {
+            throw new CatalogApiException(
+                'TRUNCATE_IN_PROGRESS',
+                'Another destructive operation is already running. Try again shortly.',
+                409
+            );
+        }
+
+        $this->lockHeld = true;
+    }
+
+    private function releaseLock(): void
+    {
+        if (!$this->lockHeld) {
+            return;
+        }
+        $stmt = $this->connection->prepare('SELECT RELEASE_LOCK(?) AS released');
+        $lockKey = CATALOG_TRUNCATE_LOCK_KEY;
+        $stmt->bind_param('s', $lockKey);
+        $stmt->execute();
+        $stmt->close();
+        $this->lockHeld = false;
+    }
+}
+
 final class CatalogApplication
 {
     private const RESPONSE_STREAMED = '__STREAMED__';
@@ -3514,8 +3447,8 @@ final class CatalogApplication
         private SeriesFieldService $seriesFieldService,
         private SeriesAttributeService $seriesAttributeService,
         private ProductService $productService,
-        private SearchService $searchService,
         private CatalogCsvService $csvService,
+        private CatalogTruncateService $truncateService,
         private PublicCatalogService $publicCatalogService
     ) {
     }
@@ -3534,8 +3467,8 @@ final class CatalogApplication
         $seriesFieldService = new SeriesFieldService($connection);
         $seriesAttributeService = new SeriesAttributeService($connection, $seriesFieldService);
         $productService = new ProductService($connection, $seriesFieldService);
-        $searchService = new SearchService($connection, $seriesFieldService, $seriesAttributeService);
         $csvService = new CatalogCsvService($connection, $hierarchyService, $seriesFieldService);
+        $truncateService = new CatalogTruncateService($connection);
         $publicCatalogService = new PublicCatalogService(
             $hierarchyService,
             $seriesFieldService,
@@ -3552,8 +3485,8 @@ final class CatalogApplication
             $seriesFieldService,
             $seriesAttributeService,
             $productService,
-            $searchService,
             $csvService,
+            $truncateService,
             $publicCatalogService
         );
 
@@ -3657,14 +3590,14 @@ final class CatalogApplication
         return $this->productService;
     }
 
-    public function getSearchService(): SearchService
-    {
-        return $this->searchService;
-    }
-
     public function getCsvService(): CatalogCsvService
     {
         return $this->csvService;
+    }
+
+    public function getTruncateService(): CatalogTruncateService
+    {
+        return $this->truncateService;
     }
 
     public function getPublicCatalogService(): PublicCatalogService
@@ -3786,10 +3719,10 @@ final class CatalogApplication
                 }
                 $this->productService->deleteProduct($productId);
                 return null;
-            case 'v1.searchCatalog':
+            case 'v1.truncateCatalog':
                 $this->requestReader->requireMethod('POST', $method);
                 $payload = $this->requestReader->readJsonBody();
-                return $this->searchService->search($payload);
+                return $this->truncateService->truncateCatalog($payload);
             case 'v1.listCsvHistory':
                 $this->requestReader->requireMethod('GET', $method);
                 return $this->csvService->listHistory();
@@ -3836,3 +3769,4 @@ final class CatalogApplication
 if (!defined('CATALOG_NO_AUTO_BOOTSTRAP')) {
     CatalogApplication::create()->run();
 }
+

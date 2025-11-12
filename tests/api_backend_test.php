@@ -80,8 +80,8 @@ $hierarchyService = $application->getHierarchyService();
 $seriesFieldService = $application->getSeriesFieldService();
 $seriesAttributeService = $application->getSeriesAttributeService();
 $productService = $application->getProductService();
-$searchService = $application->getSearchService();
 $publicCatalogService = $application->getPublicCatalogService();
+$truncateService = $application->getTruncateService();
 $connection = $application->getConnection();
 
 try {
@@ -172,31 +172,6 @@ $product = $productService->saveProduct([
     catalog_test_assert(
         $productUpdated['customValues']['qa_field'] === 'updated',
         'Updated custom value should persist.'
-    );
-
-    $searchByName = $searchService->search([
-        'query' => 'QA Product Updated',
-        'scope' => ['product']
-    ]);
-    catalog_test_assert(
-        count($searchByName['products']) >= 1,
-        'Search should return product by name.'
-    );
-
-    $searchWithFilters = $searchService->search([
-        'seriesId' => $series['id'],
-        'scope' => ['product'],
-        'fieldFilters' => [
-            'qa_field' => 'updated'
-        ]
-    ]);
-    catalog_test_assert(
-        count($searchWithFilters['products']) === 1,
-        'Series filter search should match product.'
-    );
-    catalog_test_assert(
-        count($searchWithFilters['fieldMeta']) > 0,
-        'Series field metadata should be returned for filterable searches.'
     );
 
     $snapshot = $publicCatalogService->buildSnapshot();
@@ -311,6 +286,23 @@ foreach ($metadataFields as $candidateField) {
     if ($categoryNodeId !== null) {
         $hierarchyService->deleteNode($categoryNodeId);
     }
+
+    $truncateResult = $truncateService->truncateCatalog([
+        'reason' => 'Automated smoke test cleanup',
+        'confirmToken' => CATALOG_TRUNCATE_CONFIRM_TOKEN,
+        'correlationId' => 'test-suite-' . $uniqueSuffix,
+    ]);
+    catalog_test_assert(isset($truncateResult['auditId']), 'Truncate result should include audit id.');
+    catalog_test_assert(
+        isset($truncateResult['deleted']) && is_array($truncateResult['deleted']),
+        'Truncate result should include deleted counts.'
+    );
+    $postTruncateHierarchy = $hierarchyService->listHierarchy();
+    $postHierarchy = $postTruncateHierarchy['hierarchy'] ?? [];
+    catalog_test_assert(
+        $postHierarchy === [],
+        'Hierarchy should remain empty after truncate until the next import.'
+    );
 
     fwrite(STDOUT, "API backend smoke tests passed.\n");
     exit(0);

@@ -308,75 +308,7 @@ Metadata field creation/updates use the same request with `fieldScope` fixed to 
     - `PRODUCT_NOT_FOUND`
     - `SERVER_ERROR`
 
-### 11. Search Catalog
-- **Action**: `v1.searchCatalog`
-- **Method**: `POST`
-- **Body**:
-```json
-{
-  "query": "ferrite",
-  "scope": ["category", "series", "product"],
-  "seriesId": 5,
-  "fieldFilters": {
-    "impedance": "100",
-    "current_rating": "1"
-  },
-  "seriesMetaFilters": {
-    "series_voltage": "5V"
-  }
-}
-```
-- **Response**:
-```json
-{
-  "success": true,
-  "data": {
-    "categories": [
-      { "id": 3, "name": "EMC Components" }
-    ],
-    "series": [
-      {
-        "id": 5,
-        "name": "C0 SERIES",
-        "seriesMeta": {
-          "series_voltage": "3.3V - 5V",
-          "series_notes": "Optimized for automotive"
-        }
-      }
-    ],
-    "products": [
-      {
-        "id": 20,
-        "sku": "C0-1N0S-E-10",
-        "name": "C0-1N0S-E-10",
-        "seriesId": 5,
-        "customValues": {
-          "impedance": "100"
-        }
-      }
-    ],
-    "productFieldMeta": [
-      {
-        "fieldKey": "impedance",
-        "label": "Impedance (Ohm)",
-        "isRequired": true
-      }
-    ],
-    "seriesFieldMeta": [
-      {
-        "fieldKey": "series_voltage",
-        "label": "Voltage Range",
-        "isRequired": true
-      }
-    ]
-  }
-}
-```
-- **Errors**:
-    - `VALIDATION_ERROR`
-    - `SERIES_NOT_FOUND`
-
-### 12. Delete Product
+### 11. Delete Product
 - **Action**: `v1.deleteProduct`
 - **Method**: `POST`
 - **Body**:
@@ -389,7 +321,7 @@ Metadata field creation/updates use the same request with `fieldScope` fixed to 
     - `PRODUCT_NOT_FOUND`
     - `VALIDATION_ERROR`
 
-### 13. Export Catalog CSV
+### 12. Export Catalog CSV
 - **Action**: `v1.exportCsv`
 - **Method**: `POST`
 - **Body**: *(optional)* `{ }`
@@ -410,7 +342,7 @@ Metadata field creation/updates use the same request with `fieldScope` fixed to 
   - Use the returned `id` with `v1.downloadCsv` to retrieve the file; entry is appended to history automatically.
   - Exported rows contain exactly the stakeholder sample schema: `category_path`, `product_name`, and the ordered list of product attribute headers (e.g., `acf.length`, `acf.measure_result_0_frequency`, ...). The single `product_name` column doubles as SKU + label on import.
 
-### 14. Import Catalog CSV
+### 13. Import Catalog CSV
 - **Action**: `v1.importCsv`
 - **Method**: `POST`
 - **Content-Type**: `multipart/form-data`
@@ -438,7 +370,7 @@ Metadata field creation/updates use the same request with `fieldScope` fixed to 
     - `CSV_PARSE_ERROR`
     - `VALIDATION_ERROR`
 
-### 15. List CSV History
+### 14. List CSV History
 - **Action**: `v1.listCsvHistory`
 - **Method**: `GET`
 - **Response**:
@@ -461,18 +393,37 @@ Metadata field creation/updates use the same request with `fieldScope` fixed to 
         "timestamp": "2025-10-30T15:35:00Z",
         "size": 32768
       }
-    ]
+    ],
+    "audits": [
+      {
+        "id": "0f9a6a32-1d9d-4f79-9d92-5d0526f8f2c7",
+        "reason": "Preparing for FY25 import",
+        "timestamp": "2025-11-11T16:35:12Z",
+        "deleted": {
+          "categories": 42,
+          "series": 12,
+          "products": 380,
+          "fieldDefinitions": 55,
+          "productValues": 2150,
+          "seriesValues": 84
+        }
+      }
+    ],
+    "truncateInProgress": false
   }
 }
 ```
+- **Notes**:
+  - `audits` surfaces the most recent truncate entries written to `storage/csv/truncate_audit.jsonl`.
+  - `truncateInProgress` signals when the advisory lock is held so clients can disable import/export during destructive operations.
 
-### 16. Download CSV File
+### 15. Download CSV File
 - **Action**: `v1.downloadCsv`
 - **Method**: `GET`
 - **Query Params**: `id` (required) — identifier returned from history/export APIs.
 - **Response**: `text/csv` file download. Missing files return `404` with JSON error payload.
 
-### 17. Delete CSV File
+### 16. Delete CSV File
 - **Action**: `v1.deleteCsv`
 - **Method**: `POST`
 - **Body**:
@@ -490,6 +441,74 @@ Metadata field creation/updates use the same request with `fieldScope` fixed to 
 - **Errors**:
     - `CSV_NOT_FOUND`
     - `CSV_DELETE_ERROR`
+
+### 17. Restore CSV File
+- **Action**: `v1.restoreCsv`
+- **Method**: `POST`
+- **Body**:
+```json
+{
+  "id": "20251113094500_import_products.csv"
+}
+```
+- **Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "importedProducts": 125,
+    "createdSeries": 4,
+    "createdCategories": 6,
+    "fileId": "20251113094500_import_products.csv"
+  }
+}
+```
+- **Behaviour**:
+  - Validates the `id`, reuses the stored CSV bytes under `storage/csv`, and runs the same pipeline as `v1.importCsv` (counts reflect this re-import).
+  - Useful for "Restore" buttons in the UI so stakeholders can quickly replay a previous snapshot without uploading.
+- **Errors**:
+  - `CSV_NOT_FOUND`
+  - `CSV_PARSE_ERROR`
+  - `VALIDATION_ERROR`
+
+### 18. Truncate Catalog
+- **Action**: `v1.truncateCatalog`
+- **Method**: `POST`
+- **Body**:
+```json
+{
+  "reason": "Preparing for FY25 import",
+  "confirmToken": "TRUNCATE",
+  "correlationId": "0f9a6a32-1d9d-4f79-9d92-5d0526f8f2c7"
+}
+```
+- **Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "auditId": "0f9a6a32-1d9d-4f79-9d92-5d0526f8f2c7",
+    "deleted": {
+      "categories": 42,
+      "series": 12,
+      "products": 380,
+      "fieldDefinitions": 55,
+      "productValues": 2150,
+      "seriesValues": 84
+    },
+    "timestamp": "2025-11-11T16:35:12Z"
+  }
+}
+```
+- **Behaviour**:
+  - Requires `confirmToken = "TRUNCATE"`; missing/incorrect tokens return `TRUNCATE_CONFIRMATION_REQUIRED`.
+  - `reason` is mandatory (<= 256 chars) and is persisted inside `storage/csv/truncate_audit.jsonl` along with the provided `correlationId`.
+  - While truncate is running, CSV import/export/restore endpoints return `409 TRUNCATE_IN_PROGRESS` to prevent concurrent writes.
+  - The service disables foreign key checks, truncates every catalog-related table (`product_custom_field_value`, `series_custom_field_value`, `product`, `series_custom_field`, `category`, `seed_migration`), reenables checks, and returns counts without reseeding any defaults. The next CSV import is expected to rebuild the hierarchy/series/data from scratch.
+- **Errors**:
+  - `TRUNCATE_CONFIRMATION_REQUIRED`
+  - `TRUNCATE_IN_PROGRESS`
+  - `TRUNCATE_ERROR`
 
 ### 19. Public Catalog Snapshot
 - **Action**: `v1.publicCatalogSnapshot`
@@ -584,39 +603,5 @@ Metadata field creation/updates use the same request with `fieldScope` fixed to 
 - Provide sample PowerShell command:
 ```powershell
 Invoke-RestMethod -Uri "http://localhost/catalog.php?action=v1.listHierarchy" -Method Get
-Invoke-RestMethod -Uri "http://localhost/catalog.php?action=v1.searchCatalog" -Method Post -ContentType 'application/json' -Body (@{ query = 'C0'; scope = @('series','product'); seriesId = 5; fieldFilters = @{ impedance = '100' } } | ConvertTo-Json)
 Invoke-RestMethod -Uri "http://localhost/catalog.php?action=v1.saveSeriesAttributes" -Method Post -ContentType 'application/json' -Body (@{ seriesId = 5; values = @{ series_voltage = '3.3V - 5V'; series_notes = 'Automotive' } } | ConvertTo-Json)
 ```
-
-
-- `CSV_NOT_FOUND`
-- `CSV_DELETE_ERROR`
-
-### 18. Restore CSV File
-- **Action**: `v1.restoreCsv`
-- **Method**: `POST`
-- **Body**:
-```json
-{
-  "id": "20251113094500_import_products.csv"
-}
-```
-- **Response**:
-```json
-{
-  "success": true,
-  "data": {
-    "importedProducts": 125,
-    "createdSeries": 4,
-    "createdCategories": 6,
-    "fileId": "20251113094500_import_products.csv"
-  }
-}
-```
-- **Behaviour**:
-  - Validates the `id`, reuses the stored CSV bytes under `storage/csv`, and runs the same pipeline as `v1.importCsv` (counts reflect this re-import).
-  - Useful for “Restore” buttons in the UI so stakeholders can quickly replay a previous snapshot without uploading.
-- **Errors**:
-  - `CSV_NOT_FOUND`
-  - `CSV_PARSE_ERROR`
-  - `VALIDATION_ERROR`
