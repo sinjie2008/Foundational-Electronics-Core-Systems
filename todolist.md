@@ -75,6 +75,13 @@
 - [x] Sync repository / clean local state (only expected docs/code changes staged).
 - [x] Refresh test expectations (`php tests/api_backend_test.php`) prior to refactor.
 
+## Context Reset Checklist (16 Nov 2025 - Products Panel Full Width)
+- [x] Summarize previous task results in todolist (15 Nov ES6 refactor entry already captured).
+- [x] Close or carry over open TODOs (outstanding public snapshot + CSV tasks remain below).
+- [x] Re-read `docs/spec.md` and `docs/api.md` to confirm no conflicting layout guidance before updating specs for the new requirement.
+- [x] Sync repository / clean local state (`git status -sb` clean).
+- [x] Refresh test data/mocks and local environment (`.\scripts\run-tests.ps1`).
+
 ## Tasks
 - [x] Seed database schema & initial hierarchy (tests: integration seeding verification script) - Completed via `php tests/seed_verification.php`
 - [x] Implement PHP backend actions (tests: `php tests/api_backend_test.php`) - Completed
@@ -108,3 +115,5 @@
 - [x] Document ES6/performance refactor plan for `catalog_ui.js` in spec/decisions/todolist (tests: documentation review).
 - [x] Refactor `assets/js/catalog_ui.js` into an ES6 module with cached selectors, batched renders, and Promise helpers while retaining jQuery for transport (tests: manual UI smoke + `php tests/api_backend_test.php`).
 - [x] Realign Section 1/2/3 layout (Hierarchy/Add/Update/Selected in row, Series Custom Fields + Series Metadata inline, Products list + form inline) using flexbox and refreshed markup (tests: manual UI verification).
+- [x] Document the stacked Products panel layout requirement in `docs/spec.md` and `docs/decisions.md` (tests: spec/doc review on 2025-11-16).
+- [x] Update frontend HTML/CSS so the Products table and form render sequentially at full width while preserving existing actions (tests: manual reasoning + `.\scripts\run-tests.ps1` on 2025-11-16).

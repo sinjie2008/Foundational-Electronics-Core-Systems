@@ -103,25 +103,21 @@
         <div class="section section-inline">
             <div class="panel panel-products">
                 <h3>Products</h3>
-                <div class="panel-split">
-                    <div class="panel-column">
-                        <table id="product-list-table"></table>
-                        <button type="button" id="product-delete-button">Delete Selected Product</button>
-                    </div>
-                    <div class="panel-column">
-                        <form id="product-form" class="stacked-form">
-                            <input type="hidden" id="product-id">
-                            <label>SKU:<input type="text" id="product-sku" required></label>
-                            <label>Name:<input type="text" id="product-name" required></label>
-                            <label>Description:<textarea id="product-description" rows="4"></textarea></label>
-                            <div id="product-custom-fields"></div>
-                            <div class="inline-actions">
-                                <button type="submit" id="product-submit">Save Product</button>
-                                <button type="button" id="product-clear-button">Clear</button>
-                            </div>
-                        </form>
-                    </div>
+                <div class="products-list-block">
+                    <table id="product-list-table"></table>
+                    <button type="button" id="product-delete-button">Delete Selected Product</button>
                 </div>
+                <form id="product-form" class="stacked-form products-form">
+                    <input type="hidden" id="product-id">
+                    <label>SKU:<input type="text" id="product-sku" required></label>
+                    <label>Name:<input type="text" id="product-name" required></label>
+                    <label>Description:<textarea id="product-description" rows="4"></textarea></label>
+                    <div id="product-custom-fields"></div>
+                    <div class="inline-actions">
+                        <button type="submit" id="product-submit">Save Product</button>
+                        <button type="button" id="product-clear-button">Clear</button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>

@@ -1,4 +1,4 @@
-# Decisions & Q&A Log
+ï»¿# Decisions & Q&A Log
 
 ## 2025-10-29
 - Seed series-specific fields directly via initial database seed (confirmed with stakeholder).
@@ -51,4 +51,8 @@
 - Stakeholder requested that `assets/js/catalog_ui.js` be modernized to ES6 style and optimized for performance.
 - Decision: refactor the client script into a single ES6 module (`CatalogUI`) that hangs off an IIFE, prefers `const`/`let`, arrow functions, template literals, and `Promise.all`, caches DOM nodes, memoizes hierarchy lookups, batches rendering work, and centralizes fetch/error handling. jQuery remains the transport/helper layer, but all high-frequency DOM mutations now flow through explicit render helpers to minimize layout thrash.
 - Follow-up: UI layout must present Section 1 (Hierarchy, Add Node, Update Selected Node, Selected Node) in a single inline row, Section 2 (Series Custom Fields, Series Metadata) inline once a series is selected, and Section 3 (Products list + form) aligned horizontally. CSS/HTML updated to use flexbox panels so stateful cards stay aligned without tables.
-- Follow-up 2: Hierarchy tree uses inline accordions per category—each category row has a chevron toggle that collapses/expands only its children while keeping the rest of Section 1 visible; implemented purely in the frontend markup/CSS/JS, with only the root level expanded by default.
+- Follow-up 2: Hierarchy tree uses inline accordions per categoryï¿½each category row has a chevron toggle that collapses/expands only its children while keeping the rest of Section 1 visible; implemented purely in the frontend markup/CSS/JS, with only the root level expanded by default.
+## 2025-11-16
+- Stakeholder reported that the Products panel still constrains the list grid and edit form to side-by-side half-width columns, which makes wide attribute tables and longer product names difficult to scan.
+- Decision: update the specification and UI so #product-list-table and #product-form render sequentially, each spanning the full width of the Products panel (stacked layout) while preserving existing actions (select/delete/save). CSS should remove the split column flex styling for this section to ensure both blocks expand horizontally on any screen width.
+

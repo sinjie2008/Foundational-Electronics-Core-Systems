@@ -219,15 +219,17 @@ button:disabled {
     font-weight: 500;
 }
 
-.panel-split {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 16px;
+.products-list-block,
+.products-form {
+    width: 100%;
 }
 
-.panel-column {
-    flex: 1 1 320px;
-    min-width: 280px;
+.products-list-block {
+    margin-bottom: 16px;
+}
+
+.products-list-block #product-delete-button {
+    margin-top: 8px;
 }
 
 table {

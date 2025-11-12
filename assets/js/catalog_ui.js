@@ -292,8 +292,8 @@
     };
 
     const updateSelectedNodePanel = () => {
-        const $details = $el('selectedNodeDetails');
         const node = state.nodeIndex.get(state.selectedNodeId);
+        const $details = $el('selectedNodeDetails');
         if (!node) {
             $details.text('Select a category or series to view details.');
             $el('updateNodeId').val('');
