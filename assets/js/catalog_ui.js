@@ -103,6 +103,113 @@
             serverLock: false,
         },
     };
+    const dataTableRegistry = new Map();
+    const DATA_TABLE_DOM =
+        '<"row g-2 align-items-center mb-2"<"col-12 col-md-6"l><"col-12 col-md-6 text-md-end"f>>' +
+        't' +
+        '<"row g-2 align-items-center mt-2"<"col-12 col-md-6"i><"col-12 col-md-6 text-md-end"p>>';
+    const DATA_TABLE_LANGUAGE = {
+        search: 'Search:',
+        searchPlaceholder: 'Search...',
+        zeroRecords: 'No matching records found.',
+        info: 'Showing _START_ to _END_ of _TOTAL_ entries',
+        infoEmpty: 'Showing 0 entries',
+        lengthMenu: 'Show _MENU_ entries',
+        paginate: {
+            previous: 'Prev',
+            next: 'Next',
+        },
+    };
+    const DATA_TABLE_DEFAULTS = {
+        paging: true,
+        searching: true,
+        ordering: true,
+        lengthChange: true,
+        pageLength: 10,
+        lengthMenu: [
+            [5, 10, 25, 50, -1],
+            [5, 10, 25, 50, 'All'],
+        ],
+        autoWidth: false,
+        info: true,
+        dom: DATA_TABLE_DOM,
+        language: DATA_TABLE_LANGUAGE,
+        order: [[0, 'asc']],
+    };
+    const buildTableHeader = (tableKey, columns = []) => {
+        const $table = $el(tableKey);
+        if (!$table.length) {
+            return $table;
+        }
+        const headerHtml = columns.length
+            ? `<tr>${columns.map((col) => `<th>${col.title}</th>`).join('')}</tr>`
+            : '';
+        let $thead = $table.find('thead');
+        if (!$thead.length) {
+            $thead = $('<thead></thead>').appendTo($table);
+        }
+        $thead.html(headerHtml);
+        if (!$table.find('tbody').length) {
+            $('<tbody></tbody>').appendTo($table);
+        }
+        return $table;
+    };
+    const setEmptyTableState = (tableKey, columns = [], message = 'No records found.') => {
+        const $table = buildTableHeader(tableKey, columns);
+        const $tbody = $table.find('tbody');
+        const colspan = Math.max(columns.length, 1);
+        $tbody.html(
+            `<tr><td colspan="${colspan}" class="datatable-empty">${escapeHtml(message)}</td></tr>`
+        );
+    };
+    const destroyDataTable = (tableKey) => {
+        const entry = dataTableRegistry.get(tableKey);
+        if (entry?.instance) {
+            entry.instance.destroy();
+        }
+        dataTableRegistry.delete(tableKey);
+    };
+    const syncDataTable = (tableKey, columns, rows, options = {}) => {
+        if (!Array.isArray(rows) || !rows.length) {
+            destroyDataTable(tableKey);
+            setEmptyTableState(tableKey, columns, options.emptyMessage);
+            return;
+        }
+        const $table = buildTableHeader(tableKey, columns);
+        const extraOptions = options.extraOptions || {};
+        let signature = '';
+        try {
+            signature = JSON.stringify({
+                columns: columns.map((col) => col.title),
+                extra: options.signatureKey || extraOptions,
+            });
+        } catch (error) {
+            signature = columns.map((col) => col.title).join('|');
+        }
+        const entry = dataTableRegistry.get(tableKey);
+        if (entry && entry.signature === signature) {
+            entry.instance.clear();
+            entry.instance.rows.add(rows);
+            entry.instance.draw(false);
+            return;
+        }
+        destroyDataTable(tableKey);
+        const instance = $table.DataTable({
+            ...DATA_TABLE_DEFAULTS,
+            ...extraOptions,
+            data: rows,
+            columns,
+            pageLength:
+                options.pageLength ??
+                extraOptions.pageLength ??
+                DATA_TABLE_DEFAULTS.pageLength,
+            order:
+                options.order ??
+                extraOptions.order ??
+                DATA_TABLE_DEFAULTS.order,
+        });
+        dataTableRegistry.set(tableKey, { instance, signature });
+    };
     const escapeHtml = (value = '') =>
         String(value ?? '')
             .replace(/&/g, '&amp;')
@@ -437,59 +544,91 @@
 
     const renderSeriesFieldsTable = () => {
         const fields = getProductFields();
-        const $table = $el('seriesFieldsTable');
+        const columns = [
+            { title: 'ID', data: 'id', width: '60px' },
+            { title: 'Key', data: 'fieldKey' },
+            { title: 'Label', data: 'label' },
+            { title: 'Required', data: 'required', width: '90px' },
+            { title: 'Sort', data: 'sortOrder', width: '70px' },
+            {
+                title: 'Actions',
+                data: 'actions',
+                orderable: false,
+                searchable: false,
+                className: 'text-nowrap',
+            },
+        ];
         if (!fields.length) {
-            $table.html('<tr><td>No product attribute fields defined for this series.</td></tr>');
+            destroyDataTable('seriesFieldsTable');
+            setEmptyTableState(
+                'seriesFieldsTable',
+                columns,
+                'No product attribute fields defined for this series.'
+            );
             renderProductFormFields();
             return;
         }
-        const rows = [
-            `<tr><th>ID</th><th>Key</th><th>Label</th><th>Required</th><th>Sort</th><th>Actions</th></tr>`,
-            ...fields.map((field) => {
-                const required = field.isRequired ? 'yes' : 'no';
-                return `<tr>
-                    <td>${field.id}</td>
-                    <td>${escapeHtml(field.fieldKey)}</td>
-                    <td>${escapeHtml(field.label)}</td>
-                    <td>${required}</td>
-                    <td>${field.sortOrder ?? 0}</td>
-                    <td>
-                        <button type="button" class="series-field-action" data-field-action="edit" data-field-id="${field.id}" data-field-scope="${FIELD_SCOPE.PRODUCT}">Edit</button>
-                        <button type="button" class="series-field-action" data-field-action="delete" data-field-id="${field.id}" data-field-scope="${FIELD_SCOPE.PRODUCT}">Delete</button>
-                    </td>
-                </tr>`;
-            }),
-        ];
-        $table.html(rows.join(''));
+        const rows = fields.map((field) => ({
+            id: Number(field.id),
+            fieldKey: escapeHtml(field.fieldKey),
+            label: escapeHtml(field.label),
+            required: field.isRequired ? 'Yes' : 'No',
+            sortOrder: field.sortOrder ?? 0,
+            actions: `<div class="datatable-actions">
+                <button type="button" class="series-field-action" data-field-action="edit" data-field-id="${field.id}" data-field-scope="${FIELD_SCOPE.PRODUCT}">Edit</button>
+                <button type="button" class="series-field-action" data-field-action="delete" data-field-id="${field.id}" data-field-scope="${FIELD_SCOPE.PRODUCT}">Delete</button>
+            </div>`,
+        }));
+        syncDataTable('seriesFieldsTable', columns, rows, {
+            order: [[4, 'asc']],
+            pageLength: 5,
+            emptyMessage: 'No product attribute fields defined for this series.',
+        });
         renderProductFormFields();
     };
 
     const renderSeriesMetadataFieldsTable = () => {
         const fields = getMetadataFields();
-        const $table = $el('seriesMetadataFieldsTable');
+        const columns = [
+            { title: 'ID', data: 'id', width: '60px' },
+            { title: 'Key', data: 'fieldKey' },
+            { title: 'Label', data: 'label' },
+            { title: 'Required', data: 'required', width: '90px' },
+            { title: 'Sort', data: 'sortOrder', width: '70px' },
+            {
+                title: 'Actions',
+                data: 'actions',
+                orderable: false,
+                searchable: false,
+                className: 'text-nowrap',
+            },
+        ];
         if (!fields.length) {
-            $table.html('<tr><td>No series metadata fields defined.</td></tr>');
+            destroyDataTable('seriesMetadataFieldsTable');
+            setEmptyTableState(
+                'seriesMetadataFieldsTable',
+                columns,
+                'No series metadata fields defined.'
+            );
             renderSeriesMetadataValues();
             return;
         }
-        const rows = [
-            `<tr><th>ID</th><th>Key</th><th>Label</th><th>Required</th><th>Sort</th><th>Actions</th></tr>`,
-            ...fields.map((field) => {
-                const required = field.isRequired ? 'yes' : 'no';
-                return `<tr>
-                    <td>${field.id}</td>
-                    <td>${escapeHtml(field.fieldKey)}</td>
-                    <td>${escapeHtml(field.label)}</td>
-                    <td>${required}</td>
-                    <td>${field.sortOrder ?? 0}</td>
-                    <td>
-                        <button type="button" class="series-field-action" data-field-action="edit" data-field-id="${field.id}" data-field-scope="${FIELD_SCOPE.SERIES}">Edit</button>
-                        <button type="button" class="series-field-action" data-field-action="delete" data-field-id="${field.id}" data-field-scope="${FIELD_SCOPE.SERIES}">Delete</button>
-                    </td>
-                </tr>`;
-            }),
-        ];
-        $table.html(rows.join(''));
+        const rows = fields.map((field) => ({
+            id: Number(field.id),
+            fieldKey: escapeHtml(field.fieldKey),
+            label: escapeHtml(field.label),
+            required: field.isRequired ? 'Yes' : 'No',
+            sortOrder: field.sortOrder ?? 0,
+            actions: `<div class="datatable-actions">
+                <button type="button" class="series-field-action" data-field-action="edit" data-field-id="${field.id}" data-field-scope="${FIELD_SCOPE.SERIES}">Edit</button>
+                <button type="button" class="series-field-action" data-field-action="delete" data-field-id="${field.id}" data-field-scope="${FIELD_SCOPE.SERIES}">Delete</button>
+            </div>`,
+        }));
+        syncDataTable('seriesMetadataFieldsTable', columns, rows, {
+            order: [[4, 'asc']],
+            pageLength: 5,
+            emptyMessage: 'No series metadata fields defined.',
+        });
         renderSeriesMetadataValues();
     };
 
@@ -539,39 +678,66 @@
     };
 
     const renderProductList = () => {
-        const $table = $el('productListTable');
         const products = state.products || [];
+        const fields = getProductFields();
+        const baseColumns = [
+            { title: 'ID', data: 'id', width: '60px' },
+            { title: 'SKU', data: 'sku' },
+            { title: 'Name', data: 'name' },
+        ];
+        const customColumns = fields.map((field) => ({
+            title: escapeHtml(field.label),
+            data: null,
+            render: (data, type, row) => {
+                const value = row.custom[field.fieldKey] ?? '';
+                return type === 'display' ? value : value;
+            },
+        }));
+        const columns = [
+            ...baseColumns,
+            ...customColumns,
+            {
+                title: 'Actions',
+                data: 'actions',
+                orderable: false,
+                searchable: false,
+                className: 'text-nowrap',
+            },
+        ];
         if (!products.length) {
-            $table.html('<tr><td>No products for this series.</td></tr>');
+            destroyDataTable('productListTable');
+            setEmptyTableState('productListTable', columns, 'No products for this series.');
             return;
         }
-        const fields = getProductFields();
-        const header =
-            '<tr><th>ID</th><th>SKU</th><th>Name</th>' +
-            fields.map((field) => `<th>${escapeHtml(field.label)}</th>`).join('') +
-            '<th>Actions</th></tr>';
-        const rows = products
-            .map((product) => {
-                const customValues = product.customValues || {};
-                const customCells = fields
-                    .map(
-                        (field) =>
-                            `<td>${escapeHtml(customValues[field.fieldKey] ?? '')}</td>`
-                    )
-                    .join('');
-                return `<tr>
-                    <td>${product.id}</td>
-                    <td>${escapeHtml(product.sku)}</td>
-                    <td>${escapeHtml(product.name)}</td>
-                    ${customCells}
-                    <td>
-                        <button type="button" data-product-action="edit" data-product-id="${product.id}">Edit</button>
-                        <button type="button" data-product-action="delete" data-product-id="${product.id}">Delete</button>
-                    </td>
-                </tr>`;
-            })
-            .join('');
-        $table.html(header + rows);
+        const rows = products.map((product) => {
+            const customValues = {};
+            fields.forEach((field) => {
+                const value = product.customValues?.[field.fieldKey] ?? '';
+                customValues[field.fieldKey] = escapeHtml(value);
+            });
+            return {
+                id: Number(product.id),
+                sku: escapeHtml(product.sku),
+                name: escapeHtml(product.name),
+                custom: customValues,
+                actions: `<div class="datatable-actions">
+                    <button type="button" data-product-action="edit" data-product-id="${product.id}">Edit</button>
+                    <button type="button" data-product-action="delete" data-product-id="${product.id}">Delete</button>
+                </div>`,
+            };
+        });
+        syncDataTable('productListTable', columns, rows, {
+            pageLength: 10,
+            emptyMessage: 'No products for this series.',
+            signatureKey: 'product-fixed-columns',
+            extraOptions: {
+                scrollX: true,
+                scrollCollapse: true,
+                fixedColumns: {
+                    left: 3,
+                },
+            },
+        });
     };
 
     const resetSeriesFieldForm = () => {
@@ -650,28 +816,54 @@
         }
     };
     const renderCsvHistory = (files) => {
-        const $tbody = $el('csvHistoryTable').find('tbody');
+        const columns = [
+            { title: 'Type', data: 'type', width: '90px' },
+            { title: 'Name', data: 'name' },
+            {
+                title: 'Timestamp',
+                data: 'timestampRaw',
+                render: (data) => formatDateTime(data),
+            },
+            {
+                title: 'Size (bytes)',
+                data: 'sizeRaw',
+                className: 'text-end',
+                render: (data, type, row) =>
+                    type === 'display' ? row.sizeDisplay : data ?? 0,
+            },
+            {
+                title: 'Actions',
+                data: 'actions',
+                orderable: false,
+                searchable: false,
+                className: 'text-nowrap',
+            },
+        ];
         if (!files.length) {
-            $tbody.html('<tr><td colspan="5">No CSV files stored.</td></tr>');
+            destroyDataTable('csvHistoryTable');
+            setEmptyTableState('csvHistoryTable', columns, 'No CSV files stored.');
             return;
         }
-        const rows = files
-            .map((file) => {
-                const size = Number(file.size || 0);
-                return `<tr>
-                    <td>${escapeHtml((file.type || '').toString().toUpperCase())}</td>
-                    <td>${escapeHtml(file.name || file.id)}</td>
-                    <td>${formatDateTime(file.timestamp)}</td>
-                    <td>${Number.isNaN(size) ? '0' : size.toLocaleString()}</td>
-                    <td>
-                        <button type="button" data-csv-download="${file.id}">Download</button>
-                        <button type="button" data-csv-restore="${file.id}">Restore</button>
-                        <button type="button" data-csv-delete="${file.id}">Delete</button>
-                    </td>
-                </tr>`;
-            })
-            .join('');
-        $tbody.html(rows);
+        const rows = files.map((file) => {
+            const size = Number(file.size || 0);
+            return {
+                type: escapeHtml((file.type || '').toString().toUpperCase()),
+                name: escapeHtml(file.name || file.id),
+                timestampRaw: file.timestamp,
+                sizeRaw: Number.isNaN(size) ? 0 : size,
+                sizeDisplay: Number.isNaN(size) ? '0' : size.toLocaleString(),
+                actions: `<div class="datatable-actions">
+                    <button type="button" data-csv-download="${file.id}">Download</button>
+                    <button type="button" data-csv-restore="${file.id}">Restore</button>
+                    <button type="button" data-csv-delete="${file.id}">Delete</button>
+                </div>`,
+            };
+        });
+        syncDataTable('csvHistoryTable', columns, rows, {
+            order: [[2, 'desc']],
+            pageLength: 5,
+            emptyMessage: 'No CSV files stored.',
+        });
     };
 
     const formatDeletedSummary = (deleted = {}) => {
@@ -700,22 +892,36 @@
     };
 
     const renderTruncateAudits = (audits) => {
-        const $tbody = $el('truncateAuditTable').find('tbody');
+        const columns = [
+            {
+                title: 'Timestamp',
+                data: 'timestampRaw',
+                render: (data) => formatDateTime(data),
+            },
+            { title: 'Reason', data: 'reason' },
+            { title: 'Deleted', data: 'deleted' },
+            { title: 'Audit ID', data: 'auditId' },
+        ];
         if (!audits.length) {
-            $tbody.html('<tr><td colspan="4">No truncate actions logged.</td></tr>');
+            destroyDataTable('truncateAuditTable');
+            setEmptyTableState(
+                'truncateAuditTable',
+                columns,
+                'No truncate actions logged.'
+            );
             return;
         }
-        const rows = audits
-            .map(
-                (audit) => `<tr>
-                <td>${formatDateTime(audit.timestamp)}</td>
-                <td>${escapeHtml(audit.reason || '')}</td>
-                <td>${escapeHtml(formatDeletedSummary(audit.deleted))}</td>
-                <td>${escapeHtml(audit.id || '')}</td>
-            </tr>`
-            )
-            .join('');
-        $tbody.html(rows);
+        const rows = audits.map((audit) => ({
+            timestampRaw: audit.timestamp,
+            reason: escapeHtml(audit.reason || ''),
+            deleted: escapeHtml(formatDeletedSummary(audit.deleted)),
+            auditId: escapeHtml(audit.id || ''),
+        }));
+        syncDataTable('truncateAuditTable', columns, rows, {
+            order: [[0, 'desc']],
+            pageLength: 5,
+            emptyMessage: 'No truncate actions logged.',
+        });
     };
 
     const loadCsvHistory = async () => {

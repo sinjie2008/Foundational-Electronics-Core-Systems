@@ -117,8 +117,27 @@
 - [x] Update the CSV Import/Export/Truncate section to reuse the shared `panel` component so Bootstrap styling remains visually consistent.
 
 ### Test Approach (Bootstrap)
-- `.\\scripts\\run-tests.ps1` – executes PHP/unit/API scripts to ensure backend remains green after asset changes.
+- .\\scripts\\run-tests.ps1 - executes PHP/unit/API scripts to ensure backend remains green after asset changes.
 - Manual UI smoke in browser across Section 1/2/3 plus CSV + Truncate cards, comparing spacing to baseline screenshots before enabling Bootstrap.
+
+## Context Reset Checklist (19 Nov 2025 - DataTables Integration)
+- [x] Summarize previous task results in todolist (Bootstrap adoption + series editor isolation status captured above).
+- [x] Close or carry over open TODOs (Bootstrap parity audit + series editor backend refactor remain pending and are noted).
+- [x] Re-read docs/spec.md, docs/api.md, and docs/decisions.md to align DataTables scope with architecture guidance.
+- [x] Sync repository / clean local state (git status -sb run before editing; no unexpected changes).
+- [x] Refresh test data/mocks/local environment plan (confirm .\\scripts\\run-tests.ps1 + manual UI smoke will be rerun after DataTables work).
+
+### 2025-11-19 - DataTables Integration
+- [x] Update docs (docs/spec.md, docs/decisions.md) with DataTables architecture notes, pseudocode, and module diagram references.
+- [x] Extend catalog_ui.html to load DataTables core + Bootstrap 5 bundle from CDN.
+- [x] Enhance assets/js/catalog_ui.js render helpers to initialize/update/destroy DataTables instances for all five target tables without disrupting cached state or event bindings.
+- [x] Adjust styling (assets/css/catalog_ui.css) if needed so DataTables pagination/search controls respect existing spacing.
+- [ ] Validate UI manually to ensure pagination/search/sorting work for Series Fields, Series Metadata fields, Product list, CSV history, and Truncate audit tables; confirm no regressions in selection flows.
+- [x] Run .\\scripts\\run-tests.ps1 (backs up backend regressions) once UI changes are in place.
+
+### Test Approach (DataTables)
+- .\\scripts\\run-tests.ps1 - regression safety net for PHP/backend changes (expected no deltas, but run for completeness).
+- Manual browser verification covering: series selection (Series Fields + Metadata tables), product CRUD grid interactions, CSV history pagination/search, truncate audit logs sorting, and ensuring DataTables controls inherit Bootstrap 5 theme without spacing regressions.
 
 ## Tasks
 - [x] Seed database schema & initial hierarchy (tests: integration seeding verification script) - Completed via `php tests/seed_verification.php`

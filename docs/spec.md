@@ -7,6 +7,7 @@
 - **Constraints**: Single PHP entry point; MySQL credentials stored in dedicated config; avoid external services due to restricted environment; host custom CSS/JS under `/assets` while continuing to load vendor libraries (jQuery) from a stable CDN.
 - **Structure**: Backend refactored to PHP OOP with discrete classes (`CatalogApplication`, `HttpResponder`, `DatabaseFactory`, `Seeder`, `HierarchyService`, `SeriesFieldService`, `SeriesAttributeService`, `ProductService`, `CatalogCsvService`, `CatalogTruncateService`, `PublicCatalogService`) to isolate responsibilities and enhance maintainability; `SeriesFieldService` now focuses on field metadata while `SeriesAttributeService` persists series-level values, `CatalogTruncateService` performs destructive resets with confirmation/audit logging, and `PublicCatalogService` composes data from every domain into a single immutable snapshot. The frontend is now a single ES6 module (`CatalogUI`) that wraps all jQuery interactions with cached selectors, arrow-function helpers, and batched render/update pipelines to minimize DOM reflow and repeated AJAX calls. Section 2 contains two fully independent editors: the Series Custom Fields card renders a Product Attribute Field Editor that always posts `fieldScope = product_attribute`, while the Series Metadata card owns both the Series Metadata Field Editor (`fieldScope = series_metadata`) and the values form so scopes never mingle.
 - **UI Layout & Bootstrap Integration**: `catalog_ui.html` now loads Bootstrap 5.3 (CSS + bundle JS) from the official CDN strictly for its grid/flex utilities, reset rules, tables, and buttons, while `/assets/css/catalog_ui.css` remains the source of truth for spacing, typography, and colors. Bootstrap gutters (`g-*`), margins, and paddings are overridden via explicit `gap`, `margin`, and `padding` declarations plus `.no-bootstrap-gap` helpers so every horizontal/vertical rhythm (8px gutters inside cards, 16px between panels, 24px section spacing) matches the pre-Bootstrap layout. Bootstrap classes are applied conservatively (e.g., `container-fluid`, `row`, `col`) to reuse its responsive helpers without altering panel widths, and any new components must document their spacing overrides inside the stylesheet to guarantee visual parity.
+- **UI Table Controls (Bootstrap DataTables)**: jQuery DataTables 1.13.x with the Bootstrap 5 styling bundle is the canonical table enhancer for admin lists. Each interactive table (`#series-fields-table`, `#series-metadata-fields-table`, `#product-list-table`, `#csv-history-table`, `#truncate-audit-table`) instantiates DataTables in client-side mode with paging, column sorting, and per-table search while reusing the cached row data that already lives inside `CatalogUI`. The plugin is loaded via CDN alongside Bootstrap, and all initialization/destruction logic runs through the ES6 module so rerenders, selection states, and button bindings remain centralized. Layout conventions are locked: the "Show _N_ entries" length selector must appear on the top-left, the search box on the top-right, the pagination controls on the bottom-right, and the range/status text on the bottom-left so every table presents identical controls across the app. The Products grid (`#product-list-table`) additionally enables DataTables FixedColumns (left = 3) with horizontal scrolling so the ID/SKU/Name columns stay pinned while custom attribute columns can extend beyond the viewport.
 - **Asset Storage**: CSV import/export history persisted under `storage/csv` using timestamped filenames to enable download or deletion without extra schema, and destructive truncate events are appended as JSON lines under `storage/csv/truncate_audit.jsonl` so operators can verify who initiated the wipe and what counts were affected.
 - **Trade-offs**: Using a single PHP file centralizes logic but increases complexity-mitigated via modular PHP functions; MySQLi over PDO for simplicity but lacks driver abstraction.
 
@@ -43,6 +44,7 @@
 13. **Series Context Isolation**: Every async request that hydrates series-specific state (fields, metadata definitions/values) gates its response by the currently selected series ID so background responses from previously selected nodes are ignored, preventing metadata "bleed" across series.
 14. **Public Catalog Snapshot**: `PublicCatalogService` aggregates categories, series, metadata definitions/values, product custom field labels, and product data into one JSON payload exposed via a GET-only action for publishing/consumption use cases.
 15. **Catalog Truncate Workflow**: `CatalogTruncateService` performs a full catalog reset initiated from the CSV tools card, enforces a two-step confirmation in the UI, suspends concurrent CSV import/export calls, disables foreign key checks, truncates every catalog-related table (category, series, products, field definitions, field values, and seed history), leaves the database empty so the next CSV import defines the entire hierarchy, and records an immutable audit entry under `storage/csv/truncate_audit.jsonl` with timestamp, operator-provided reason, and deletion counts.
+16. **Bootstrap DataTables UX**: All administrator-facing tables (`#series-fields-table`, `#series-metadata-fields-table`, `#product-list-table`, `#csv-history-table`, `#truncate-audit-table`) are enhanced with jQuery DataTables (Bootstrap 5 skin) in client-side mode so users gain pagination, column sorting, and inline search without changing the cached state flow inside `CatalogUI`; each render helper now (re)hydrates the DataTable instance after diffing rows so selection state and button hooks stay intact.
 
 ## 4. Pseudocode (Critical Paths)
 
@@ -161,6 +163,52 @@ on CSV actions:
 on truncate:
     show modal (requires TRUNCATE + reason) -> post v1.truncateCatalog
     display audit id toast, reset Section 1 selection + hide Sections 2-3 until a series is chosen again
+```
+
+### Table Rendering & DataTables Lifecycle
+```text
+ensureDataTable(tableId, rows, columns):
+    if dataTableRegistry contains tableId:
+        instance = dataTableRegistry[tableId]
+        instance.clear()
+        instance.rows.add(rows) // keep same row object references for click handlers
+        instance.draw(false) // retain current pagination state
+    else:
+        instance = $(tableId).DataTable({
+            data: rows,
+            columns: columns,
+            paging: true,
+            searching: true,
+            ordering: true,
+            lengthChange: false,
+            responsive: false,
+            dom: '<"row"<"col-sm-6"f><"col-sm-6"l>>t<"row"<"col-sm-6"i><"col-sm-6"p>>',
+            language: bootstrap5TableCopy
+        })
+        dataTableRegistry[tableId] = instance
+
+teardownDataTable(tableId):
+    if dataTableRegistry contains tableId:
+        dataTableRegistry[tableId].destroy()
+        delete dataTableRegistry[tableId]
+
+// Product grid specifics
+renderProductList():
+    columns = ['ID','SKU','Name', dynamic attribute headers..., 'Actions']
+    rows = cachedProducts map -> { custom: values }
+    ensureDataTable(
+        '#product-list-table',
+        rows,
+        columns,
+        options = {
+            pageLength: 10,
+            extraOptions: {
+                scrollX: true,
+                scrollCollapse: true,
+                fixedColumns: { left: 3 }
+            }
+        }
+    )
 ```
 
 ### Export Catalog CSV
@@ -293,23 +341,46 @@ graph LR
 
 ```mermaid
 graph TD
-    Controller[Request Router] --> SeedModule[Seeder]
-    Controller --> HierarchyModule[Hierarchy Service]
-    Controller --> SeriesFieldModule[Series Field Service]
-    Controller --> SeriesAttributeModule[Series Attribute Service]
-    Controller --> ProductModule[Product Service]
-    Controller --> CsvModule[CSV Service]
-    Controller --> TruncateModule[Catalog Truncate Service]
-    Controller --> JsonResponder[JSON Responder]
-    Seeder --> MySQLDB[(MySQL)]
+    subgraph Frontend
+        CatalogUI[CatalogUI ES6 Module]
+        DataTablesPlugin[DataTables.net + Bootstrap 5 Skin]
+    end
+    subgraph Backend
+        Controller[Request Router]
+        SeedModule[Seeder]
+        HierarchyModule[Hierarchy Service]
+        SeriesFieldModule[Series Field Service]
+        SeriesAttributeModule[Series Attribute Service]
+        ProductModule[Product Service]
+        CsvModule[CSV Service]
+        TruncateModule[Catalog Truncate Service]
+        JsonResponder[JSON Responder]
+    end
+    subgraph Storage
+        MySQLDB[(MySQL)]
+        CsvStore[(CSV Storage)]
+        AuditLog[(Truncate Audit Log)]
+    end
+    CatalogUI -->|Initializes| DataTablesPlugin
+    CatalogUI -->|AJAX| Controller
+    Controller --> SeedModule
+    Controller --> HierarchyModule
+    Controller --> SeriesFieldModule
+    Controller --> SeriesAttributeModule
+    Controller --> ProductModule
+    Controller --> CsvModule
+    Controller --> TruncateModule
+    Controller --> JsonResponder
+    JsonResponder --> CatalogUI
+    SeedModule --> MySQLDB
     HierarchyModule --> MySQLDB
     SeriesFieldModule --> MySQLDB
     SeriesAttributeModule --> MySQLDB
     ProductModule --> MySQLDB
     CsvModule --> MySQLDB
-    CsvModule --> CsvStore[(CSV Storage)]
+    CsvModule --> CsvStore
     TruncateModule --> MySQLDB
-    TruncateModule --> AuditLog[(Truncate Audit Log)]
+    TruncateModule --> AuditLog
 ```
 
 ## 8. Sequence Diagram (Field Editor Isolation)
