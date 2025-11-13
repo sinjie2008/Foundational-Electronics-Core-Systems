@@ -129,6 +129,35 @@ catalog_test_assert(
     'Metadata field should persist with series scope.'
 );
 
+$duplicateKeyMetadataField = $seriesFieldService->saveField([
+    'seriesId' => $series['id'],
+    'fieldKey' => 'qa_field',
+    'label' => 'Duplicate Key Metadata',
+    'fieldType' => 'text',
+    'fieldScope' => SERIES_FIELD_SCOPE_SERIES,
+    'isRequired' => false,
+    'sortOrder' => 2,
+]);
+catalog_test_assert(
+    $duplicateKeyMetadataField['fieldScope'] === SERIES_FIELD_SCOPE_SERIES,
+    'Metadata editor should allow same fieldKey as product scope.'
+);
+
+$scopeErrorCaught = false;
+try {
+    $seriesFieldService->saveField([
+        'id' => $metadataField['id'],
+        'seriesId' => $series['id'],
+        'fieldKey' => 'qa_series_info',
+        'label' => 'Attempt Scope Change',
+        'fieldType' => 'text',
+        'fieldScope' => SERIES_FIELD_SCOPE_PRODUCT,
+    ]);
+} catch (CatalogApiException $ex) {
+    $scopeErrorCaught = $ex->getErrorCode() === 'FIELD_SCOPE_IMMUTABLE';
+}
+catalog_test_assert($scopeErrorCaught, 'Scope changes on series fields should be rejected.');
+
 $metadataSave = $seriesAttributeService->saveAttributes([
     'seriesId' => $series['id'],
     'values' => [

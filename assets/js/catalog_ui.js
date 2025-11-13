@@ -36,7 +36,6 @@
         seriesFieldId: '#series-field-id',
         seriesFieldKey: '#series-field-key',
         seriesFieldLabel: '#series-field-label',
-        seriesFieldScope: '#series-field-scope',
         seriesFieldSortOrder: '#series-field-sort-order',
         seriesFieldRequired: '#series-field-required',
         seriesFieldSubmit: '#series-field-submit',
@@ -601,10 +600,13 @@
     };
 
     const populateSeriesFieldForm = (field, scope) => {
+        if (scope !== FIELD_SCOPE.PRODUCT) {
+            setStatus('Select a product attribute field to edit.', true);
+            return;
+        }
         $el('seriesFieldId').val(field.id);
         $el('seriesFieldKey').val(field.fieldKey);
         $el('seriesFieldLabel').val(field.label);
-        $el('seriesFieldScope').val(scope);
         $el('seriesFieldSortOrder').val(field.sortOrder ?? 0);
         $el('seriesFieldRequired').prop('checked', !!field.isRequired);
         $el('seriesFieldSubmit').text('Update Field');
@@ -965,7 +967,7 @@
                 id: toInt($el('seriesFieldId').val(), null),
                 fieldKey: $el('seriesFieldKey').val(),
                 label: $el('seriesFieldLabel').val(),
-                fieldScope: $el('seriesFieldScope').val(),
+                fieldScope: FIELD_SCOPE.PRODUCT,
                 sortOrder: toInt($el('seriesFieldSortOrder').val()),
                 isRequired: $el('seriesFieldRequired').is(':checked'),
             };

@@ -5,7 +5,7 @@
 - **Stack**: PHP 8.x, MySQL 8.x, jQuery (minimal DOM handling), HTML5 with a lightweight CSS file served from `/assets/css`.
 - **Rationale**: PHP offers native MySQLi support for direct DB connections; jQuery simplifies dynamic form handling without heavy frontend frameworks; separating static assets into `/assets` keeps HTML lean while remaining framework-light.
 - **Constraints**: Single PHP entry point; MySQL credentials stored in dedicated config; avoid external services due to restricted environment; host custom CSS/JS under `/assets` while continuing to load vendor libraries (jQuery) from a stable CDN.
-- **Structure**: Backend refactored to PHP OOP with discrete classes (`CatalogApplication`, `HttpResponder`, `DatabaseFactory`, `Seeder`, `HierarchyService`, `SeriesFieldService`, `SeriesAttributeService`, `ProductService`, `CatalogCsvService`, `CatalogTruncateService`, `PublicCatalogService`) to isolate responsibilities and enhance maintainability; `SeriesFieldService` now focuses on field metadata while `SeriesAttributeService` persists series-level values, `CatalogTruncateService` performs destructive resets with confirmation/audit logging, and `PublicCatalogService` composes data from every domain into a single immutable snapshot. The frontend is now a single ES6 module (`CatalogUI`) that wraps all jQuery interactions with cached selectors, arrow-function helpers, and batched render/update pipelines to minimize DOM reflow and repeated AJAX calls.
+- **Structure**: Backend refactored to PHP OOP with discrete classes (`CatalogApplication`, `HttpResponder`, `DatabaseFactory`, `Seeder`, `HierarchyService`, `SeriesFieldService`, `SeriesAttributeService`, `ProductService`, `CatalogCsvService`, `CatalogTruncateService`, `PublicCatalogService`) to isolate responsibilities and enhance maintainability; `SeriesFieldService` now focuses on field metadata while `SeriesAttributeService` persists series-level values, `CatalogTruncateService` performs destructive resets with confirmation/audit logging, and `PublicCatalogService` composes data from every domain into a single immutable snapshot. The frontend is now a single ES6 module (`CatalogUI`) that wraps all jQuery interactions with cached selectors, arrow-function helpers, and batched render/update pipelines to minimize DOM reflow and repeated AJAX calls. Section 2 contains two fully independent editors: the Series Custom Fields card renders a Product Attribute Field Editor that always posts `fieldScope = product_attribute`, while the Series Metadata card owns both the Series Metadata Field Editor (`fieldScope = series_metadata`) and the values form so scopes never mingle.
 - **Asset Storage**: CSV import/export history persisted under `storage/csv` using timestamped filenames to enable download or deletion without extra schema, and destructive truncate events are appended as JSON lines under `storage/csv/truncate_audit.jsonl` so operators can verify who initiated the wipe and what counts were affected.
 - **Trade-offs**: Using a single PHP file centralizes logic but increases complexity-mitigated via modular PHP functions; MySQLi over PDO for simplicity but lacks driver abstraction.
 
@@ -29,14 +29,14 @@
 
 1. **Initial Seeding**: On first run, seed predefined hierarchy, series, and both series-metadata and product-attribute field definitions.
 2. **Hierarchy Management**: CRUD operations for categories and series (create, rename, delete with safeguards).
-3. **Series Metadata Field Management**: Add/remove/update series-level custom field definitions that describe the series entity through a dedicated metadata-only form colocated with the metadata editor so new definitions are no longer limited to the seeded trio.
+3. **Series Metadata Field Management**: Add/remove/update series-level custom field definitions that describe the series entity through a dedicated metadata-only form colocated with the metadata editor so new definitions are no longer limited to the seeded trio; the metadata editor never reuses the Product Attribute Field Editor controls, so scope stays locked to `series_metadata`.
 4. **Series Metadata Value Management**: Load/edit/persist values for series-level fields through `SeriesAttributeService`.
-5. **Product Attribute Field Management**: Maintain product-level dynamic fields per series (scope `product_attribute`) to keep product schema flexible.
+5. **Product Attribute Field Management**: Maintain product-level dynamic fields per series (scope `product_attribute`) to keep product schema flexible; the Product Attribute Field Editor lives exclusively within the Series Custom Fields card, hides the scope dropdown entirely, and always submits `fieldScope = product_attribute` to prevent cross-scope edits.
 6. **Product Management**: Create/edit/delete products while validating dynamic attributes via product field definitions.
 7. **HTTP Request Dispatch**: `CatalogApplication::handleRequest` delegates `action` parameters to service collaborators via controller methods, enforces HTTP verbs, and builds JSON responses through `HttpResponder`.
 8. **Rendering**: Standalone `catalog_ui.html` hosts HTML layout while loading `catalog_ui.js` from `/assets/js` and `catalog_ui.css` from `/assets/css` for behavior and styling.
 9. **Validation & Persistence**: Server-side validation mirrors both field scopes to keep API behavior deterministic for AJAX operations.
-10. **Frontend Interaction**: Single HTML page renders hierarchy pane, detail pane, metadata editor, and product grid while relying on a thin jQuery layer; the metadata pane now ships with its own field-definition form (scope locked to `series_metadata`) so administrators can add unlimited metadata inputs without leaving the section, and the Products panel stacks the product list table above the edit form so each occupies the full horizontal width for readability.
+10. **Frontend Interaction**: Single HTML page renders hierarchy pane, detail pane, metadata editor, and product grid while relying on a thin jQuery layer; the Series Custom Fields card contains a Product Attribute Field Editor that never renders a scope dropdown (hard-coded to `product_attribute`), the metadata pane ships with its own field-definition form (scope locked to `series_metadata`) so administrators can add unlimited metadata inputs without leaving the section, and the Products panel stacks the product list table above the edit form so each occupies the full horizontal width for readability.
 11. **Frontend Module Architecture**: `assets/js/catalog_ui.js` exposes a single `CatalogUI` ES6 module that initializes once, caches frequently used DOM nodes, memoizes hierarchy/series lookups, batches AJAX promises with `Promise.all`, and uses arrow functions/template literals to keep rendering lean. All UI updates flow through dedicated `render*` helpers so layout thrashing is minimized.
 12. **CSV Import/Export Lifecycle**: `CatalogCsvService` reads/writes the stakeholder-supplied schema (`category_path`, `product_name`, `acf.*` product attribute columns), derives the series name from the last `category_path` segment, maps `product_name` to both SKU and display label, synchronizes only product-attribute fields, and persists timestamped history entries for upload/download/delete/restore actions.
 13. **Series Context Isolation**: Every async request that hydrates series-specific state (fields, metadata definitions/values) gates its response by the currently selected series ID so background responses from previously selected nodes are ignored, preventing metadata "bleed" across series.
@@ -83,6 +83,22 @@ SeriesAttributeService::save(seriesId, payload):
     commit and return merged definitions + values snapshot
 ```
 
+### Save Series Field Definition
+```text
+SeriesFieldService::save(seriesId, payload):
+    expectedScope = payload.fieldScope (controller defaults this per editor: product_attribute vs series_metadata)
+    assert expectedScope in ['series_metadata', 'product_attribute']
+    if payload.id provided:
+        existing = repository::getSeriesFieldById(payload.id)
+        assert existing and existing.series_id == seriesId
+        assert existing.field_scope == expectedScope // prevents cross-scope editing
+    validate: field_key unique per (series_id, expectedScope), label required, sort_order integer, field_type supported
+    begin transaction
+        repository::upsertSeriesField(seriesId, expectedScope, payload)
+    commit
+    return list(seriesId, expectedScope)
+```
+
 ### Truncate Catalog
 ```text
 CatalogTruncateService::truncateCatalog(reason, correlationId):
@@ -125,11 +141,11 @@ on node select:
         fetch series fields (product + metadata), metadata values, and products in parallel
         ignore responses if series selection changes before data arrives
 
-on series field form submit/delete:
-    post v1.saveSeriesField or v1.deleteSeriesField
+on series field form submit/delete (Product Attribute Field Editor):
+    post v1.saveSeriesField or v1.deleteSeriesField with fieldScope hardcoded to product_attribute
     refresh only the Series Custom Fields card (Section 2 column 1) and rerender product form inputs
 
-on metadata field/value submit:
+on metadata field/value submit (Series Metadata Field Editor + Values form):
     post v1.saveSeriesField (scope = series_metadata) or v1.saveSeriesAttributes
     rerender the Series Metadata card (Section 2 column 2) with updated definitions + inline value inputs
 
@@ -295,28 +311,38 @@ graph TD
     TruncateModule --> AuditLog[(Truncate Audit Log)]
 ```
 
-## 8. Sequence Diagram (Product Save)
+## 8. Sequence Diagram (Field Editor Isolation)
 
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant B as Browser (jQuery)
+    participant UI as Catalog UI
     participant P as PHP Controller
-    participant SAF as Series Attribute Service
-    participant SFS as Series Field Service
+    participant SFS as SeriesFieldService
+    participant SAF as SeriesAttributeService
     participant D as MySQL
-    U->>B: Submit series metadata form
-    B->>P: AJAX POST v1.saveSeriesAttributes
-    P->>SAF: save(seriesId, payload)
-    SAF->>SFS: fetchDefinitions(seriesId, scope=series_metadata)
-    SFS->>D: SELECT series_custom_field rows
-    D-->>SFS: Definition set
-    SFS-->>SAF: scoped definitions
+    U->>UI: Submit Product Attribute Field Editor (Series Custom Fields card)
+    UI->>P: POST v1.saveSeriesField (fieldScope=product_attribute)
+    P->>SFS: save(seriesId, payload, scope=product_attribute)
+    SFS->>D: INSERT/UPDATE series_custom_field
+    D-->>SFS: Definition persisted
+    SFS-->>P: Scoped list (product_attribute)
+    P-->>UI: JSON response
+    UI-->>U: Refresh Product Attribute list + product form inputs
+    U->>UI: Submit Series Metadata Field Editor
+    UI->>P: POST v1.saveSeriesField (fieldScope=series_metadata)
+    P->>SFS: save(seriesId, payload, scope=series_metadata)
+    SFS->>D: INSERT/UPDATE series_custom_field
+    D-->>SFS: Definition persisted
+    SFS-->>P: Scoped list (series_metadata)
+    P-->>UI: JSON response
+    UI->>P: POST v1.saveSeriesAttributes (values form)
+    P->>SAF: save(seriesId, values)
     SAF->>D: UPSERT series_custom_field_value
-    D-->>SAF: Persistence OK
-    SAF-->>P: metadata snapshot
-    P-->>B: JSON response
-    B-->>U: Render confirmation
+    D-->>SAF: Values persisted
+    SAF-->>P: Metadata snapshot
+    P-->>UI: JSON response
+    UI-->>U: Refresh Series Metadata definitions + values
 ```
 
 ## 8b. Sequence Diagram (Catalog Truncate)

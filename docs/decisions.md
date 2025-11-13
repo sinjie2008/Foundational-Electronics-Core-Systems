@@ -56,3 +56,7 @@
 - Stakeholder reported that the Products panel still constrains the list grid and edit form to side-by-side half-width columns, which makes wide attribute tables and longer product names difficult to scan.
 - Decision: update the specification and UI so #product-list-table and #product-form render sequentially, each spanning the full width of the Products panel (stacked layout) while preserving existing actions (select/delete/save). CSS should remove the split column flex styling for this section to ensure both blocks expand horizontally on any screen width.
 
+## 2025-11-17
+- Developer identified that Series Custom Fields and Series Metadata shared the same form infrastructure, allowing administrators to flip scopes via a dropdown and accidentally edit metadata definitions from the Product Attribute editor (and vice versa).
+- Decision: split the editors entirely. The Series Custom Fields card houses a Product Attribute Field Editor with an implicit `product_attribute` scope and no dropdown, while the Series Metadata card contains its own field editor and values form with `series_metadata` scope. Backend validation now enforces immutable scopes per definition to guard against API misuse.
+

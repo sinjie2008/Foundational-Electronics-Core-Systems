@@ -82,6 +82,24 @@
 - [x] Sync repository / clean local state (`git status -sb` clean).
 - [x] Refresh test data/mocks and local environment (`.\scripts\run-tests.ps1`).
 
+## Context Reset Checklist (17 Nov 2025 - Series Field Editor Isolation Bug)
+- [x] Summarize previous task results in todolist (context summary + 15/16 Nov entries).
+- [x] Close or carry over open TODOs (new bug-specific tasks tracked below).
+- [x] Re-read `docs/spec.md`, `docs/api.md`, and `docs/decisions.md` focusing on Series Custom Fields vs Series Metadata editors.
+- [x] Sync repository / clean local state (`git status -sb` verified docs-only diffs before code work).
+- [x] Refresh test awareness (`php tests/api_backend_test.php`, manual UI smoke plan) to prep for implementation/testing.
+
+### 2025-11-17 - Series Field Editor Isolation Bug
+- [x] Update specification/API/decisions to capture dedicated editors, immutable scopes, and refreshed diagrams (docs/spec.md, docs/api.md, docs/decisions.md).
+- [ ] Refactor frontend (catalog_ui.html + assets/js/catalog_ui.js) to remove the shared scope dropdown, provide independent Product Attribute and Series Metadata field editors, and ensure each form only touches its own scope.
+- [ ] Harden backend (`catalog.php` services) so `v1.saveSeriesField` enforces immutable scopes per definition and aligns responses with each editor.
+- [ ] Extend automated + manual tests: add/adjust PHP tests covering scope enforcement, run `php tests/api_backend_test.php`, and perform manual UI verification for both editors + metadata values.
+
+### Test Approach (Bugfix)
+- `php tests/api_backend_test.php` — regression coverage for `v1.saveSeriesField`, `v1.saveSeriesAttributes`, `v1.listSeriesFields`.
+- Targeted PHP test (`tests/series_field_scope_test.php`) verifying scope immutability (add/extend as part of backend task).
+- Manual UI smoke in browser: ensure Product Attribute editor never shows scope dropdown and edits only product attributes; Series Metadata editor manages only metadata definitions/values.
+
 ## Tasks
 - [x] Seed database schema & initial hierarchy (tests: integration seeding verification script) - Completed via `php tests/seed_verification.php`
 - [x] Implement PHP backend actions (tests: `php tests/api_backend_test.php`) - Completed

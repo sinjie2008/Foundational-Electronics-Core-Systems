@@ -316,7 +316,7 @@ final class Seeder
                 created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 CONSTRAINT fk_series_custom_field_series FOREIGN KEY (series_id) REFERENCES category(id) ON DELETE CASCADE,
-                UNIQUE KEY idx_series_field_key (series_id, field_key)
+                UNIQUE KEY idx_series_field_key (series_id, field_scope, field_key)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             SQL,
                         <<<SQL
@@ -378,6 +378,7 @@ final class Seeder
         );
 
         $this->ensureSeriesMetadataDefaults();
+        $this->ensureSeriesFieldScopeIndex();
     }
 
     /**
@@ -637,6 +638,51 @@ final class Seeder
             }
         }
         $seriesResult->close();
+    }
+
+    private function ensureSeriesFieldScopeIndex(): void
+    {
+        $sql = <<<SQL
+            SELECT GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ',') AS columns
+            FROM information_schema.statistics
+            WHERE table_schema = DATABASE()
+              AND table_name = 'series_custom_field'
+              AND index_name = 'idx_series_field_key'
+        SQL;
+        $result = $this->connection->query($sql);
+        $columns = null;
+        if ($result instanceof mysqli_result) {
+            $row = $result->fetch_assoc();
+            $columns = isset($row['columns']) ? (string) $row['columns'] : null;
+            $result->close();
+        }
+        if ($columns === 'series_id,field_scope,field_key') {
+            return;
+        }
+        $tmpIndex = 'idx_series_field_scope_key_tmp';
+
+        $tmpCheck = $this->connection->query(
+            sprintf(
+                "SELECT COUNT(1) AS total FROM information_schema.statistics WHERE table_schema = DATABASE()
+                 AND table_name = 'series_custom_field' AND index_name = '%s'",
+                $this->connection->real_escape_string($tmpIndex)
+            )
+        );
+        if ($tmpCheck instanceof mysqli_result) {
+            $count = (int) ($tmpCheck->fetch_assoc()['total'] ?? 0);
+            $tmpCheck->close();
+            if ($count > 0) {
+                $this->connection->query("DROP INDEX {$tmpIndex} ON series_custom_field");
+            }
+        }
+
+        $this->connection->query(
+            "ALTER TABLE series_custom_field ADD UNIQUE KEY {$tmpIndex} (series_id, field_scope, field_key)"
+        );
+        $this->connection->query('DROP INDEX idx_series_field_key ON series_custom_field');
+        $this->connection->query(
+            "ALTER TABLE series_custom_field RENAME INDEX {$tmpIndex} TO idx_series_field_key"
+        );
     }
 
     private function getMaxSortOrderForScope(int $seriesId, string $scope): int
@@ -1247,21 +1293,37 @@ final class SeriesFieldService
         }
 
         $this->assertSeriesExists($seriesId);
-        $this->ensureUniqueFieldKey($seriesId, $fieldKey, $fieldId);
+        $targetScope = $fieldScope;
+        if ($fieldId !== null) {
+            $existingField = $this->getFieldRow($fieldId);
+            if ($existingField === null || (int) $existingField['series_id'] !== $seriesId) {
+                throw new CatalogApiException('FIELD_NOT_FOUND', 'Series field not found.', 404);
+            }
+            $existingScope = (string) $existingField['field_scope'];
+            if ($existingScope !== $fieldScope) {
+                throw new CatalogApiException(
+                    'FIELD_SCOPE_IMMUTABLE',
+                    'Field scope cannot be changed after creation.',
+                    400
+                );
+            }
+            $targetScope = $existingScope;
+        }
+
+        $this->ensureUniqueFieldKey($seriesId, $fieldKey, $targetScope, $fieldId);
 
         if ($fieldId !== null) {
             $stmt = $this->connection->prepare(
                 'UPDATE series_custom_field
-                 SET label = ?, field_key = ?, field_type = ?, field_scope = ?, default_value = ?, sort_order = ?, is_required = ?
+                 SET label = ?, field_key = ?, field_type = ?, default_value = ?, sort_order = ?, is_required = ?
                  WHERE id = ? AND series_id = ?'
             );
             $requiredValue = $isRequired ? 1 : 0;
             $stmt->bind_param(
-                'sssssiiii',
+                'ssssiiii',
                 $label,
                 $fieldKey,
                 $fieldType,
-                $fieldScope,
                 $normalizedDefaultValue,
                 $sortOrder,
                 $requiredValue,
@@ -1291,7 +1353,7 @@ final class SeriesFieldService
                 $fieldKey,
                 $label,
                 $fieldType,
-                $fieldScope,
+                $targetScope,
                 $normalizedDefaultValue,
                 $sortOrder,
                 $requiredValue
@@ -1301,7 +1363,7 @@ final class SeriesFieldService
             $stmt->close();
         }
 
-        $fields = $this->listFields($seriesId, $fieldScope);
+        $fields = $this->listFields($seriesId, $targetScope);
         $field = null;
         foreach ($fields as $item) {
             if ($item['id'] === $id) {
@@ -1363,21 +1425,36 @@ final class SeriesFieldService
         }
     }
 
+    private function getFieldRow(int $fieldId): ?array
+    {
+        $stmt = $this->connection->prepare(
+            'SELECT id, series_id, field_scope FROM series_custom_field WHERE id = ? LIMIT 1'
+        );
+        $stmt->bind_param('i', $fieldId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $field = $result->fetch_assoc() ?: null;
+        $stmt->close();
+
+        return $field ?: null;
+    }
+
     private function ensureUniqueFieldKey(
         int $seriesId,
         string $fieldKey,
+        string $fieldScope,
         ?int $excludeId = null
     ): void {
-        $sql = 'SELECT COUNT(1) FROM series_custom_field WHERE series_id = ? AND field_key = ?';
+        $sql = 'SELECT COUNT(1) FROM series_custom_field WHERE series_id = ? AND field_scope = ? AND field_key = ?';
         if ($excludeId !== null) {
             $sql .= ' AND id <> ?';
         }
 
         $stmt = $this->connection->prepare($sql);
         if ($excludeId !== null) {
-            $stmt->bind_param('isi', $seriesId, $fieldKey, $excludeId);
+            $stmt->bind_param('issi', $seriesId, $fieldScope, $fieldKey, $excludeId);
         } else {
-            $stmt->bind_param('is', $seriesId, $fieldKey);
+            $stmt->bind_param('iss', $seriesId, $fieldScope, $fieldKey);
         }
         $stmt->execute();
         $result = $stmt->get_result();
@@ -1387,9 +1464,9 @@ final class SeriesFieldService
         if ($count > 0) {
             throw new CatalogApiException(
                 'VALIDATION_ERROR',
-                'Field key must be unique within the series.',
+                'Field key must be unique within the series and scope.',
                 400,
-                ['fieldKey' => 'Field key must be unique within the series.']
+                ['fieldKey' => 'Field key must be unique within the series and scope.']
             );
         }
     }

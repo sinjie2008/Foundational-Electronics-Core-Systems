@@ -160,10 +160,13 @@
 - **Errors**:
     - `SERIES_NOT_FOUND`
     - `FIELD_SCOPE_INVALID`
+    - `FIELD_SCOPE_IMMUTABLE` (editing an existing field via the wrong scope/editor)
     - `FIELD_KEY_CONFLICT`
     - `VALIDATION_ERROR`
 
-Metadata field creation/updates use the same request with `fieldScope` fixed to `series_metadata` by the UI:
+**Scope separation**: The Series Custom Fields (Product Attribute Field Editor) always posts `fieldScope = "product_attribute"` and does not expose a dropdown. The Series Metadata Field Editor always posts `fieldScope = "series_metadata"`. The backend rejects attempts to update an existing definition through the wrong scope/editor.
+
+Metadata field creation/updates use the same request with `fieldScope` fixed to `series_metadata`:
 
 ```json
 {
