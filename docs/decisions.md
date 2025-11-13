@@ -60,3 +60,8 @@
 - Developer identified that Series Custom Fields and Series Metadata shared the same form infrastructure, allowing administrators to flip scopes via a dropdown and accidentally edit metadata definitions from the Product Attribute editor (and vice versa).
 - Decision: split the editors entirely. The Series Custom Fields card houses a Product Attribute Field Editor with an implicit `product_attribute` scope and no dropdown, while the Series Metadata card contains its own field editor and values form with `series_metadata` scope. Backend validation now enforces immutable scopes per definition to guard against API misuse.
 
+## 2025-11-18
+- Q: Can we adopt Bootstrap 5 to accelerate layout work even though the UI spacing has already been approved? A: Yes, but every margin/gap/padding must visually match the pre-Bootstrap build so stakeholders do not perceive a redesign.
+- Decision: Load Bootstrap 5.3 (CSS + bundle JS) from the CDN inside `catalog_ui.html` to leverage its grid/flex utilities while retaining the custom `catalog_ui.css` spacing scale. All Bootstrap gutter/margin utilities must be neutralized or overridden with explicit values to preserve the established 8px/16px/24px rhythm, and any new Bootstrap component usage must be documented in the spec before coding.
+- Follow-up: The CSV Import/Export/Truncate controls must render inside the same `panel` wrapper class as the hierarchy/metadata/products sections so Bootstrap adoption does not introduce a visually distinct block; reuse the shared panel padding/border to keep spacing uniform.
+

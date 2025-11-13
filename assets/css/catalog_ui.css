@@ -51,6 +51,16 @@ h2, h3 {
     align-items: stretch;
 }
 
+.section-inline.row {
+    margin-left: 0;
+    margin-right: 0;
+}
+
+.no-bootstrap-gap {
+    --bs-gutter-x: 0 !important;
+    --bs-gutter-y: 0 !important;
+}
+
 .panel {
     flex: 1 1 260px;
     min-width: 240px;
@@ -348,10 +358,9 @@ table th {
 }
 
 .csv-section {
-    margin-top: 24px;
-    padding: 16px;
-    border-top: 1px solid #cbd2d9;
-    background-color: #f8fafc;
+    margin-top: 0;
+    border-top: none;
+    background-color: transparent;
 }
 
 .csv-actions {

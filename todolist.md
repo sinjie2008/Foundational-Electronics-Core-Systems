@@ -11,6 +11,7 @@
 - 2025-11-11: Stakeholder requested a destructive Truncate Catalog control near the CSV import/export tools so operators can wipe all catalog data before uploading a new CSV; requires confirmation prompts, audit logging, and a dedicated backend endpoint.
 - 2025-11-14: Stakeholder requested complete removal of the catalog-wide search feature (UI, backend service, API endpoint) so the tool focuses on hierarchy, metadata, products, CSV workflows, truncate, and the public snapshot.
 - 2025-11-15: Stakeholder requested an ES6 refactor/performance pass on `catalog_ui.js` (module pattern, cached selectors, batched renders, Promise helpers) so the frontend stays maintainable and faster under heavy use.
+- 2025-11-18: Stakeholder approved adopting Bootstrap 5 for the admin UI provided that all existing spacing, padding, and visual hierarchy remain unchanged; spec/decisions now document the allowed usage, override strategy, and requirement that the CSV tools share the same `panel` wrapper as other sections.
 
 ## Context Reset Checklist (29 Oct 2025)
 - [x] Summarize previous task results in todolist.
@@ -89,6 +90,13 @@
 - [x] Sync repository / clean local state (`git status -sb` verified docs-only diffs before code work).
 - [x] Refresh test awareness (`php tests/api_backend_test.php`, manual UI smoke plan) to prep for implementation/testing.
 
+## Context Reset Checklist (18 Nov 2025 - Bootstrap Integration)
+- [x] Summarize previous task results in todolist (17 Nov scope captured above).
+- [x] Close or carry over open TODOs (series field isolation tasks remain tracked separately).
+- [x] Re-read `docs/spec.md`, `docs/api.md`, and `docs/decisions.md` with the new Bootstrap requirement highlighted.
+- [x] Sync repository / clean local state (`git status -sb` confirmed only intentional doc edits prior to coding).
+- [x] Refresh test data/mocks and local environment plan (rerun `.\\scripts\\run-tests.ps1` after UI changes; baseline noted here).
+
 ### 2025-11-17 - Series Field Editor Isolation Bug
 - [x] Update specification/API/decisions to capture dedicated editors, immutable scopes, and refreshed diagrams (docs/spec.md, docs/api.md, docs/decisions.md).
 - [ ] Refactor frontend (catalog_ui.html + assets/js/catalog_ui.js) to remove the shared scope dropdown, provide independent Product Attribute and Series Metadata field editors, and ensure each form only touches its own scope.
@@ -96,9 +104,21 @@
 - [ ] Extend automated + manual tests: add/adjust PHP tests covering scope enforcement, run `php tests/api_backend_test.php`, and perform manual UI verification for both editors + metadata values.
 
 ### Test Approach (Bugfix)
-- `php tests/api_backend_test.php` — regression coverage for `v1.saveSeriesField`, `v1.saveSeriesAttributes`, `v1.listSeriesFields`.
+- `php tests/api_backend_test.php` – regression coverage for `v1.saveSeriesField`, `v1.saveSeriesAttributes`, `v1.listSeriesFields`.
 - Targeted PHP test (`tests/series_field_scope_test.php`) verifying scope immutability (add/extend as part of backend task).
 - Manual UI smoke in browser: ensure Product Attribute editor never shows scope dropdown and edits only product attributes; Series Metadata editor manages only metadata definitions/values.
+
+### 2025-11-18 - Bootstrap 5 Parity Adoption
+- [x] Update specification and decisions with Bootstrap usage/spacing guardrails (docs/spec.md, docs/decisions.md).
+- [x] Load Bootstrap 5.3 CSS/JS within `catalog_ui.html`, wrapping existing markup with container/row helpers while preserving semantics and IDs.
+- [x] Reconcile `assets/css/catalog_ui.css` with Bootstrap defaults (override gutters/margins, introduce helper utility classes) so spacing/gaps remain identical to the pre-Bootstrap build.
+- [x] Run `.\\scripts\\run-tests.ps1` to ensure backend/API coverage remains green after the asset changes.
+- [ ] Perform manual UI parity audit against the pre-Bootstrap layout (browser smoke needed to confirm spacing/visuals match screenshots).
+- [x] Update the CSV Import/Export/Truncate section to reuse the shared `panel` component so Bootstrap styling remains visually consistent.
+
+### Test Approach (Bootstrap)
+- `.\\scripts\\run-tests.ps1` – executes PHP/unit/API scripts to ensure backend remains green after asset changes.
+- Manual UI smoke in browser across Section 1/2/3 plus CSV + Truncate cards, comparing spacing to baseline screenshots before enabling Bootstrap.
 
 ## Tasks
 - [x] Seed database schema & initial hierarchy (tests: integration seeding verification script) - Completed via `php tests/seed_verification.php`
