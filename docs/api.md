@@ -571,6 +571,70 @@ Metadata field creation/updates use the same request with `fieldScope` fixed to 
     - Snapshot always reflects the latest database state at request time and does not support filtering.
     - Categories without series still appear with empty `children` arrays.
     - Product `customValues` dictionaries are keyed by field key; missing values are omitted.
+    - Spec Search now relies on the dedicated `v1.specSearchSnapshot` endpoint (see below); this snapshot remains available for other publishing scenarios but should no longer be transformed on the client for Spec Search.
+
+### 20. Spec Search Snapshot
+- **Action**: `v1.specSearchSnapshot`
+- **Method**: `GET`
+- **Description**: Returns a UI-ready payload for `spec-search.html`, composed by `SpecSearchService` from the live hierarchy, series metadata, and product definitions.
+- **Query Parameters**:
+  - `rootId` *(optional, string)*: When supplied, the response scopes `categoryColumnsByRoot` and `results` to the requested root (while still returning the full `roots` array so the UI can keep rendering both radios). When omitted, the payload defaults to the server-selected root (currently General Product).
+- **Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "generatedAt": "2025-11-24T09:12:44Z",
+    "defaultRootId": "general",
+    "roots": [
+      { "id": "general", "label": "General Product", "defaultSelected": true },
+      { "id": "automotive", "label": "Automotive Product", "defaultSelected": false }
+    ],
+    "categoryColumnsByRoot": {
+      "general": [
+        {
+          "id": "emc_components",
+          "label": "EMC Components",
+          "options": [
+            { "id": "ferrite_chip_bead", "label": "Ferrite Chip Bead" },
+            { "id": "chip_inductor", "label": "Chip Inductor" }
+          ]
+        }
+      ]
+    },
+    "mechanicalFacets": [
+      { "id": "series", "label": "Series", "values": ["ZIK300-RC-10", "WPT450-MX-01"] },
+      { "id": "acfField", "label": "acf.field", "values": ["acf.impedance", "acf.frequency"] },
+      { "id": "packageSize", "label": "Package Size", "metadataKey": "package_size", "values": ["0603", "Module"] },
+      { "id": "powerClass", "label": "Power Class", "metadataKey": "power_class", "values": ["0.25W", "65W"] }
+    ],
+    "results": [
+      {
+        "id": "zik300",
+        "rootId": "general",
+        "series": "ZIK300-RC-10",
+        "categoryIds": ["ferrite_chip_bead"],
+        "acfField": "acf.impedance",
+        "facetValues": {
+          "series": "ZIK300-RC-10",
+          "acfField": "acf.impedance",
+          "packageSize": "0603",
+          "powerClass": "0.25W"
+        },
+        "metadataValues": {
+          "package_size": "0603",
+          "power_class": "0.25W"
+        }
+      }
+    ]
+  }
+}
+```
+- **Notes**:
+    - This endpoint is tailored for the read-only Spec Search UI; it is not a replacement for `v1.publicCatalogSnapshot`.
+    - `mechanicalFacets[].values` are pre-sorted unique strings derived from series metadata and product definitions.
+    - `results[].categoryIds` contains every ancestor category ID under the selected root (excluding the root itself) so checkbox filters can match nested structures.
+    - The frontend may still opt into a demo payload by adding `data-demo="true"` to `<main>`, but production loads must always call the API.
 
 ## Status Codes
 

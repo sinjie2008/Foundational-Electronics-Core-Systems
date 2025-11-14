@@ -12,6 +12,49 @@
 - 2025-11-14: Stakeholder requested complete removal of the catalog-wide search feature (UI, backend service, API endpoint) so the tool focuses on hierarchy, metadata, products, CSV workflows, truncate, and the public snapshot.
 - 2025-11-15: Stakeholder requested an ES6 refactor/performance pass on `catalog_ui.js` (module pattern, cached selectors, batched renders, Promise helpers) so the frontend stays maintainable and faster under heavy use.
 - 2025-11-18: Stakeholder approved adopting Bootstrap 5 for the admin UI provided that all existing spacing, padding, and visual hierarchy remain unchanged; spec/decisions now document the allowed usage, override strategy, and requirement that the CSV tools share the same `panel` wrapper as other sections.
+- 2025-11-20: Stakeholder delivered a wireframe for a standalone `spec-search.html` experience; documentation now covers layout, derived payload, and diagrams before implementation.
+
+## Context Reset Checklist (24 Nov 2025 - Spec Search API Integration)
+- [x] Summarize previous task results in todolist (added 2025-11-20 bullet for wireframe delivery).
+- [x] Close or carry over open TODOs (prior tasks remain completed; spec search API integration logged below).
+- [x] Re-read `docs/spec.md` and `docs/api.md` (updated with new hydration/pseudocode details).
+- [x] Sync repository / clean local state (verified no pending changes besides doc updates).
+- [x] Refresh test data/mocks and local environment (`catalog.php?action=v1.publicCatalogSnapshot` reviewed to confirm payload used by spec search).
+
+## Context Reset Checklist (25 Nov 2025 - Spec Search Snapshot API)
+- [x] Summarize previous task results in todolist (documented 2025-11-24 integration work above).
+- [x] Close or carry over open TODOs (no other active tasks; new API + UI refactor captured below).
+- [x] Re-read `docs/spec.md`, `docs/api.md`, and `docs/decisions.md` (updated to describe `SpecSearchService` + `v1.specSearchSnapshot`).
+- [x] Sync repository / clean local state (working tree verified clean prior to implementation).
+- [x] Refresh test data/mocks and local environment (`.\scripts\run-tests.ps1` baseline).
+
+### Task Breakdown (2025-11-25 Spec Search Snapshot Delivery)
+1. **Document SpecSearchService + endpoint contract** - *Status: Completed* - *Tests*: Proofread `docs/spec.md`, `docs/api.md`, and `docs/decisions.md`; ensure Mermaid sections still render (`Select-String '```mermaid' docs/spec.md` as needed).
+2. **Implement `v1.specSearchSnapshot` (service + dispatcher)** - *Status: Completed* - *Tests*: `.\scripts\run-tests.ps1` (covers seeding + API smoke); manual CLI spot-check via local PHP server recommended before deployment.
+3. **Refactor `spec-search.html` to consume the new payload and remove automatic fallback** - *Status: Completed* - *Tests*: Manual browser smoke (live data + demo mode), verifying alerts/messages; JS console inspected for errors.
+4. **Regression test Bootstrap 5 + DataTables behavior after refactor** - *Status: Completed* - *Tests*: `.\scripts\run-tests.ps1` plus manual verification of filtering/search/pagination (documented in local notes).
+
+## Context Reset Checklist (26 Nov 2025 - Spec Search Root Selector Fix)
+- [x] Summarize previous task results in todolist (see completed 2025-11-25 items above).
+- [x] Close or carry over open TODOs (none remaining from prior spec search delivery).
+- [x] Re-read `docs/spec.md`, `docs/api.md`, and `docs/decisions.md` focusing on Spec Search UX expectations.
+- [x] Sync repository / clean local state (verified working tree is clean before edits).
+- [x] Refresh demo payload/state to validate upcoming UI tweaks (loaded `spec-search.html` demo dataset plan).
+
+### Task Breakdown (2025-11-26 Spec Search Root Selector Fix)
+1. **Document UX correction (no manual checkmark glyph, enforce per-root category refresh)** - *Status: Completed* - *Tests*: Proofread `docs/spec.md`, `docs/decisions.md`.
+2. **Update `spec-search.html` implementation (remove glyph span, ensure root toggles rebuild category deck + reapply filters)** - *Status: Completed* - *Tests*: Manual browser check pending; automated guard via `.\scripts\run-tests.ps1` (see test log below).
+
+## Context Reset Checklist (27 Nov 2025 - Spec Search Root Snapshot Refresh)
+- [x] Summarize previous task results in todolist (noted completed 2025-11-26 fixes).
+- [x] Close or carry over open TODOs (none outstanding from prior Spec Search adjustments).
+- [x] Re-read `docs/spec.md`, `docs/api.md`, and `docs/decisions.md` to capture the new AJAX requirement.
+- [x] Sync repository / clean local state (verified clean before edits).
+- [x] Refresh local/demonstration payload assumptions (confirmed API requires `rootId` to scope categories).
+
+### Task Breakdown (2025-11-27 Spec Search Root Snapshot Refresh)
+1. **Document API + UX update (rootId query, AJAX per root)** - *Status: Completed* - *Tests*: Proofread `docs/spec.md`, `docs/api.md`, `docs/decisions.md`.
+2. **Implement dynamic snapshot fetching + caching in `spec-search.html`** - *Status: Completed* - *Tests*: `.\scripts\run-tests.ps1`, manual browser validation still advised (demo payload toggle + live API).
 
 ## Context Reset Checklist (29 Oct 2025)
 - [x] Summarize previous task results in todolist.
@@ -97,6 +140,13 @@
 - [x] Sync repository / clean local state (`git status -sb` confirmed only intentional doc edits prior to coding).
 - [x] Refresh test data/mocks and local environment plan (rerun `.\\scripts\\run-tests.ps1` after UI changes; baseline noted here).
 
+## Context Reset Checklist (20 Nov 2025 - Spec Search Page)
+- [x] Summarize previous task results in todolist (added 2025-11-20 context bullet above).
+- [x] Close or carry over open TODOs (Bootstrap + series field items remain below until delivered).
+- [x] Re-read `docs/spec.md`, `docs/api.md`, and `docs/decisions.md` focusing on the new Spec Search layout requirements and payload definition.
+- [x] Sync repository / clean local state (`git status -sb` verified no pending changes before documentation updates).
+- [x] Refresh test data/mocks/local environment plan (noted need to rerun `.\\scripts\\run-tests.ps1` after implementing the new HTML page even though no backend change is expected).
+
 ### 2025-11-17 - Series Field Editor Isolation Bug
 - [x] Update specification/API/decisions to capture dedicated editors, immutable scopes, and refreshed diagrams (docs/spec.md, docs/api.md, docs/decisions.md).
 - [ ] Refactor frontend (catalog_ui.html + assets/js/catalog_ui.js) to remove the shared scope dropdown, provide independent Product Attribute and Series Metadata field editors, and ensure each form only touches its own scope.
@@ -174,3 +224,11 @@
 - [x] Realign Section 1/2/3 layout (Hierarchy/Add/Update/Selected in row, Series Custom Fields + Series Metadata inline, Products list + form inline) using flexbox and refreshed markup (tests: manual UI verification).
 - [x] Document the stacked Products panel layout requirement in `docs/spec.md` and `docs/decisions.md` (tests: spec/doc review on 2025-11-16).
 - [x] Update frontend HTML/CSS so the Products table and form render sequentially at full width while preserving existing actions (tests: manual reasoning + `.\scripts\run-tests.ps1` on 2025-11-16).
+- [x] Document the Spec Search page (spec/api/decisions + diagrams/pseudocode) before any code changes (tests: documentation review + `Select-String 'Spec Search Layout Blueprint' docs/spec.md`).
+- [x] Implement `spec-search.html` markup + styling (Bootstrap 5/DataTables) replicating the provided wireframe layout (tests: `Start-Process msedge.exe .\spec-search.html` for visual verification).
+- [x] Add client-side filtering script to `spec-search.html` that wires root/category/facet controls to the DataTable (tests: manual filter toggling in browser + DevTools console inspection for errors).
+
+### Test Approach (Spec Search Page)
+- Manual browser verification (`Start-Process msedge.exe .\spec-search.html`) across root/category/facet interactions ensuring default selections and overflow behavior match the spec.
+- `.\scripts\run-tests.ps1` after wiring scripts to confirm backend regressions did not occur (even though change is frontend-only).
+- Optional HTML lint check via `Invoke-Expression "tidy -errors spec-search.html"` if `tidy` is available; otherwise rely on VS Code/IDE linting.

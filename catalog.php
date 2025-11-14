@@ -2245,6 +2245,300 @@ final class PublicCatalogService
     }
 }
 
+final class SpecSearchService
+{
+    /**
+     * @var array<int, array<string, string>>
+     */
+    private const FACETS = [
+        ['id' => 'series', 'label' => 'Series'],
+        ['id' => 'acfField', 'label' => 'acf.field'],
+        ['id' => 'packageSize', 'label' => 'Package Size', 'metadataKey' => 'package_size'],
+        ['id' => 'powerClass', 'label' => 'Power Class', 'metadataKey' => 'power_class'],
+    ];
+
+    public function __construct(private PublicCatalogService $publicCatalogService)
+    {
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function buildSnapshot(): array
+    {
+        $baseSnapshot = $this->publicCatalogService->buildSnapshot();
+        $hierarchy = $baseSnapshot['hierarchy'] ?? [];
+
+        $roots = [];
+        $columnsByRoot = [];
+        $results = [];
+        $facetValues = [];
+        foreach (self::FACETS as $facet) {
+            $facetValues[$facet['id']] = [];
+        }
+
+        foreach ($hierarchy as $node) {
+            if (($node['type'] ?? '') !== 'category') {
+                continue;
+            }
+            if (isset($node['parentId']) && $node['parentId'] !== null) {
+                continue;
+            }
+            $rootId = $this->normalizeId($node['id'] ?? null);
+            $roots[] = [
+                'id' => $rootId,
+                'label' => (string) ($node['name'] ?? ('Category ' . $rootId)),
+            ];
+            $columnsByRoot[$rootId] = $this->buildCategoryColumns($node);
+            $this->walkNode($node, $rootId, [], $results, $facetValues);
+        }
+
+        $defaultRootId = $this->determineDefaultRootId($roots);
+        $rootsPayload = array_map(
+            static function (array $root) use ($defaultRootId): array {
+                $root['defaultSelected'] = isset($defaultRootId) && $root['id'] === $defaultRootId;
+                return $root;
+            },
+            $roots
+        );
+
+        $mechanicalFacets = array_map(
+            function (array $facet) use ($facetValues): array {
+                $values = array_keys($facetValues[$facet['id']] ?? []);
+                sort($values, SORT_NATURAL | SORT_FLAG_CASE);
+
+                return [
+                    'id' => $facet['id'],
+                    'label' => $facet['label'],
+                    'metadataKey' => $facet['metadataKey'] ?? null,
+                    'values' => $values,
+                ];
+            },
+            self::FACETS
+        );
+
+        return [
+            'generatedAt' => $baseSnapshot['generatedAt'] ?? gmdate('c'),
+            'defaultRootId' => $defaultRootId,
+            'roots' => $rootsPayload,
+            'categoryColumnsByRoot' => $columnsByRoot,
+            'mechanicalFacets' => $mechanicalFacets,
+            'results' => $results,
+        ];
+    }
+
+    private function normalizeId(mixed $value): string
+    {
+        if (is_string($value) || is_int($value) || is_float($value)) {
+            return (string) $value;
+        }
+
+        return uniqid('id_', true);
+    }
+
+    /**
+     * @param array<string, mixed> $rootNode
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function buildCategoryColumns(array $rootNode): array
+    {
+        $columns = [];
+        foreach ($rootNode['children'] ?? [] as $child) {
+            if (($child['type'] ?? '') !== 'category') {
+                continue;
+            }
+            $columns[] = [
+                'id' => $this->normalizeId($child['id'] ?? null),
+                'label' => (string) ($child['name'] ?? 'Category'),
+                'options' => $this->collectLeafCategories($child),
+            ];
+        }
+
+        return $columns;
+    }
+
+    /**
+     * @param array<string, mixed> $node
+     *
+     * @return array<int, array<string, string>>
+     */
+    private function collectLeafCategories(array $node): array
+    {
+        $options = [];
+        $seen = [];
+        $stack = [$node];
+
+        while ($stack !== []) {
+            $current = array_pop($stack);
+            if (($current['type'] ?? '') !== 'category') {
+                continue;
+            }
+
+            $children = is_array($current['children'] ?? null) ? $current['children'] : [];
+            $hasCategoryChild = false;
+            foreach ($children as $child) {
+                if (($child['type'] ?? '') === 'category') {
+                    $stack[] = $child;
+                    $hasCategoryChild = true;
+                }
+            }
+
+            if (!$hasCategoryChild) {
+                $id = $this->normalizeId($current['id'] ?? null);
+                if (!isset($seen[$id])) {
+                    $seen[$id] = true;
+                    $options[] = [
+                        'id' => $id,
+                        'label' => (string) ($current['name'] ?? ('Category ' . $id)),
+                    ];
+                }
+            }
+        }
+
+        if ($options === []) {
+            $id = $this->normalizeId($node['id'] ?? null);
+            $options[] = [
+                'id' => $id,
+                'label' => (string) ($node['name'] ?? ('Category ' . $id)),
+            ];
+        }
+
+        return $options;
+    }
+
+    /**
+     * @param array<string, mixed> $node
+     * @param string $rootId
+     * @param array<int, string> $ancestorIds
+     * @param array<int, array<string, mixed>> $results
+     * @param array<string, array<string, true>> $facetValues
+     */
+    private function walkNode(array $node, string $rootId, array $ancestorIds, array &$results, array &$facetValues): void
+    {
+        $type = (string) ($node['type'] ?? '');
+        if ($type === 'category') {
+            $nextAncestors = $ancestorIds;
+            if (isset($node['parentId']) && $node['parentId'] !== null) {
+                $nextAncestors[] = $this->normalizeId($node['id'] ?? null);
+            }
+            foreach ($node['children'] ?? [] as $child) {
+                if (is_array($child)) {
+                    $this->walkNode($child, $rootId, $nextAncestors, $results, $facetValues);
+                }
+            }
+            return;
+        }
+
+        if ($type !== 'series') {
+            return;
+        }
+
+        $row = $this->buildSeriesRow($node, $rootId, $ancestorIds);
+        $results[] = $row;
+
+        foreach ($row['facetValues'] as $facetId => $value) {
+            $valueString = trim((string) $value);
+            if ($valueString === '') {
+                continue;
+            }
+            $facetValues[$facetId][$valueString] = true;
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $seriesNode
+     * @param array<int, string> $ancestorIds
+     */
+    private function buildSeriesRow(array $seriesNode, string $rootId, array $ancestorIds): array
+    {
+        $seriesId = $this->normalizeId($seriesNode['id'] ?? null);
+        $seriesName = (string) ($seriesNode['name'] ?? ('Series ' . $seriesId));
+        $metadataValues = $this->normalizeMetadataValues($seriesNode['metadata']['values'] ?? []);
+        $primaryField = $this->derivePrimaryFieldLabel($seriesNode['productFields'] ?? []);
+
+        $facetValues = [
+            'series' => $seriesName,
+            'acfField' => $primaryField,
+            'packageSize' => (string) ($metadataValues['package_size'] ?? ''),
+            'powerClass' => (string) ($metadataValues['power_class'] ?? ''),
+        ];
+
+        return [
+            'id' => $seriesId,
+            'rootId' => $rootId,
+            'series' => $seriesName,
+            'categoryIds' => array_values(array_unique(array_map('strval', $ancestorIds))),
+            'acfField' => $primaryField,
+            'metadataValues' => $metadataValues,
+            'facetValues' => $facetValues,
+        ];
+    }
+
+    /**
+     * @param mixed $values
+     *
+     * @return array<string, string>
+     */
+    private function normalizeMetadataValues($values): array
+    {
+        if (!is_array($values)) {
+            return [];
+        }
+        $normalized = [];
+        foreach ($values as $key => $value) {
+            if (!is_string($key)) {
+                continue;
+            }
+            $normalized[$key] = (string) $value;
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @param mixed $fields
+     */
+    private function derivePrimaryFieldLabel($fields): string
+    {
+        if (!is_array($fields) || $fields === []) {
+            return 'acf.field';
+        }
+        $field = $fields[0];
+        if (!is_array($field)) {
+            return 'acf.field';
+        }
+
+        $candidates = [
+            $field['label'] ?? null,
+            $field['name'] ?? null,
+            $field['fieldKey'] ?? null,
+        ];
+        foreach ($candidates as $candidate) {
+            if ($candidate !== null && (string) $candidate !== '') {
+                return (string) $candidate;
+            }
+        }
+
+        return 'acf.field';
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $roots
+     */
+    private function determineDefaultRootId(array $roots): ?string
+    {
+        foreach ($roots as $root) {
+            $label = strtolower((string) ($root['label'] ?? ''));
+            if (str_contains($label, 'general')) {
+                return $root['id'];
+            }
+        }
+
+        return isset($roots[0]['id']) ? $roots[0]['id'] : null;
+    }
+}
+
 final class CatalogCsvService
 {
     private string $storageDir;
@@ -3526,7 +3820,8 @@ final class CatalogApplication
         private ProductService $productService,
         private CatalogCsvService $csvService,
         private CatalogTruncateService $truncateService,
-        private PublicCatalogService $publicCatalogService
+        private PublicCatalogService $publicCatalogService,
+        private SpecSearchService $specSearchService
     ) {
     }
 
@@ -3552,6 +3847,7 @@ final class CatalogApplication
             $seriesAttributeService,
             $productService
         );
+        $specSearchService = new SpecSearchService($publicCatalogService);
 
         $app = new self(
             $connection,
@@ -3564,7 +3860,8 @@ final class CatalogApplication
             $productService,
             $csvService,
             $truncateService,
-            $publicCatalogService
+            $publicCatalogService,
+            $specSearchService
         );
 
         if ($performBootstrap) {
@@ -3731,6 +4028,9 @@ final class CatalogApplication
             case 'v1.publicCatalogSnapshot':
                 $this->requestReader->requireMethod('GET', $method);
                 return $this->publicCatalogService->buildSnapshot();
+            case 'v1.specSearchSnapshot':
+                $this->requestReader->requireMethod('GET', $method);
+                return $this->specSearchService->buildSnapshot();
             case 'v1.getSeriesAttributes':
                 $this->requestReader->requireMethod('GET', $method);
                 $seriesId = isset($_GET['seriesId']) ? (int) $_GET['seriesId'] : 0;

@@ -8,6 +8,7 @@
 - **Structure**: Backend refactored to PHP OOP with discrete classes (`CatalogApplication`, `HttpResponder`, `DatabaseFactory`, `Seeder`, `HierarchyService`, `SeriesFieldService`, `SeriesAttributeService`, `ProductService`, `CatalogCsvService`, `CatalogTruncateService`, `PublicCatalogService`) to isolate responsibilities and enhance maintainability; `SeriesFieldService` now focuses on field metadata while `SeriesAttributeService` persists series-level values, `CatalogTruncateService` performs destructive resets with confirmation/audit logging, and `PublicCatalogService` composes data from every domain into a single immutable snapshot. The frontend is now a single ES6 module (`CatalogUI`) that wraps all jQuery interactions with cached selectors, arrow-function helpers, and batched render/update pipelines to minimize DOM reflow and repeated AJAX calls. Section 2 contains two fully independent editors: the Series Custom Fields card renders a Product Attribute Field Editor that always posts `fieldScope = product_attribute`, while the Series Metadata card owns both the Series Metadata Field Editor (`fieldScope = series_metadata`) and the values form so scopes never mingle.
 - **UI Layout & Bootstrap Integration**: `catalog_ui.html` now loads Bootstrap 5.3 (CSS + bundle JS) from the official CDN strictly for its grid/flex utilities, reset rules, tables, and buttons, while `/assets/css/catalog_ui.css` remains the source of truth for spacing, typography, and colors. Bootstrap gutters (`g-*`), margins, and paddings are overridden via explicit `gap`, `margin`, and `padding` declarations plus `.no-bootstrap-gap` helpers so every horizontal/vertical rhythm (8px gutters inside cards, 16px between panels, 24px section spacing) matches the pre-Bootstrap layout. Bootstrap classes are applied conservatively (e.g., `container-fluid`, `row`, `col`) to reuse its responsive helpers without altering panel widths, and any new components must document their spacing overrides inside the stylesheet to guarantee visual parity.
 - **UI Table Controls (Bootstrap DataTables)**: jQuery DataTables 1.13.x with the Bootstrap 5 styling bundle is the canonical table enhancer for admin lists. Each interactive table (`#series-fields-table`, `#series-metadata-fields-table`, `#product-list-table`, `#csv-history-table`, `#truncate-audit-table`) instantiates DataTables in client-side mode with paging, column sorting, and per-table search while reusing the cached row data that already lives inside `CatalogUI`. The plugin is loaded via CDN alongside Bootstrap, and all initialization/destruction logic runs through the ES6 module so rerenders, selection states, and button bindings remain centralized. Layout conventions are locked: the "Show _N_ entries" length selector must appear on the top-left, the search box on the top-right, the pagination controls on the bottom-right, and the range/status text on the bottom-left so every table presents identical controls across the app. The Products grid (`#product-list-table`) additionally enables DataTables FixedColumns (left = 3) with horizontal scrolling so the ID/SKU/Name columns stay pinned while custom attribute columns can extend beyond the viewport.
+- **Spec Search Experience**: `spec-search.html` is a read-only standalone HTML5 page that mirrors the stakeholder-provided wireframe for the public-facing catalog search. It loads the same Bootstrap 5.3 + DataTables stack as the admin UI but renders outside the admin workflow, consuming the dedicated `v1.specSearchSnapshot` API to hydrate categories, series, parameter facets, and product rows (server-side composition ensures no hard-coded datasets ship to the browser). The layout preserves the annotated sections: root category toggles with General Product pre-selected, secondary category checkbox groups, Mechanical Parameter facet cards with independent scrollbars, and a paginated DataTable that shows matching series/attributes alongside per-row Edit (or details) actions. Root category toggles rely exclusively on the native radio indicator (no custom checkmark glyph) and every selection rehydrates the Product Category deck plus filters results against the chosen root to eliminate stale category groupings. Base markup remains readable without JavaScript (initial dataset and labels render server-side), while progressive enhancement layers DataTables/search interactivity when JS is available; QA can still showcase the layout offline by explicitly adding `data-demo="true"` to `<main>` to opt into the embedded sample payload.
 - **Asset Storage**: CSV import/export history persisted under `storage/csv` using timestamped filenames to enable download or deletion without extra schema, and destructive truncate events are appended as JSON lines under `storage/csv/truncate_audit.jsonl` so operators can verify who initiated the wipe and what counts were affected.
 - **Trade-offs**: Using a single PHP file centralizes logic but increases complexity-mitigated via modular PHP functions; MySQLi over PDO for simplicity but lacks driver abstraction.
 
@@ -27,6 +28,15 @@
 - Products belong to a series.
 - Custom field definitions belong to a series and are filtered by scope; `series_metadata` definitions hydrate `series_custom_field_value` rows, whereas `product_attribute` definitions validate `product_custom_field_value`.
 
+### Spec Search Projection
+- `SpecSearchPayload` (derived, JSON) - built by `PublicCatalogService` for consumption by `spec-search.html`. Shape:
+  - `rootCategories`: array of `{ id, label, defaultSelected }` representing mutually exclusive high-level toggles (General Product preselected, Automotive Product off by default).
+  - `productCategories`: array of `{ id, rootId, label, options[] }` where `options` is a checkbox list referencing either component families (EMC, Magnetic, Transformer, Wireless Power Transfer) or specific items (e.g., Ferrite Chip Bead).
+  - `mechanicalFacets`: array of cards, each holding `{ id, label, searchPlaceholder, values[] }` where values include `label`, `value`, and `metrics` for display; cards can overflow vertically.
+  - `results`: normalized grid rows with `{ seriesName, acfField, editable, attributes }` so DataTables can hydrate columns dynamically.
+  - `pagination`: default page size (4 rows per wireframe) and total counts to keep DataTables search consistent between static HTML fallback and JS-enhanced mode.
+- `SpecSearchFilterState` (client-side only) - tracks the boolean state of root category radios, category checkboxes, per-card search terms, and multi-select values so the UI can recompute the visible row set without additional API calls.
+
 ## 3. Key Processes
 
 1. **Initial Seeding**: On first run, seed predefined hierarchy, series, and both series-metadata and product-attribute field definitions.
@@ -45,6 +55,17 @@
 14. **Public Catalog Snapshot**: `PublicCatalogService` aggregates categories, series, metadata definitions/values, product custom field labels, and product data into one JSON payload exposed via a GET-only action for publishing/consumption use cases.
 15. **Catalog Truncate Workflow**: `CatalogTruncateService` performs a full catalog reset initiated from the CSV tools card, enforces a two-step confirmation in the UI, suspends concurrent CSV import/export calls, disables foreign key checks, truncates every catalog-related table (category, series, products, field definitions, field values, and seed history), leaves the database empty so the next CSV import defines the entire hierarchy, and records an immutable audit entry under `storage/csv/truncate_audit.jsonl` with timestamp, operator-provided reason, and deletion counts.
 16. **Bootstrap DataTables UX**: All administrator-facing tables (`#series-fields-table`, `#series-metadata-fields-table`, `#product-list-table`, `#csv-history-table`, `#truncate-audit-table`) are enhanced with jQuery DataTables (Bootstrap 5 skin) in client-side mode so users gain pagination, column sorting, and inline search without changing the cached state flow inside `CatalogUI`; each render helper now (re)hydrates the DataTable instance after diffing rows so selection state and button hooks stay intact.
+17. **Spec Search Rendering**: `spec-search.html` now consumes a purpose-built API (`catalog.php?action=v1.specSearchSnapshot`) that assembles root categories, component families, mechanical facets, and a flattened series row list directly on the server via `SpecSearchService`. Root category selection behaves like a radio group (default = General Product); category checkboxes can filter multiple component families at once; each Mechanical Parameter card exposes a nested search input and scroll containers to handle long value lists. Every root selection issues an AJAX call to the snapshot endpoint with `rootId=<radio value>` so the Product Category deck and results payload always reflect the active root; responses are cached client-side to keep subsequent toggles instant while guaranteeing accurate checkbox groupings. The bottom DataTable mirrors admin styling but exposes `Edit` as a CTA placeholder for future drill-down; pagination defaults to four cards wide as pictured, with fallbacks for non-JS browsing (server renders the first page statically, JS progressively enhances the table for client-side filtering). If the snapshot call fails, the UI surfaces a Bootstrap warning that live data is unavailable; only when `<main data-demo="true">` is provided will QA opt into the embedded demo payload.
+18. **Spec Search API Composition**: `SpecSearchService` wraps `PublicCatalogService` to produce a UI-ready snapshot (`roots`, `categoryColumnsByRoot`, `mechanicalFacets`, `results`, and `defaultRootId`). The server precomputes facet value lists, derives default selections, and flattens series metadata so the frontend only renders what it receives-no client-side schema derivation or hard-coded JSON is required.
+
+## Spec Search Layout Blueprint
+
+- **Product Search Band**: Full-width bordered container with the title "Product Search". Contains a "Filter Product By" row with two radio-style checkboxes. "General Product" is checked on initial load; "Automotive Product" is unchecked. Clicking either deselects the other, triggers an AJAX refresh (`v1.specSearchSnapshot?rootId=<value>`) to hydrate the correct Product Category deck, and immediately re-evaluates results.
+- **Product Category Deck**: Directly below the root selector, categories are grouped by families (EMC Components, Magnetic Components, Transformer, Wireless Power Transfer). Each family label sits above its own column of checkboxes (Ferrite Chip Bead, Ferrite Chip Bead (Large Current), Chip Inductor, etc.). Multiple checkboxes may be active at once, so the UI must keep each list vertically aligned while allowing overflow scrollbars if the options exceed the fixed height.
+- **Mechanical Parameters**: Secondary section title matches the wireframe. Contains four equally sized cards (Series, acf.field, and two placeholders for additional specs). Each card hosts a small caption, a nested "Search Filter" input, and a scrollable list showing key/value sets (`ZIK300-RC-10`, `value`, etc.). Cards enforce both vertical overflow (internal scroll) and horizontal spacing (gutter) so they stay on one row at desktop sizes but can wrap on narrow screens.
+- **Multi-Facet Interaction**: Cards behave independently; changes within a given card only affect that facet while preserving previously chosen filters from the root/category section.
+- **Results Grid**: Lower panel contains a search input on the right, DataTable-styled rows with "Series" and "acf.field" columns, and per-row "Edit" buttons on the far right to mimic the requested CTA. Table rows stretch full-width, and pagination controls (four square indicators in the wireframe) map to DataTables pagination anchors. Horizontal scroll handles wide attribute sets, while vertical spacing maintains consistent gutters with the upper panels.
+- **Accessibility**: All filters require `<label>` associations, keyboard focus outlines, and descriptive text so the experience is operable without pointing devices. Each visual annotation from the wireframe (default selection, root category, multi-facet search, overflow arrows) now corresponds to CSS utility comments that explain how to reproduce the behavior in code.
 
 ## 4. Pseudocode (Critical Paths)
 
@@ -211,6 +232,65 @@ renderProductList():
     )
 ```
 
+### Spec Search Data Hydration
+`spec-search.html` never derives catalog data client-side. `SpecSearchService` composes a `SpecSearchSnapshot` on the server by reading the hierarchy, series metadata, and product definitions, then the UI consumes that payload directly:
+
+- **Roots**: `roots[]` describes the top-level categories exposed in the radio group. One entry is marked `defaultSelected` (prefers the first label containing "General"; otherwise index `0`). `defaultRootId` is provided separately to simplify state initialization.
+- **Component Families**: `categoryColumnsByRoot` maps each root to an array of column definitions. Each column owns a label (e.g., "EMC Components") plus `options[]` listing the leaf category IDs/names that should appear as checkboxes.
+- **Mechanical Facets**: `mechanicalFacets[]` enumerates every facet card. The service already aggregates the unique value list for each facet and notes the metadata key (when applicable), so the frontend simply renders the provided checkboxes.
+- **Results**: `results[]` contains the flattened series rows with `rootId`, `categoryIds[]`, `acfField`, and `facetValues{}` so the UI can filter without recomputing metadata joins. No seed or stub data ships in production responses.
+
+```text
+SpecSearch.load():
+    if <main data-demo="true">:
+        hydrateFromPayload(buildDemoPayload())
+        return
+    showLoadingState()
+    fetch('catalog.php?action=v1.specSearchSnapshot', { headers: { 'Accept': 'application/json' } })
+        .then(assert success + data)
+        .then(hydrateFromPayload)
+        .catch(error => {
+            console.error('Spec Search snapshot failed', error)
+            showInlineAlert('Live catalog data is unavailable. Please start the PHP backend or use data-demo="true" for the sample payload.')
+            renderEmptyTable()
+        })
+
+hydrateFromPayload(payload):
+    dataset = payload
+    state.activeRootId = payload.defaultRootId ?? payload.roots[0]?.id
+    reset selected categories + facet search/selections
+    render root radios, category columns for active root, mechanical facet cards
+    initialize DataTable with payload.results
+    bind change/input events and run applyFilters()
+```
+
+### Spec Search Filtering
+```text
+SpecSearch.init():
+    hydrate state from SpecSearchPayload (rootCategories, productCategories, mechanicalFacets, results)
+    state.activeRootId = rootCategories.find(c => c.defaultSelected).id
+    state.selectedCategories = new Set()
+    state.facetSearch = {}
+    state.facetSelections = {}
+    renderRootRadios(state)
+    renderCategoryCheckboxes(state)
+    renderMechanicalFacetCards(state)
+    renderResultsTable(results)
+
+SpecSearch.applyFilters():
+    filtered = results
+        .filter(row => row.rootId == state.activeRootId)
+        .filter(row => state.selectedCategories.size == 0 || row.categoryIds.some(id => state.selectedCategories.has(id)))
+        .filter(row => every facetId matches both search text (if provided) and selected values (if any), using row.facetValues[facetId])
+    ensureDataTable('#spec-search-results', filtered, specSearchColumns, { pageLength: 4 })
+
+Bindings:
+    on change root radio -> update activeRootId; applyFilters()
+    on change category checkbox -> toggle id in selectedCategories; applyFilters()
+    on keyup facet search -> debounce 200ms; update facetSearch[facetId]; applyFilters()
+    on click facet value checkbox -> toggle entry in facetSelections[facetId]; applyFilters()
+```
+
 ### Export Catalog CSV
 ```text
 CatalogCsvService::exportCatalog():
@@ -314,7 +394,9 @@ function getHierarchy():
 
 ```mermaid
 graph TD
-    User[Catalog Manager] -->|HTTP (AJAX)| PHPApp[PHP Catalog Page]
+    Admin[Catalog Manager] -->|AJAX| PHPApp[PHP Admin Page]
+    Visitor[Spec Search Visitor] -->|HTTPS| SpecPage[`spec-search.html`]
+    SpecPage -->|GET v1.publicCatalogSnapshot| PHPApp
     PHPApp -->|MySQLi| MySQLDB[(MySQL Database)]
     PHPApp -->|Configuration| ConfigFile[db_config.php]
     PHPApp -->|Audit JSONL| AuditLog[(Truncate Audit Log)]
@@ -328,11 +410,14 @@ graph LR
         Browser[Web Browser]
     end
     subgraph Server
-        PHPFpm[PHP Runtime (Single Page)]
+        WebRoot[Apache/Nginx Static Host]
+        PHPFpm[PHP Runtime (Admin SPA)]
         MySQLDB[(MySQL 8)]
         AuditFile[(storage/csv/truncate_audit.jsonl)]
     end
-    Browser --> PHPFpm
+    Browser -->|/catalog_ui.html| PHPFpm
+    Browser -->|/spec-search.html + assets| WebRoot
+    WebRoot --> PHPFpm
     PHPFpm --> MySQLDB
     PHPFpm --> AuditFile
 ```
@@ -343,6 +428,7 @@ graph LR
 graph TD
     subgraph Frontend
         CatalogUI[CatalogUI ES6 Module]
+        SpecSearchUI[SpecSearch UI Module]
         DataTablesPlugin[DataTables.net + Bootstrap 5 Skin]
     end
     subgraph Backend
@@ -363,6 +449,8 @@ graph TD
     end
     CatalogUI -->|Initializes| DataTablesPlugin
     CatalogUI -->|AJAX| Controller
+    SpecSearchUI -->|Fetch snapshot| Controller
+    SpecSearchUI -->|Initializes| DataTablesPlugin
     Controller --> SeedModule
     Controller --> HierarchyModule
     Controller --> SeriesFieldModule
@@ -372,6 +460,7 @@ graph TD
     Controller --> TruncateModule
     Controller --> JsonResponder
     JsonResponder --> CatalogUI
+    JsonResponder --> SpecSearchUI
     SeedModule --> MySQLDB
     HierarchyModule --> MySQLDB
     SeriesFieldModule --> MySQLDB
@@ -438,6 +527,24 @@ sequenceDiagram
     CTS-->>P: deletion counts + audit id
     P-->>B: JSON success payload
     B-->>U: Toast showing audit id + prompt to import CSV
+```
+
+## 8c. Sequence Diagram (Spec Search Filtering)
+
+```mermaid
+sequenceDiagram
+    participant V as Visitor
+    participant S as Spec Search UI
+    participant API as Public Snapshot Endpoint
+    participant DT as DataTables Instance
+    V->>S: Load spec-search.html
+    S->>API: GET v1.publicCatalogSnapshot
+    API-->>S: 200 + SpecSearchPayload
+    S->>S: Build root/category/facet lists + default state
+    S->>DT: Initialize DataTable with all rows (pageLength=4)
+    V->>S: Toggle root radio / category checkbox / facet search
+    S->>S: Update SpecSearchFilterState
+    S->>DT: Redraw table with filtered rows (client-side)
 ```
 
 ## 9. ER Diagram
@@ -581,6 +688,24 @@ flowchart TD
     Respond --> UIRefresh[Refresh CSV tools + history]
     UIRefresh --> End
     Abort --> End
+```
+
+### Flowchart (Spec Search Interaction)
+
+```mermaid
+flowchart LR
+    Load[Visitor loads spec-search.html] --> Fetch[GET v1.publicCatalogSnapshot]
+    Fetch --> BuildState[Build root/category/facet lists]
+    BuildState --> Render[Render Product Search + Mechanical Parameter panes]
+    Render --> Idle[Await user input]
+    Idle --> RootToggle[Toggle root radio?]
+    Idle --> CategoryToggle[Toggle category checkbox?]
+    Idle --> FacetInput[Type in facet search/value?]
+    RootToggle --> ApplyFilters
+    CategoryToggle --> ApplyFilters
+    FacetInput --> ApplyFilters[Recompute SpecSearchFilterState + filter rows]
+    ApplyFilters --> TableUpdate[Redraw DataTable + update counts]
+    TableUpdate --> Idle
 ```
 
 ## 12. State Diagram (Product Lifecycle)

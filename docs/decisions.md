@@ -42,6 +42,14 @@
 - The CSV history UI must list stored files from `storage/csv` with Download/Delete plus a new Restore button that re-imports the stored file by ID (backend to expose `v1.restoreCsv` that pipes the stored file back through the import routine).
 - File naming in storage remains `YYYYMMDDHHMMSS_<type>[_original].csv`; new restore behaviour cannot change this convention.
 
+## 2025-11-25
+- QA reported that the Spec Search root selector displayed a literal checkmark glyph to signal the default option even though browsers already render radio selection indicators; toggling between "General Product" and "Automotive Product" also failed to refresh the Product Category deck, leaving mismatched checkbox groups.
+- Decision: remove the manual checkmark output from `spec-search.html` so the UI relies entirely on the native radio control, and force every root selection to re-render the category columns scoped to the active root plus re-run filtering logic. Specification updated to capture the UX correction; implementation follows in `spec-search.html`.
+
+## 2025-11-26
+- Stakeholder escalated that merely re-rendering cached category decks still showed General Product families even after selecting Automotive Product; they require each root selection to hydrate its own payload straight from the backend to prevent stale checkbox sets.
+- Decision: extend `v1.specSearchSnapshot` with an optional `rootId` query parameter and update `spec-search.html` to issue AJAX calls per root (with in-browser caching for subsequent toggles). Spec/api/todolist updated before implementation; demo mode remains static.
+
 ## 2025-11-14
 - Stakeholder requested removal of the catalog-wide search experience (UI filters, backend `SearchService`, and `v1.searchCatalog`) to simplify scope around hierarchy/product management and CSV tooling.
 - Decision: delete the search panel from `catalog_ui.html`, remove `SearchService` plus the `v1.searchCatalog` endpoint, and update docs/tests so the platform focuses solely on hierarchy, metadata, products, CSV workflows, truncate, and the public snapshot.
@@ -69,6 +77,19 @@
 - Decision: Adopt jQuery DataTables (1.13.x) with the Bootstrap 5 skin for every admin grid: `#series-fields-table`, `#series-metadata-fields-table`, `#product-list-table`, `#csv-history-table`, and `#truncate-audit-table`. Instances run in client-side mode, reading directly from the cached arrays that `CatalogUI` already maintains so no backend pagination API is required.
 - Rationale: Stakeholders need consistent pagination, search, and column sorting without re-implementing those affordances for each table. DataTables already bundles keyboard focus states that match Bootstrap, reducing custom JS.
 - Implementation Notes: Load DataTables core + Bootstrap integration via CDN, wrap initialization/destruction inside helper functions so rerenders don't leak instances, and ensure existing row-select/delete/download button bindings reattach after each draw. Table layouts must preserve the stacked Products panel arrangement and continue to respect custom spacing overrides documented in the Bootstrap adoption decision.
-- Follow-up: Control placement is standardized—"Show _N_ entries" dropdown on the top-left, search on the top-right, info text on the bottom-left, pagination on the bottom-right—to keep all five tables visually consistent and aligned with Bootstrap expectations.
+- Follow-up: Control placement is standardized-"Show _N_ entries" dropdown on the top-left, search on the top-right, info text on the bottom-left, pagination on the bottom-right-to keep all five tables visually consistent and aligned with Bootstrap expectations.
 - Follow-up 2: The Products grid must keep ID/SKU/Name pinned even when dozens of attribute columns exist, so DataTables FixedColumns (left=3) plus horizontal scrolling is required; overflow styling must allow mouse-wheel/trackpad panning without breaking the stacked layout.
+
+## 2025-11-20
+- Stakeholder provided a wireframe describing a public-facing "Product Search" experience with annotated requirements (default General Product selection, root category toggles, component family checkboxes, multi-facet mechanical parameter cards with scrollbars, DataTables-styled results grid, and pagination indicators).
+- Decision: Deliver this experience as a standalone static page (`spec-search.html`) that consumes the existing `v1.publicCatalogSnapshot` endpoint. The page mirrors the provided layout, honors the annotated overflow behaviors, and keeps filtering client-side so no new backend service is necessary. Documentation now records the derived `SpecSearchPayload`, layout blueprint, pseudocode, and diagrams before implementation.
+
+## 2025-11-24
+- Q: Can `spec-search.html` continue to rely on a seeded JSON stub, or must it consume catalog data from the backend? A: Static data violates stakeholder expectations; the page must call a PHP API for every page load.
+- Decision: Introduce `SpecSearchService` + `v1.specSearchSnapshot` so the backend materializes roots, component families, facets, and flattened rows before the frontend renders anything.
+- Follow-up: The UI no longer transforms `v1.publicCatalogSnapshot`; it only renders the `specSearchSnapshot` response or, if explicitly marked with `data-demo="true"`, the embedded demo payload.
+
+## 2025-11-25
+- Q: Stakeholders still need to demo the layout offline (file://) but want to avoid silently showing stale data when a backend is available. How should fallback work? A: Automatic fallback is removed; QA must opt into the demo dataset via `data-demo="true"`.
+- Decision: When the live API call fails, the UI logs the error and surfaces a Bootstrap warning that no data is available. Only QA builds that set `data-demo="true"` hydrate from the embedded sample payload; production loads must refresh after the backend is restored.
 
