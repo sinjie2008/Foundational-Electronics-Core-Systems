@@ -211,6 +211,13 @@
         .btn-edit:hover {
             background-color: #0056b3;
         }
+
+        /* Fix DataTables alignment issues */
+        table.dataTable th,
+        table.dataTable td {
+            white-space: nowrap;
+            box-sizing: border-box;
+        }
     </style>
 </head>
 
@@ -277,6 +284,7 @@
             // Use relative path so it works regardless of the project folder name (e.g. /test/ or /project/)
             const API_BASE = 'api/spec-search';
             let dataTable = null;
+            let currentFacets = []; // Store facets to build table headers
 
             // --- 1. Load Root Categories ---
             function loadRootCategories() {
@@ -327,10 +335,11 @@
 
                 // Clear facets and table
                 $('#facets-container').html('<p style="color: #888; padding: 10px;">Select product categories to see filters.</p>');
+                currentFacets = []; // Clear stored facets
                 if (dataTable) {
-                    dataTable.clear().draw();
-                    // Optionally destroy/reset headers if they change dynamically
+                    dataTable.destroy();
                 }
+                $('#results-table').empty(); // Clear headers too
             });
 
             // --- 2. Load Product Categories ---
@@ -372,8 +381,8 @@
             // --- Event: Product Category Checkbox Changed ---
             $(document).on('change', '.product-cat-checkbox', function () {
                 loadFacets();
-                loadProducts(); // Also reload products immediately? Or wait for facets? 
-                // Usually good to reload products based on category selection too.
+                // We wait for facets to load before loading products, 
+                // because we need facets to build table headers.
             });
 
             // --- 3. Load Facets ---
@@ -383,6 +392,7 @@
 
                 if (catIds.length === 0) {
                     $('#facets-container').html('<p style="color: #888; padding: 10px;">Select product categories to see filters.</p>');
+                    currentFacets = [];
                     return;
                 }
 
@@ -397,7 +407,9 @@
                             $('#facets-container').html('<span style="color:red;">' + data.error + '</span>');
                             return;
                         }
+                        currentFacets = data; // Store for headers
                         renderFacets(data);
+                        loadProducts(); // Load products after facets are ready
                     },
                     error: function (jqXHR, textStatus, errorThrown) {
                         console.error("Facets API Request Failed:", textStatus, errorThrown);
@@ -466,18 +478,14 @@
                     filters[key].push(val);
                 });
 
+                console.log("Loading products with filters:", filters); // Debug log
+
                 // Prepare request body
                 const requestData = {
                     root_id: rootId,
                     category_ids: catIds,
                     filters: filters
                 };
-
-                // If DataTables is already initialized, destroy it to re-init with potentially new columns
-                // OR just reload data if columns are static. 
-                // For this demo, let's assume dynamic columns might be needed, but for simplicity we'll stick to fixed columns + dynamic data first.
-                // If columns need to change based on category, we'd need to rebuild the table structure.
-                // Let's assume a standard set of columns for now or rebuild.
 
                 // Re-fetching data
                 $.ajax({
@@ -492,33 +500,36 @@
             }
 
             function initDataTable(products) {
-                // Define columns dynamically based on the first product or a fixed schema
-                // For this demo, we'll try to be smart.
-
-                if (products.length === 0) {
-                    if (dataTable) {
-                        dataTable.clear().draw();
-                    }
-                    return;
-                }
-
-                // Extract all keys from first product to build headers
-                // In a real app, the API should probably return column definitions too.
-                const firstItem = products[0];
+                // Define columns based on currentFacets
                 const columns = [];
 
-                // Always put Series and SKU first
-                if (firstItem.hasOwnProperty('series')) columns.push({ title: 'Series', data: 'series' });
-                if (firstItem.hasOwnProperty('sku')) columns.push({ title: 'SKU', data: 'sku' });
+                // Fixed Columns
+                columns.push({ title: 'Series', data: 'series' });
+                columns.push({ title: 'SKU', data: 'sku' });
 
-                // Add other keys
-                Object.keys(firstItem).forEach(key => {
-                    if (key !== 'series' && key !== 'sku' && key !== 'id') {
-                        columns.push({ title: key.charAt(0).toUpperCase() + key.slice(1), data: key });
-                    }
-                });
+                // Dynamic Columns from Facets
+                // We use the 'key' from the facet as the data source.
+                // Note: If keys contain dots (e.g. 'acf.length'), we need to handle them carefully.
+                // DataTables treats dots as nested objects. If our JSON is flat {"acf.length": "val"}, 
+                // we should use a render function or escape the key.
+                // Simplest way for flat keys with dots: use array notation or a function.
 
-                // Add Action column
+                if (currentFacets && currentFacets.length > 0) {
+                    currentFacets.forEach(facet => {
+                        // Exclude 'series' if it's also a facet, as it's already added as a fixed column
+                        if (facet.key !== 'series' && facet.key !== 'sku') {
+                            columns.push({
+                                title: facet.label,
+                                data: null, // Use null data source and render manually to handle special chars in keys
+                                render: function (data, type, row) {
+                                    return row[facet.key] || '';
+                                }
+                            });
+                        }
+                    });
+                }
+
+                // Action Column
                 columns.push({
                     title: 'Action',
                     data: null,
@@ -527,17 +538,25 @@
                     }
                 });
 
-                // Destroy existing
+                // Destroy existing instance if present
                 if (dataTable) {
                     dataTable.destroy();
-                    $('#results-table').empty(); // Clear headers
                 }
 
-                $('#results-table').DataTable({
+                // Always clear the table content (headers and body) to allow dynamic regeneration
+                $('#results-table').empty();
+
+                dataTable = $('#results-table').DataTable({
                     data: products,
                     columns: columns,
                     pageLength: 10,
-                    destroy: true // Allow re-init
+                    destroy: true, // Allow re-init
+                    scrollX: true, // Enable horizontal scroll if many columns
+                    autoWidth: false, // Disable auto-width calculation to prevent misalignment
+                    initComplete: function () {
+                        // Force adjustment of columns after initialization
+                        this.api().columns.adjust();
+                    }
                 });
             }
 
