@@ -2,799 +2,551 @@
 <html lang="en">
 
 <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Spec Search</title>
-    <link rel="preconnect" href="https://cdn.jsdelivr.net" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
-        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous" />
-    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Product Search / Spec Search</title>
+
+    <!-- jQuery -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+
+    <!-- DataTables CSS & JS -->
+    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.11.5/css/jquery.dataTables.css">
+    <script type="text/javascript" charset="utf8"
+        src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.js"></script>
+
     <style>
-        :root {
-            --panel-border: #dee2e6;
-            --panel-radius: 0.65rem;
-        }
-
         body {
-            background: #f6f8fa;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 20px;
+            color: #333;
         }
 
-        .panel {
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
             background: #fff;
-            border: 1px solid var(--panel-border);
-            border-radius: var(--panel-radius);
-            box-shadow: 0 4px 16px rgba(15, 23, 42, 0.06);
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
         }
 
-        .panel-title {
-            font-size: 1.35rem;
-            font-weight: 600;
+        h2,
+        h3,
+        h4 {
+            margin-top: 0;
         }
 
-        .root-choice {
-            min-width: 180px;
+        /* --- Section 1: Root & Product Category --- */
+        .search-section {
+            border-bottom: 2px solid #eee;
+            padding-bottom: 20px;
+            margin-bottom: 20px;
         }
 
-        .category-column h3 {
-            font-size: 1rem;
-            font-weight: 600;
-            margin-bottom: 0.5rem;
+        .root-category-row {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 20px;
+            background: #f9f9f9;
+            padding: 15px;
+            border-radius: 5px;
         }
 
-        .facet-scroll {
+        .root-category-row label {
+            font-weight: bold;
+            margin-right: 10px;
+        }
+
+        .radio-group label {
+            font-weight: normal;
+            margin-right: 15px;
+            cursor: pointer;
+        }
+
+        .product-category-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 30px;
+        }
+
+        .category-group {
+            min-width: 200px;
+        }
+
+        .category-group h4 {
+            margin-bottom: 10px;
+            font-size: 16px;
+            color: #555;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 5px;
+        }
+
+        .category-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .category-list li {
+            margin-bottom: 5px;
+        }
+
+        .category-list label {
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        /* --- Section 2: Mechanical Parameters (Facets) --- */
+        .facets-section {
+            margin-bottom: 30px;
+        }
+
+        .facets-container {
+            display: flex;
+            gap: 15px;
             overflow-x: auto;
+            /* Horizontal scroll for panels */
+            padding-bottom: 15px;
+            /* Space for scrollbar */
+            border: 1px solid #eee;
+            padding: 15px;
+            background: #fafafa;
+            border-radius: 5px;
         }
 
-        .facet-card {
-            min-width: 240px;
-            height: 100%;
-            border: 1px solid var(--panel-border);
-            border-radius: 0.75rem;
-            padding: 1.25rem;
+        /* Custom scrollbar for x-axis */
+        .facets-container::-webkit-scrollbar {
+            height: 8px;
+        }
+
+        .facets-container::-webkit-scrollbar-thumb {
+            background: #ccc;
+            border-radius: 4px;
+        }
+
+        .facet-panel {
+            min-width: 200px;
+            width: 200px;
             background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+            /* Prevent shrinking */
+        }
+
+        .facet-header {
+            padding: 10px;
+            background: #eee;
+            font-weight: bold;
+            border-bottom: 1px solid #ddd;
+            font-size: 14px;
+        }
+
+        .facet-search {
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .facet-search input {
+            width: 100%;
+            padding: 5px;
+            box-sizing: border-box;
+            border: 1px solid #ccc;
+            border-radius: 3px;
         }
 
         .facet-values {
-            border: 1px solid #e9ecef;
-            border-radius: 0.5rem;
-            padding: 0.75rem;
-            max-height: 220px;
+            height: 200px;
             overflow-y: auto;
+            /* Vertical scroll for values */
+            padding: 8px;
         }
 
-        .facet-values .form-check {
-            margin-bottom: 0.35rem;
+        /* Custom scrollbar for y-axis */
+        .facet-values::-webkit-scrollbar {
+            width: 6px;
         }
 
-        .datatable-search label {
-            font-weight: 600;
+        .facet-values::-webkit-scrollbar-thumb {
+            background: #ccc;
+            border-radius: 3px;
         }
 
-        .pagination-dot {
-            width: 1.25rem;
-            height: 1.25rem;
-            border: 1px solid #adb5bd;
-            border-radius: 0.2rem;
+        .facet-item {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 13px;
+            cursor: pointer;
         }
 
-        .dataTables_paginate .page-link {
-            border-radius: 0.35rem !important;
-            min-width: 2.35rem;
-            text-align: center;
+        .facet-item input {
+            margin-right: 8px;
         }
 
-        .facet-label {
-            font-size: 0.85rem;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            font-weight: 600;
+        /* --- Section 3: Results --- */
+        .results-section {
+            margin-top: 20px;
+        }
+
+        table.dataTable thead th {
+            background-color: #333;
+            color: #fff;
+        }
+
+        .btn-edit {
+            display: inline-block;
+            padding: 5px 10px;
+            background-color: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+
+        .btn-edit:hover {
+            background-color: #0056b3;
         }
     </style>
 </head>
 
 <body>
-    <main class="container py-5" data-demo="false">
-        <div id="spec-search-alert" class="mb-3" aria-live="assertive"></div>
-        <section class="panel p-4 mb-4" aria-labelledby="product-search-heading">
-            <div class="d-flex flex-wrap justify-content-between gap-3 align-items-center mb-3">
-                <div>
-                    <p class="text-uppercase text-muted small mb-1">Product Search</p>
-                    <h1 class="panel-title mb-0" id="product-search-heading">Filter Product By</h1>
+
+    <div class="container">
+
+        <!-- SECTION 1: Product Search -->
+        <div class="search-section">
+            <h2>Product Search</h2>
+
+            <!-- 1.1 Root Category -->
+            <div class="root-category-row">
+                <label>Filter Product By:</label>
+                <div class="radio-group" id="root-category-container">
+                    <!-- Populated by JS -->
+                    Loading...
                 </div>
-                <span class="text-primary fw-semibold">Default Selection: General Product</span>
             </div>
 
-            <p class="text-uppercase text-muted small mb-2">Root Category</p>
-            <div id="root-category-group" class="d-flex flex-wrap gap-4 mb-4" aria-live="polite">
-                <div class="text-muted small">Loading root categories...</div>
+            <!-- 1.2 Product Category -->
+            <div id="product-category-wrapper">
+                <h3>Product Categories</h3>
+                <div class="product-category-container" id="product-category-container">
+                    <!-- Populated by JS -->
+                    <p style="color: #888;">Select a root category to see product categories.</p>
+                </div>
             </div>
+        </div>
 
-            <p class="text-uppercase text-muted small mb-2">Product Category</p>
-            <div id="category-columns" class="row g-4" aria-live="polite">
-                <div class="col-12">
-                    <p class="text-muted small mb-0">Select a root to load product categories.</p>
-                </div>
+        <!-- SECTION 2: Mechanical Parameters -->
+        <div class="facets-section">
+            <h3>Mechanical Parameters</h3>
+            <div class="facets-container" id="facets-container">
+                <!-- Facet Panels Populated by JS -->
+                <p style="color: #888; padding: 10px;">Select product categories to see filters.</p>
             </div>
-        </section>
+        </div>
 
-        <section class="panel p-4 mb-4" aria-labelledby="mechanical-parameters-heading">
-            <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
-                <div>
-                    <h2 class="h4 mb-0" id="mechanical-parameters-heading">Mechanical Parameters</h2>
-                    <p class="text-muted small mb-0">Use the cards below to run a multi-facet search.</p>
-                </div>
-                <span class="text-primary text-uppercase small fw-semibold">Multi-Facet Search</span>
-            </div>
-            <div class="facet-scroll">
-                <div id="facet-card-row" class="row flex-nowrap g-3">
-                    <!-- JavaScript renders facet cards -->
-                </div>
-            </div>
-        </section>
+        <!-- SECTION 3: Results -->
+        <div class="results-section">
+            <h3>Results</h3>
+            <table id="results-table" class="display" style="width:100%">
+                <thead>
+                    <tr id="table-headers">
+                        <!-- Headers Populated by JS -->
+                        <th>Series</th>
+                        <th>SKU</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Rows Populated by DataTables -->
+                </tbody>
+            </table>
+        </div>
 
-        <section class="panel p-4" aria-labelledby="results-heading">
-            <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
-                <div>
-                    <p class="text-uppercase text-muted small mb-1">Datatables</p>
-                    <h2 class="h4 mb-0" id="results-heading">Results</h2>
-                </div>
-                <div class="datatable-search d-flex align-items-center gap-2">
-                    <label for="result-search-input" class="form-label mb-0">Search</label>
-                    <input type="search" id="result-search-input" class="form-control form-control-sm"
-                        placeholder="Search results" />
-                </div>
-            </div>
-            <div class="table-responsive">
-                <table id="spec-search-results" class="table table-striped align-middle mb-3">
-                    <thead class="table-light">
-                        <tr>
-                            <th scope="col">Series</th>
-                            <th scope="col">acf.field</th>
-                            <th scope="col" class="text-end">Edit</th>
-                        </tr>
-                    </thead>
-                    <tbody id="spec-search-body">
-                        <tr>
-                            <td colspan="3" class="text-muted">Loading live catalog data...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-            <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
-                <span id="result-count" class="text-muted small" role="status" aria-live="polite">0 results</span>
-                <div id="fallback-pagination" class="d-flex gap-2">
-                    <span class="pagination-dot"></span>
-                    <span class="pagination-dot"></span>
-                    <span class="pagination-dot"></span>
-                    <span class="pagination-dot"></span>
-                </div>
-            </div>
-            <noscript>
-                <p class="text-danger small mt-3 mb-0">JavaScript is disabled. All filters remain visible, but live table
-                    filtering and pagination are unavailable.</p>
-            </noscript>
-        </section>
-    </main>
+    </div>
 
-    <script src="https://code.jquery.com/jquery-3.7.1.min.js"
-        integrity="sha256-3gJwYp8p6+U6p9E6Yk9Q2W0HQwZ0p6pIMe6H0g8TB6w=" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
-        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
-        crossorigin="anonymous"></script>
-            <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
-    <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
     <script>
-        (function () {
-            'use strict';
+        $(document).ready(function () {
 
-            const API_URL = 'catalog.php?action=v1.specSearchSnapshot';
+            // --- Configuration ---
+            // Use relative path so it works regardless of the project folder name (e.g. /test/ or /project/)
+            const API_BASE = 'api/spec-search';
+            let dataTable = null;
 
-            const selectors = {
-                main: document.querySelector('main'),
-                alert: document.getElementById('spec-search-alert'),
-                rootGroup: document.getElementById('root-category-group'),
-                categoryColumns: document.getElementById('category-columns'),
-                facetRow: document.getElementById('facet-card-row'),
-                manualSearch: document.getElementById('result-search-input'),
-                resultCount: document.getElementById('result-count'),
-                fallbackPagination: document.getElementById('fallback-pagination'),
-                tableBody: document.getElementById('spec-search-body')
-            };
+            // --- 1. Load Root Categories ---
+            function loadRootCategories() {
+                $.getJSON(API_BASE + '/root-categories/index.php', function (data) {
+                    const container = $('#root-category-container');
 
-            const dataset = {
-                defaultRootId: null,
-                roots: [],
-                categoryColumnsByRoot: {},
-                mechanicalFacets: [],
-                results: []
-            };
-
-            const state = {
-                activeRootId: null,
-                selectedCategories: new Set(),
-                facetSelections: {},
-                facetSearch: {}
-            };
-
-            let dataTable;
-            // Cache per-root snapshots so repeat toggles avoid new HTTP calls unless necessary.
-            const snapshotCache = new Map();
-
-            init();
-
-            function init() {
-                hideFallbackPagination();
-                bindManualSearch();
-                if (!selectors.main) {
-                    return;
-                }
-                if (selectors.main.dataset.demo === 'true') {
-                    hydrateFromPayload(buildDemoPayload());
-                    return;
-                }
-                fetchSnapshot().catch(() => {
-                    /* alert already handled inside fetchSnapshot */
-                });
-            }
-
-            /**
-             * Fetches the snapshot for a specific root (or default) and hydrates the UI.
-             * Uses a cache so already-loaded roots do not hit the server twice.
-             */
-            function fetchSnapshot(rootId = null, options = {}) {
-                const cacheKey = rootId || '__default__';
-                const overrideRootId = options.rootIdOverride ?? rootId;
-                if (snapshotCache.has(cacheKey)) {
-                    hydrateFromPayload(snapshotCache.get(cacheKey), { rootIdOverride: overrideRootId });
-                    return Promise.resolve(snapshotCache.get(cacheKey));
-                }
-
-                const rootLabel = options.rootLabel || '';
-                const url = rootId ? `${API_URL}&rootId=${encodeURIComponent(rootId)}` : API_URL;
-                showAlert('info', rootId ? `Loading ${rootLabel || 'selected root'} catalog data...` : 'Loading live catalog data...');
-
-                return fetch(url, { headers: { Accept: 'application/json' } })
-                    .then((response) => {
-                        if (!response.ok) {
-                            throw new Error(`HTTP ${response.status}`);
-                        }
-                        return response.json();
-                    })
-                    .then((payload) => {
-                        if (!payload.success || !payload.data) {
-                            throw new Error(payload.message || 'Snapshot unavailable');
-                        }
-                        snapshotCache.set(cacheKey, payload.data);
-                        if (!rootId && payload.data.defaultRootId) {
-                            snapshotCache.set(payload.data.defaultRootId, payload.data);
-                        }
-                        hydrateFromPayload(payload.data, { rootIdOverride: overrideRootId });
-                        return payload.data;
-                    })
-                    .catch((error) => {
-                        console.error('Spec Search snapshot failed', error);
-                        const warning = rootId
-                            ? 'Unable to load categories for the selected root. Please try again.'
-                            : 'Live catalog data is unavailable. Please start the PHP backend and reload this page.';
-                        showAlert('warning', warning);
-                        if (!rootId) {
-                            renderEmptyTable();
-                        }
-                        throw error;
-                    });
-            }
-
-            function hydrateFromPayload(payload, options = {}) {
-                dataset.defaultRootId = payload.defaultRootId || null;
-                dataset.roots = Array.isArray(payload.roots) ? payload.roots : [];
-                dataset.categoryColumnsByRoot = payload.categoryColumnsByRoot || {};
-                dataset.mechanicalFacets = Array.isArray(payload.mechanicalFacets) ? payload.mechanicalFacets : [];
-                dataset.results = Array.isArray(payload.results) ? payload.results : [];
-
-                const overrideRootId = options.rootIdOverride;
-                state.activeRootId = overrideRootId || dataset.defaultRootId || (dataset.roots[0] && dataset.roots[0].id) || null;
-                state.selectedCategories = new Set();
-                initializeFacetState();
-
-                renderRootRadios();
-                renderCategoryColumns();
-                renderFacetCards();
-                initializeTable(dataset.results);
-                bindRootEvents();
-                bindCategoryEvents();
-                bindFacetEvents();
-                applyFilters();
-                clearAlert();
-            }
-
-            function initializeFacetState() {
-                state.facetSelections = {};
-                state.facetSearch = {};
-                dataset.mechanicalFacets.forEach((facet) => {
-                    state.facetSelections[facet.id] = new Set();
-                    state.facetSearch[facet.id] = '';
-                });
-            }
-
-            function bindManualSearch() {
-                if (!selectors.manualSearch) {
-                    return;
-                }
-                selectors.manualSearch.addEventListener('input', (event) => {
-                    if (dataTable) {
-                        dataTable.search(event.target.value).draw();
-                    }
-                });
-            }
-
-            function hideFallbackPagination() {
-                if (selectors.fallbackPagination) {
-                    selectors.fallbackPagination.classList.add('d-none');
-                }
-            }
-
-            function renderRootRadios() {
-                if (!selectors.rootGroup) {
-                    return;
-                }
-                if (!dataset.roots.length) {
-                    selectors.rootGroup.innerHTML = '<div class="text-muted small">No root categories available.</div>';
-                    return;
-                }
-                const fragment = document.createDocumentFragment();
-                dataset.roots.forEach((root, index) => {
-                    const wrapper = document.createElement('div');
-                    wrapper.className = 'form-check root-choice';
-
-                    const input = document.createElement('input');
-                    input.type = 'radio';
-                    input.className = 'form-check-input';
-                    input.name = 'rootCategory';
-                    input.id = `root-${root.id}`;
-                    input.value = root.id;
-                    input.checked = root.id === state.activeRootId || (!state.activeRootId && index === 0);
-
-                    const label = document.createElement('label');
-                    label.className = 'form-check-label fw-semibold';
-                    label.setAttribute('for', input.id);
-                    label.textContent = root.label;
-
-                    wrapper.appendChild(input);
-                    wrapper.appendChild(label);
-                    fragment.appendChild(wrapper);
-                });
-                selectors.rootGroup.innerHTML = '';
-                selectors.rootGroup.appendChild(fragment);
-            }
-
-            // Show a loading placeholder while waiting for the next root snapshot.
-            function showCategoryLoading() {
-                if (!selectors.categoryColumns) {
-                    return;
-                }
-                selectors.categoryColumns.innerHTML = '<div class="col-12"><p class="text-muted small mb-0">Loading categories...</p></div>';
-            }
-
-            // Show an inline error if the requested root snapshot cannot be retrieved.
-            function showCategoryError() {
-                if (!selectors.categoryColumns) {
-                    return;
-                }
-                selectors.categoryColumns.innerHTML = '<div class="col-12"><p class="text-danger small mb-0">Unable to load categories for the selected root.</p></div>';
-            }
-
-            function renderCategoryColumns() {
-                if (!selectors.categoryColumns) {
-                    return;
-                }
-                selectors.categoryColumns.innerHTML = '';
-                const columns = dataset.categoryColumnsByRoot[state.activeRootId] || [];
-                if (!columns.length) {
-                    selectors.categoryColumns.innerHTML = '<div class="col-12"><p class="text-muted small mb-0">No categories found under this root.</p></div>';
-                    return;
-                }
-                const fragment = document.createDocumentFragment();
-                columns.forEach((column) => {
-                    const col = document.createElement('div');
-                    col.className = 'col-12 col-md-3 category-column';
-                    const heading = document.createElement('h3');
-                    heading.textContent = column.label;
-                    col.appendChild(heading);
-
-                    if (!column.options || !column.options.length) {
-                        const empty = document.createElement('p');
-                        empty.className = 'text-muted small mb-0';
-                        empty.textContent = 'No sub-categories.';
-                        col.appendChild(empty);
-                    } else {
-                        column.options.forEach((option, index) => {
-                            const formCheck = document.createElement('div');
-                            formCheck.className = 'form-check';
-                            const checkboxId = `cat-${column.id}-${index}`;
-                            const input = document.createElement('input');
-                            input.type = 'checkbox';
-                            input.className = 'form-check-input category-option';
-                            input.id = checkboxId;
-                            input.value = option.id;
-
-                            const label = document.createElement('label');
-                            label.className = 'form-check-label';
-                            label.setAttribute('for', checkboxId);
-                            label.textContent = option.label;
-
-                            formCheck.appendChild(input);
-                            formCheck.appendChild(label);
-                            col.appendChild(formCheck);
-                        });
+                    if (data.error) {
+                        console.error("API Error:", data.error);
+                        container.html('<span style="color:red;">' + data.error + '</span>');
+                        return;
                     }
 
-                    fragment.appendChild(col);
-                });
-                selectors.categoryColumns.appendChild(fragment);
-            }
-
-            function renderFacetCards() {
-                if (!selectors.facetRow) {
-                    return;
-                }
-                selectors.facetRow.innerHTML = '';
-                dataset.mechanicalFacets.forEach((facet) => {
-                    const col = document.createElement('div');
-                    col.className = 'col-10 col-md-3';
-                    const card = document.createElement('div');
-                    card.className = 'facet-card h-100';
-                    card.dataset.facetId = facet.id;
-
-                    const header = document.createElement('div');
-                    header.className = 'd-flex justify-content-between align-items-center mb-2';
-                    header.innerHTML = `<span class="facet-label">${facet.label}</span><span class="badge text-bg-light text-muted">Y-overflow</span>`;
-                    card.appendChild(header);
-
-                    const searchLabel = document.createElement('label');
-                    searchLabel.className = 'form-label small text-muted mb-1';
-                    searchLabel.textContent = 'Search Filter';
-                    searchLabel.setAttribute('for', `facet-search-${facet.id}`);
-                    card.appendChild(searchLabel);
-
-                    const searchInput = document.createElement('input');
-                    searchInput.type = 'search';
-                    searchInput.className = 'form-control form-control-sm mb-3 facet-search';
-                    searchInput.placeholder = 'Search values';
-                    searchInput.id = `facet-search-${facet.id}`;
-                    searchInput.dataset.facetId = facet.id;
-                    card.appendChild(searchInput);
-
-                    const valuesWrapper = document.createElement('div');
-                    valuesWrapper.className = 'facet-values';
-                    const values = Array.isArray(facet.values) ? facet.values : [];
-
-                    if (!values.length) {
-                        valuesWrapper.innerHTML = '<p class="text-muted small mb-0">No values available.</p>';
-                    } else {
-                        values.forEach((value, index) => {
-                            const formCheck = document.createElement('div');
-                            formCheck.className = 'form-check';
-                            formCheck.dataset.facetValue = value.toLowerCase();
-
-                            const checkboxId = `facet-${facet.id}-${index}`;
-                            const input = document.createElement('input');
-                            input.type = 'checkbox';
-                            input.className = 'form-check-input facet-option';
-                            input.value = value;
-                            input.id = checkboxId;
-                            input.dataset.facetId = facet.id;
-
-                            const label = document.createElement('label');
-                            label.className = 'form-check-label';
-                            label.setAttribute('for', checkboxId);
-                            label.innerHTML = `<span class="fw-semibold">${value}</span>`;
-
-                            formCheck.appendChild(input);
-                            formCheck.appendChild(label);
-                            valuesWrapper.appendChild(formCheck);
-                        });
+                    if (!Array.isArray(data)) {
+                        console.error("API Error: Unexpected response format", data);
+                        container.html('<span style="color:red;">Error: Unexpected API response.</span>');
+                        return;
                     }
 
-                    card.appendChild(valuesWrapper);
-                    col.appendChild(card);
-                    selectors.facetRow.appendChild(col);
-                });
-            }
+                    container.empty();
 
-            function bindRootEvents() {
-                if (!selectors.rootGroup) {
-                    return;
-                }
-                selectors.rootGroup.querySelectorAll('input[name="rootCategory"]').forEach((input) => {
-                    input.addEventListener('change', (event) => {
-                        if (!event.target.checked) {
-                            return;
-                        }
-                        const nextRootId = event.target.value;
-                        const previousRootId = state.activeRootId;
-                        const rootMeta = dataset.roots.find((root) => root.id === nextRootId);
-                        state.selectedCategories = new Set();
-                        state.activeRootId = nextRootId;
-                        showCategoryLoading();
-                        fetchSnapshot(nextRootId, { rootLabel: rootMeta && rootMeta.label })
-                            .catch(() => {
-                                state.activeRootId = previousRootId;
-                                showCategoryError();
-                                renderRootRadios();
-                                bindRootEvents();
-                                renderCategoryColumns();
-                                bindCategoryEvents();
-                                applyFilters();
-                            });
+                    if (data.length === 0) {
+                        container.html('<span>No root categories found.</span>');
+                        return;
+                    }
+
+                    data.forEach((cat, index) => {
+                        const checked = index === 0 ? 'checked' : '';
+                        container.append(`
+                    <label>
+                        <input type="radio" name="root_category" value="${cat.id}" ${checked}>
+                        ${cat.name}
+                    </label>
+                `);
                     });
+
+                    // Trigger change to load product categories for default selection
+                    $('input[name="root_category"]:checked').trigger('change');
+                }).fail(function (jqXHR, textStatus, errorThrown) {
+                    console.error("API Error:", textStatus, errorThrown);
+                    $('#root-category-container').html('<span style="color:red;">Error loading categories. Please ensure you are running this on a PHP server (localhost) and the API path is correct.</span>');
                 });
             }
 
-            function bindCategoryEvents() {
-                selectors.categoryColumns.querySelectorAll('.category-option').forEach((input) => {
-                    input.addEventListener('change', (event) => {
-                        toggleSet(state.selectedCategories, event.target.value, event.target.checked);
-                        applyFilters();
-                    });
-                });
-            }
+            // --- Event: Root Category Changed ---
+            $(document).on('change', 'input[name="root_category"]', function () {
+                const rootId = $(this).val();
+                loadProductCategories(rootId);
 
-            function bindFacetEvents() {
-                selectors.facetRow.querySelectorAll('.facet-search').forEach((input) => {
-                    input.addEventListener('input', (event) => {
-                        const facetId = event.target.dataset.facetId;
-                        const term = event.target.value.trim().toLowerCase();
-                        state.facetSearch[facetId] = term;
-
-                        event.target.closest('.facet-card')
-                            .querySelectorAll('[data-facet-value]')
-                            .forEach((option) => {
-                                const matches = option.dataset.facetValue.includes(term);
-                                option.classList.toggle('d-none', !matches);
-                            });
-
-                        applyFilters();
-                    });
-                });
-
-                selectors.facetRow.querySelectorAll('.facet-option').forEach((input) => {
-                    input.addEventListener('change', (event) => {
-                        const facetId = event.target.dataset.facetId;
-                        const facetSet = state.facetSelections[facetId];
-                        toggleSet(facetSet, event.target.value, event.target.checked);
-                        applyFilters();
-                    });
-                });
-            }
-
-            function applyFilters() {
-                let filtered = dataset.results.slice();
-
-                if (state.activeRootId) {
-                    filtered = filtered.filter((row) => row.rootId === state.activeRootId);
-                }
-
-                if (state.selectedCategories.size > 0) {
-                    filtered = filtered.filter((row) => row.categoryIds.some((id) => state.selectedCategories.has(id)));
-                }
-
-                dataset.mechanicalFacets.forEach((facet) => {
-                    const searchTerm = state.facetSearch[facet.id];
-                    const selectedValues = state.facetSelections[facet.id];
-                    filtered = filtered.filter((row) => {
-                        const value = getFacetValue(row, facet.id);
-                        const normalized = value.toLowerCase();
-                        const matchesSearch = !searchTerm || normalized.includes(searchTerm);
-                        const matchesSelection = selectedValues.size === 0 || selectedValues.has(value);
-                        return matchesSearch && matchesSelection;
-                    });
-                });
-
-                refreshTable(filtered);
-                updateResultCount(filtered.length);
-            }
-
-            function initializeTable(rows) {
-                const formatted = rows.map(formatRow);
-                if (selectors.tableBody) {
-                    selectors.tableBody.innerHTML = '';
-                }
-                if (dataTable) {
-                    dataTable.clear().rows.add(formatted).draw();
-                    return;
-                }
-                dataTable = $('#spec-search-results').DataTable({
-                    data: formatted,
-                    columns: [
-                        { data: 'series', title: 'Series' },
-                        { data: 'acfField', title: 'acf.field' },
-                        { data: 'action', title: 'Edit', orderable: false, searchable: false, className: 'text-end' }
-                    ],
-                    pageLength: 4,
-                    lengthChange: false,
-                    ordering: true,
-                    searching: true,
-                    autoWidth: false,
-                    dom: 't<"row align-items-center mt-3"<"col-md-6 text-muted"i><"col-md-6"p>>'
-                });
-            }
-
-            function refreshTable(rows) {
-                if (!dataTable) {
-                    initializeTable(rows);
-                    return;
-                }
-                dataTable.clear().rows.add(rows.map(formatRow)).draw();
-                if (selectors.manualSearch) {
-                    dataTable.search(selectors.manualSearch.value).draw();
-                }
-            }
-
-            function formatRow(row) {
-                return {
-                    series: row.series,
-                    acfField: row.acfField || 'N/A',
-                    action: `<button type="button" class="btn btn-outline-primary btn-sm" data-series="${row.series}" aria-label="Edit ${row.series}">Edit</button>`
-                };
-            }
-
-            function updateResultCount(count) {
-                if (selectors.resultCount) {
-                    selectors.resultCount.textContent = `${count} result${count === 1 ? '' : 's'}`;
-                }
-            }
-
-            function toggleSet(set, value, shouldAdd) {
-                if (shouldAdd) {
-                    set.add(value);
-                } else {
-                    set.delete(value);
-                }
-            }
-
-            function getFacetValue(row, facetId) {
-                if (!row.facetValues) {
-                    return '';
-                }
-                const value = row.facetValues[facetId];
-                return typeof value === 'string' ? value : '';
-            }
-
-            function showAlert(type, message) {
-                if (!selectors.alert) {
-                    return;
-                }
-                selectors.alert.innerHTML = `<div class="alert alert-${type}" role="alert">${message}</div>`;
-            }
-
-            function clearAlert() {
-                if (selectors.alert) {
-                    selectors.alert.innerHTML = '';
-                }
-            }
-
-            function renderEmptyTable() {
+                // Clear facets and table
+                $('#facets-container').html('<p style="color: #888; padding: 10px;">Select product categories to see filters.</p>');
                 if (dataTable) {
                     dataTable.clear().draw();
-                    updateResultCount(0);
-                    return;
+                    // Optionally destroy/reset headers if they change dynamically
                 }
-                if (selectors.tableBody) {
-                    selectors.tableBody.innerHTML = '<tr><td colspan="3" class="text-muted">No catalog data available.</td></tr>';
-                }
-                updateResultCount(0);
+            });
+
+            // --- 2. Load Product Categories ---
+            function loadProductCategories(rootId) {
+                $.getJSON(API_BASE + '/product-categories/index.php', { root_id: rootId }, function (data) {
+                    const container = $('#product-category-container');
+                    container.empty();
+
+                    if (data.length === 0) {
+                        container.html('<p>No categories found.</p>');
+                        return;
+                    }
+
+                    data.forEach(group => {
+                        let catsHtml = '';
+                        group.categories.forEach(cat => {
+                            catsHtml += `
+                        <li>
+                            <label>
+                                <input type="checkbox" class="product-cat-checkbox" value="${cat.id}">
+                                ${cat.name}
+                            </label>
+                        </li>
+                    `;
+                        });
+
+                        container.append(`
+                    <div class="category-group">
+                        <h4>${group.group}</h4>
+                        <ul class="category-list">
+                            ${catsHtml}
+                        </ul>
+                    </div>
+                `);
+                    });
+                });
             }
 
-            function buildDemoPayload() {
-                return {
-                    generatedAt: new Date().toISOString(),
-                    defaultRootId: 'general',
-                    roots: [
-                        { id: 'general', label: 'General Product', defaultSelected: true },
-                        { id: 'automotive', label: 'Automotive Product', defaultSelected: false }
-                    ],
-                    categoryColumnsByRoot: {
-                        general: [
-                            {
-                                id: 'emc',
-                                label: 'EMC Components',
-                                options: [
-                                    { id: 'ferrite_chip_bead', label: 'Ferrite Chip Bead' },
-                                    { id: 'chip_inductor', label: 'Chip Inductor' }
-                                ]
-                            },
-                            {
-                                id: 'planar_transformer',
-                                label: 'Planar Transformer',
-                                options: [
-                                    { id: 'planar_transformer', label: 'Planar Transformer' }
-                                ]
-                            }
-                        ],
-                        automotive: [
-                            {
-                                id: 'magnetic_components',
-                                label: 'Magnetic Components',
-                                options: [
-                                    { id: 'magnetic_core', label: 'Magnetic Core' }
-                                ]
-                            }
-                        ]
-                    },
-                    mechanicalFacets: [
-                        { id: 'series', label: 'Series', values: ['ZIK300-RC-10', 'ZIK500-RC-11', 'ATX100-QF-02', 'WPT450-MX-01'] },
-                        { id: 'acfField', label: 'acf.field', values: ['acf.impedance', 'acf.current', 'acf.temperature', 'acf.frequency'] },
-                        { id: 'packageSize', label: 'Package Size', metadataKey: 'package_size', values: ['0603', '0805', 'Custom', 'Module'] },
-                        { id: 'powerClass', label: 'Power Class', metadataKey: 'power_class', values: ['0.25W', '0.5W', '35W', '65W'] }
-                    ],
-                    results: [
-                        {
-                            id: 'zik300',
-                            rootId: 'general',
-                            series: 'ZIK300-RC-10',
-                            categoryIds: ['ferrite_chip_bead'],
-                            acfField: 'acf.impedance',
-                            metadataValues: { package_size: '0603', power_class: '0.25W' },
-                            facetValues: {
-                                series: 'ZIK300-RC-10',
-                                acfField: 'acf.impedance',
-                                packageSize: '0603',
-                                powerClass: '0.25W'
-                            }
-                        },
-                        {
-                            id: 'zik500',
-                            rootId: 'general',
-                            series: 'ZIK500-RC-11',
-                            categoryIds: ['chip_inductor'],
-                            acfField: 'acf.current',
-                            metadataValues: { package_size: '0805', power_class: '0.5W' },
-                            facetValues: {
-                                series: 'ZIK500-RC-11',
-                                acfField: 'acf.current',
-                                packageSize: '0805',
-                                powerClass: '0.5W'
-                            }
-                        },
-                        {
-                            id: 'atx100',
-                            rootId: 'automotive',
-                            series: 'ATX100-QF-02',
-                            categoryIds: ['magnetic_core'],
-                            acfField: 'acf.temperature',
-                            metadataValues: { package_size: 'Custom', power_class: '35W' },
-                            facetValues: {
-                                series: 'ATX100-QF-02',
-                                acfField: 'acf.temperature',
-                                packageSize: 'Custom',
-                                powerClass: '35W'
-                            }
-                        },
-                        {
-                            id: 'wpt450',
-                            rootId: 'general',
-                            series: 'WPT450-MX-01',
-                            categoryIds: ['planar_transformer'],
-                            acfField: 'acf.frequency',
-                            metadataValues: { package_size: 'Module', power_class: '65W' },
-                            facetValues: {
-                                series: 'WPT450-MX-01',
-                                acfField: 'acf.frequency',
-                                packageSize: 'Module',
-                                powerClass: '65W'
-                            }
+            // --- Event: Product Category Checkbox Changed ---
+            $(document).on('change', '.product-cat-checkbox', function () {
+                loadFacets();
+                loadProducts(); // Also reload products immediately? Or wait for facets? 
+                // Usually good to reload products based on category selection too.
+            });
+
+            // --- 3. Load Facets ---
+            function loadFacets() {
+                const rootId = $('input[name="root_category"]:checked').val();
+                const catIds = $('.product-cat-checkbox:checked').map(function () { return $(this).val(); }).get();
+
+                if (catIds.length === 0) {
+                    $('#facets-container').html('<p style="color: #888; padding: 10px;">Select product categories to see filters.</p>');
+                    return;
+                }
+
+                $.ajax({
+                    url: API_BASE + '/facets/index.php',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({ root_id: rootId, category_ids: catIds }),
+                    success: function (data) {
+                        if (data.error) {
+                            console.error("Facets API Error:", data.error);
+                            $('#facets-container').html('<span style="color:red;">' + data.error + '</span>');
+                            return;
                         }
-                    ]
-                };
+                        renderFacets(data);
+                    },
+                    error: function (jqXHR, textStatus, errorThrown) {
+                        console.error("Facets API Request Failed:", textStatus, errorThrown);
+                        console.log("Response Text:", jqXHR.responseText);
+                        $('#facets-container').html('<span style="color:red;">Error loading filters. See console for details.</span>');
+                    }
+                });
             }
-        }());
+
+            function renderFacets(facets) {
+                const container = $('#facets-container');
+                container.empty();
+
+                facets.forEach(facet => {
+                    let valuesHtml = '';
+                    facet.values.forEach(val => {
+                        valuesHtml += `
+                    <label class="facet-item">
+                        <input type="checkbox" class="facet-value-checkbox" data-facet-key="${facet.key}" value="${val}">
+                        ${val}
+                    </label>
+                `;
+                    });
+
+                    const panel = `
+                <div class="facet-panel">
+                    <div class="facet-header">${facet.label}</div>
+                    <div class="facet-search">
+                        <input type="text" placeholder="Search..." class="facet-filter-input">
+                    </div>
+                    <div class="facet-values">
+                        ${valuesHtml}
+                    </div>
+                </div>
+            `;
+                    container.append(panel);
+                });
+            }
+
+            // --- Client-side Facet Filter (Search within panel) ---
+            $(document).on('keyup', '.facet-filter-input', function () {
+                const term = $(this).val().toLowerCase();
+                const panel = $(this).closest('.facet-panel');
+                panel.find('.facet-item').each(function () {
+                    const text = $(this).text().toLowerCase();
+                    $(this).toggle(text.indexOf(term) > -1);
+                });
+            });
+
+            // --- Event: Facet Value Changed ---
+            $(document).on('change', '.facet-value-checkbox', function () {
+                loadProducts();
+            });
+
+            // --- 4. Load Products (DataTables) ---
+            function loadProducts() {
+                const rootId = $('input[name="root_category"]:checked').val();
+                const catIds = $('.product-cat-checkbox:checked').map(function () { return $(this).val(); }).get();
+
+                // Collect facet filters
+                const filters = {};
+                $('.facet-value-checkbox:checked').each(function () {
+                    const key = $(this).data('facet-key');
+                    const val = $(this).val();
+                    if (!filters[key]) filters[key] = [];
+                    filters[key].push(val);
+                });
+
+                // Prepare request body
+                const requestData = {
+                    root_id: rootId,
+                    category_ids: catIds,
+                    filters: filters
+                };
+
+                // If DataTables is already initialized, destroy it to re-init with potentially new columns
+                // OR just reload data if columns are static. 
+                // For this demo, let's assume dynamic columns might be needed, but for simplicity we'll stick to fixed columns + dynamic data first.
+                // If columns need to change based on category, we'd need to rebuild the table structure.
+                // Let's assume a standard set of columns for now or rebuild.
+
+                // Re-fetching data
+                $.ajax({
+                    url: API_BASE + '/products/index.php',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify(requestData),
+                    success: function (response) {
+                        initDataTable(response);
+                    }
+                });
+            }
+
+            function initDataTable(products) {
+                // Define columns dynamically based on the first product or a fixed schema
+                // For this demo, we'll try to be smart.
+
+                if (products.length === 0) {
+                    if (dataTable) {
+                        dataTable.clear().draw();
+                    }
+                    return;
+                }
+
+                // Extract all keys from first product to build headers
+                // In a real app, the API should probably return column definitions too.
+                const firstItem = products[0];
+                const columns = [];
+
+                // Always put Series and SKU first
+                if (firstItem.hasOwnProperty('series')) columns.push({ title: 'Series', data: 'series' });
+                if (firstItem.hasOwnProperty('sku')) columns.push({ title: 'SKU', data: 'sku' });
+
+                // Add other keys
+                Object.keys(firstItem).forEach(key => {
+                    if (key !== 'series' && key !== 'sku' && key !== 'id') {
+                        columns.push({ title: key.charAt(0).toUpperCase() + key.slice(1), data: key });
+                    }
+                });
+
+                // Add Action column
+                columns.push({
+                    title: 'Action',
+                    data: null,
+                    render: function (data, type, row) {
+                        return `<a href="catalog.php?sku=${row.sku}" class="btn-edit" target="_blank">Edit</a>`;
+                    }
+                });
+
+                // Destroy existing
+                if (dataTable) {
+                    dataTable.destroy();
+                    $('#results-table').empty(); // Clear headers
+                }
+
+                $('#results-table').DataTable({
+                    data: products,
+                    columns: columns,
+                    pageLength: 10,
+                    destroy: true // Allow re-init
+                });
+            }
+
+            // --- Init ---
+            loadRootCategories();
+
+        });
     </script>
+
 </body>
 
 </html>
-
-
-
-
-
-

@@ -571,70 +571,137 @@ Metadata field creation/updates use the same request with `fieldScope` fixed to 
     - Snapshot always reflects the latest database state at request time and does not support filtering.
     - Categories without series still appear with empty `children` arrays.
     - Product `customValues` dictionaries are keyed by field key; missing values are omitted.
-    - Spec Search now relies on the dedicated `v1.specSearchSnapshot` endpoint (see below); this snapshot remains available for other publishing scenarios but should no longer be transformed on the client for Spec Search.
+    - Spec Search now relies on dedicated `/api/spec-search/*` endpoints (documented below). Each response includes a `success` boolean plus `data`, and PHP stubs should clearly indicate where to plug in WooCommerce/ACF joins once available.
 
-### 20. Spec Search Snapshot
-- **Action**: `v1.specSearchSnapshot`
-- **Method**: `GET`
-- **Description**: Returns a UI-ready payload for `spec-search.html`, composed by `SpecSearchService` from the live hierarchy, series metadata, and product definitions.
-- **Query Parameters**:
-  - `rootId` *(optional, string)*: When supplied, the response scopes `categoryColumnsByRoot` and `results` to the requested root (while still returning the full `roots` array so the UI can keep rendering both radios). When omitted, the payload defaults to the server-selected root (currently General Product).
+### 20. Spec Search Root Categories
+- **Method/Path**: `GET /api/spec-search/root-categories`
+- **Description**: Lists mutually exclusive root categories for Section 1 (radio group). Exactly one entry includes `default = true`.
 - **Response**:
 ```json
 {
   "success": true,
-  "data": {
-    "generatedAt": "2025-11-24T09:12:44Z",
-    "defaultRootId": "general",
-    "roots": [
-      { "id": "general", "label": "General Product", "defaultSelected": true },
-      { "id": "automotive", "label": "Automotive Product", "defaultSelected": false }
-    ],
-    "categoryColumnsByRoot": {
-      "general": [
-        {
-          "id": "emc_components",
-          "label": "EMC Components",
-          "options": [
-            { "id": "ferrite_chip_bead", "label": "Ferrite Chip Bead" },
-            { "id": "chip_inductor", "label": "Chip Inductor" }
-          ]
-        }
-      ]
-    },
-    "mechanicalFacets": [
-      { "id": "series", "label": "Series", "values": ["ZIK300-RC-10", "WPT450-MX-01"] },
-      { "id": "acfField", "label": "acf.field", "values": ["acf.impedance", "acf.frequency"] },
-      { "id": "packageSize", "label": "Package Size", "metadataKey": "package_size", "values": ["0603", "Module"] },
-      { "id": "powerClass", "label": "Power Class", "metadataKey": "power_class", "values": ["0.25W", "65W"] }
-    ],
-    "results": [
-      {
-        "id": "zik300",
-        "rootId": "general",
-        "series": "ZIK300-RC-10",
-        "categoryIds": ["ferrite_chip_bead"],
-        "acfField": "acf.impedance",
-        "facetValues": {
-          "series": "ZIK300-RC-10",
-          "acfField": "acf.impedance",
-          "packageSize": "0603",
-          "powerClass": "0.25W"
-        },
-        "metadataValues": {
-          "package_size": "0603",
-          "power_class": "0.25W"
-        }
-      }
-    ]
-  }
+  "data": [
+    { "id": "general", "name": "General Product", "default": true },
+    { "id": "automotive", "name": "Automotive Product", "default": false }
+  ]
 }
 ```
 - **Notes**:
-    - This endpoint is tailored for the read-only Spec Search UI; it is not a replacement for `v1.publicCatalogSnapshot`.
-    - `mechanicalFacets[].values` are pre-sorted unique strings derived from series metadata and product definitions.
-    - `results[].categoryIds` contains every ancestor category ID under the selected root (excluding the root itself) so checkbox filters can match nested structures.
-    - The frontend may still opt into a demo payload by adding `data-demo="true"` to `<main>`, but production loads must always call the API.
+    - Initial implementation can read from configuration or deterministic arrays; when WooCommerce integration lands, this endpoint should query the correct taxonomy and flag whichever entry stakeholders want preselected.
+
+### 21. Spec Search Product Categories
+- **Method/Path**: `GET /api/spec-search/product-categories?root_id=<id>`
+- **Description**: Returns grouped checkbox headings for the selected root.
+- **Query Parameters**:
+  - `root_id` *(required)*: String identifier from the radio group.
+- **Response**:
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "group": "EMC Components",
+      "categories": [
+        { "id": 101, "name": "Ferrite Chip Bead" },
+        { "id": 102, "name": "Ferrite Chip Bead (Large Current)" }
+      ]
+    },
+    {
+      "group": "Magnetic Components",
+      "categories": [
+        { "id": 201, "name": "Chip Inductor" }
+      ]
+    }
+  ]
+}
+```
+- **Notes**:
+    - Respond with `400`/`VALIDATION_ERROR` if `root_id` is missing or unsupported.
+    - Backend docs must explain where to plug in the actual WooCommerce category query and how to map IDs to their labels.
+
+### 22. Spec Search Facets
+- **Method/Path**: `POST /api/spec-search/facets`
+- **Description**: Given the active root and product categories, returns the Mechanical Parameter cards (Series card + arbitrary ACF attributes) that should render in Section 2.
+- **Request Body**:
+```json
+{
+  "root_id": "general",
+  "category_ids": [101, 102]
+}
+```
+- **Response**:
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "key": "series",
+      "label": "Series",
+      "values": ["ZIK300-RC-10", "ZIK200-LC-01"]
+    },
+    {
+      "key": "inductance",
+      "label": "Inductance",
+      "values": ["1µH", "2.2µH", "10µH"]
+    },
+    {
+      "key": "current_rating",
+      "label": "Current Rating",
+      "values": ["4A", "10A"]
+    }
+  ]
+}
+```
+- **Notes**:
+    - `category_ids` must contain at least one entry; otherwise respond with `400`/`VALIDATION_ERROR`.
+    - Values should be unique and sorted, but the frontend still performs local filtering via the in-card search box so no extra API call is required when a user types.
+
+### 23. Spec Search Products
+- **Method/Path**: `POST /api/spec-search/products`
+- **Description**: Returns the result rows (Series, SKU, required ACF attributes, edit URL) for the given filter envelope. Used to hydrate the DataTables grid.
+- **Request Body**:
+```json
+{
+  "root_id": "general",
+  "category_ids": [101],
+  "filters": {
+    "series": ["ZIK300-RC-10"],
+    "inductance": ["2.2µH"],
+    "current_rating": []
+  }
+}
+```
+- **Response**:
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "sku": "ZIK300-RC-10",
+      "series": "ZIK300-RC-10",
+      "attributes": {
+        "inductance": "2.2µH",
+        "current_rating": "10A",
+        "core_size": "8.0 x 5.0 x 4.0 mm"
+      },
+      "editUrl": "catalog.php?sku=ZIK300-RC-10"
+    },
+    {
+      "sku": "ZIK200-LC-01",
+      "series": "ZIK200-LC-01",
+      "attributes": {
+        "inductance": "1µH",
+        "current_rating": "4A",
+        "core_size": "4.0 x 4.0 x 2.0 mm"
+      },
+      "editUrl": "catalog.php?sku=ZIK200-LC-01"
+    }
+  ]
+}
+```
+- **Notes**:
+    - `filters` keys must directly match the facet keys returned by `/api/spec-search/facets`. Empty arrays simply remove that facet from the filter.
+    - Implementations should sanitize inputs rigorously and document where WooCommerce/ACF queries will run once connected; current mocks live entirely in PHP arrays so contributors know where to extend them later.
 
 ## Status Codes
 
@@ -657,12 +724,134 @@ Metadata field creation/updates use the same request with `fieldScope` fixed to 
 | FIELD_SCOPE_INVALID | Field scope must be series/product    |
 | FIELD_IN_USE        | Field has values; confirm before delete |
 | PRODUCT_NOT_FOUND   | Product missing                       |
+| LATEX_TEMPLATE_NOT_FOUND | Template id missing/invalid     |
+| LATEX_VALIDATION_ERROR   | Validation errors on template data |
+| LATEX_BUILD_ERROR        | MiKTeX compilation failed        |
+| LATEX_TOOL_MISSING       | `pdflatex` binary unavailable    |
 | DB_ERROR            | Generic database failure              |
 | ACTION_NOT_FOUND    | Unsupported action parameter          |
 | METHOD_NOT_ALLOWED  | Incorrect HTTP method                 |
 | INVALID_JSON        | Request body could not be parsed      |
 | SERVER_ERROR        | Unexpected server failure             |
 | ENCODING_ERROR      | Response payload encoding failed      |
+
+## LaTeX Template API
+
+### Overview
+- **Resource Path**: `/latex-templates` (implemented through `catalog.php` by passing `action=v1.*` query values).
+- **Actions & Methods**:
+
+| REST Path & Verb | `action` value | Description |
+| --- | --- | --- |
+| `GET /latex-templates` | `v1.listLatexTemplates` | Paginated list for DataTables (server returns array; client applies paging). |
+| `GET /latex-templates/{id}` | `v1.getLatexTemplate` | Fetch single template for editing. |
+| `POST /latex-templates` | `v1.createLatexTemplate` | Create new template. |
+| `PUT /latex-templates/{id}` | `v1.updateLatexTemplate` | Update template metadata/source. |
+| `DELETE /latex-templates/{id}` | `v1.deleteLatexTemplate` | Delete template and associated PDFs. |
+| `POST /latex-templates/{id}/build` | `v1.buildLatexTemplate` | Persist latest source, compile via MiKTeX, store PDF. |
+
+- **Envelope**: Every response follows the standard `{ success: bool, data?: any, errorCode?, message?, details? }`.
+- **Date serialization**: `createdAt`/`updatedAt` returned as ISO8601 strings for UI display.
+
+### GET /latex-templates
+- **Purpose**: Feed the Bootstrap DataTable.
+- **Example**:
+```http
+GET /catalog.php?action=v1.listLatexTemplates
+```
+- **Response**:
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 1,
+      "title": "Invoice Layout",
+      "description": "Corporate invoice boilerplate...",
+      "latex": "\\documentclass{article}",
+      "pdfPath": "storage/latex-pdfs/1-20231118-101500.pdf",
+      "createdAt": "2025-11-28T10:15:00Z",
+      "updatedAt": "2025-11-28T10:20:32Z"
+    }
+  ]
+}
+```
+
+### GET /latex-templates/{id}
+- **Example**:
+```http
+GET /catalog.php?action=v1.getLatexTemplate&id=3
+```
+- **Responses**:
+  - `200` with `data` containing the template record.
+  - `404` + `errorCode="LATEX_TEMPLATE_NOT_FOUND"` when missing.
+
+### POST /latex-templates
+- **Payload**:
+```json
+{
+  "title": "Quote Template",
+  "description": "Short description",
+  "latex": "\\documentclass{article}\\begin{document}Hello\\end{document}"
+}
+```
+- **Validation**:
+  - `title` (1-255 chars) required.
+  - `latex` required; trimmed but otherwise stored raw.
+- **Response**: Saved record with assigned `id`.
+- **Errors**: `LATEX_VALIDATION_ERROR` with `details` map.
+
+### PUT /latex-templates/{id}
+- **Payload**: Same schema as POST.
+- **Example**:
+```http
+PUT /catalog.php?action=v1.updateLatexTemplate&id=5
+Body: { "title": "Spec Sheet", "description": "Updated", "latex": "..." }
+```
+- **Response**: Updated record; `updatedAt` refreshed.
+- **Errors**: `LATEX_TEMPLATE_NOT_FOUND`, `LATEX_VALIDATION_ERROR`.
+
+### DELETE /latex-templates/{id}
+- **Example**:
+```http
+DELETE /catalog.php?action=v1.deleteLatexTemplate&id=5
+```
+- **Behavior**: Deletes DB row and removes PDFs recorded in `pdfPath`. Returns `{ success: true }` even if the PDF is missing (warning logged server-side).
+
+### POST /latex-templates/{id}/build
+- **Purpose**: Run MiKTeX `pdflatex` and persist resulting PDF.
+- **Example**:
+```http
+POST /catalog.php?action=v1.buildLatexTemplate&id=5
+```
+- **Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "pdfPath": "storage/latex-pdfs/5-20251129-083000.pdf",
+    "downloadUrl": "/storage/latex-pdfs/5-20251129-083000.pdf",
+    "updatedAt": "2025-11-29T08:30:05Z",
+    "log": "MiKTeX 4.0 - no errors"
+  }
+}
+```
+- **Errors**:
+  - `LATEX_TEMPLATE_NOT_FOUND` if no record.
+  - `LATEX_BUILD_ERROR` with `details.stderr` listing pdflatex output.
+  - `LATEX_TOOL_MISSING` when pdflatex path invalid/unreadable.
+
+### PowerShell Samples
+```powershell
+$body = @{
+    title = "Quick Hello"
+    description = "Minimal article"
+    latex = '\documentclass{article}\begin{document}Hello LaTeX!\end{document}'
+} | ConvertTo-Json
+Invoke-RestMethod -Uri "http://localhost/catalog.php?action=v1.createLatexTemplate" -Method Post -Body $body -ContentType 'application/json'
+
+Invoke-RestMethod -Uri "http://localhost/catalog.php?action=v1.buildLatexTemplate&id=1" -Method Post
+```
 
 ## Testing Guidance
 

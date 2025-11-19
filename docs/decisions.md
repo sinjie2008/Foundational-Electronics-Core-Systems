@@ -50,6 +50,12 @@
 - Stakeholder escalated that merely re-rendering cached category decks still showed General Product families even after selecting Automotive Product; they require each root selection to hydrate its own payload straight from the backend to prevent stale checkbox sets.
 - Decision: extend `v1.specSearchSnapshot` with an optional `rootId` query parameter and update `spec-search.html` to issue AJAX calls per root (with in-browser caching for subsequent toggles). Spec/api/todolist updated before implementation; demo mode remains static.
 
+## 2025-11-28
+- Stakeholder replaced the single `v1.specSearchSnapshot` call with a phased set of APIs: Section 1 now powers root category radios + grouped product category checkboxes, Section 2 renders Mechanical Parameter facets (Series + arbitrary ACF fields) with horizontal scroll, and Section 3 draws a paginated DataTable. Any change higher in the funnel must clear downstream selections/results before rehydrating with fresh data.
+- Decision: add `GET /api/spec-search/root-categories`, `GET /api/spec-search/product-categories?root_id=...`, `POST /api/spec-search/facets`, and `POST /api/spec-search/products` so each concern has a focused response. These PHP endpoints will initially return deterministic mock structures but are documented with clear placeholders for WooCommerce + ACF queries; responses include IDs/names ready for jQuery rendering.
+- Clarified that Edit buttons inside the results list must link to `catalog.php?sku=<sku>` so admins can land on the existing catalog UI with the SKU pre-populated. Navigation target should stay configurable for future CMS deep links.
+- No open questions remain; developer confirmed filters should be composed as `{ rootId, categoryIds, facets: { series: [], acf.<field>: [] } }` and that facet labels mirror the human-friendly ACF names surfaced by the backend.
+
 ## 2025-11-14
 - Stakeholder requested removal of the catalog-wide search experience (UI filters, backend `SearchService`, and `v1.searchCatalog`) to simplify scope around hierarchy/product management and CSV tooling.
 - Decision: delete the search panel from `catalog_ui.html`, remove `SearchService` plus the `v1.searchCatalog` endpoint, and update docs/tests so the platform focuses solely on hierarchy, metadata, products, CSV workflows, truncate, and the public snapshot.
@@ -92,4 +98,13 @@
 ## 2025-11-25
 - Q: Stakeholders still need to demo the layout offline (file://) but want to avoid silently showing stale data when a backend is available. How should fallback work? A: Automatic fallback is removed; QA must opt into the demo dataset via `data-demo="true"`.
 - Decision: When the live API call fails, the UI logs the error and surfaces a Bootstrap warning that no data is available. Only QA builds that set `data-demo="true"` hydrate from the embedded sample payload; production loads must refresh after the backend is restored.
+
+## 2025-11-29
+- Stakeholder request: add a dedicated LaTeX templating workspace that lets content editors manage reusable snippets, preview them live, and export PDFs compiled with MiKTeX. UX must mirror existing Bootstrap styling and rely on DataTables for the list.
+- Decisions:
+  - Build a standalone page (`latex-templating.html`) that talks to new backend actions exposed through `catalog.php`. CRUD runs entirely via JSON; the HTML page handles layout, DataTables setup, and MathJax-based live preview.
+  - Persist templates in MySQL using a new `latex_template` table with timestamps and optional `pdf_path`. PDF output lives under `storage/latex-pdfs` so Apache can serve completed files directly.
+  - Introduce `LatexTemplateService` + `LatexBuildService` within `CatalogApplication`, exposing actions `v1.listLatexTemplates`, `v1.getLatexTemplate`, `v1.createLatexTemplate`, `v1.updateLatexTemplate`, `v1.deleteLatexTemplate`, and `v1.buildLatexTemplate`.
+  - Compile via MiKTeX (`pdflatex`) invoked from PHP; capture stdout/stderr, delete aux/log files, and store friendly error messages when compilation fails.
+  - UI Requirements: two-column layout (form/editor vs preview/PDF), DataTables list with Title/Description/Created/Updated/Actions, Bootstrap alerts for status, buttons for New/Save/Build/Delete, and PDF download/iframe embed once builds succeed.
 

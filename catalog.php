@@ -20,6 +20,11 @@ const CATALOG_TRUNCATE_LOCK_KEY = 'catalog_truncate_lock';
 const CATALOG_TRUNCATE_REASON_MAX = 256;
 const SERIES_FIELD_SCOPE_SERIES = 'series_metadata';
 const SERIES_FIELD_SCOPE_PRODUCT = 'product_attribute';
+const LATEX_PDF_STORAGE = __DIR__ . '/storage/latex-pdfs';
+const LATEX_BUILD_WORKDIR = __DIR__ . '/storage/latex-build';
+const LATEX_PDF_URL_PREFIX = '/storage/latex-pdfs';
+const LATEX_PDFLATEX_ENV = 'CATALOG_PDFLATEX_BIN';
+const LATEX_DEFAULT_PDFLATEX = 'pdflatex';
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
@@ -332,7 +337,7 @@ final class Seeder
                 UNIQUE KEY idx_product_field_unique (product_id, series_custom_field_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             SQL,
-                        <<<SQL
+            <<<SQL
             CREATE TABLE IF NOT EXISTS series_custom_field_value (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 series_id INT NOT NULL,
@@ -343,6 +348,17 @@ final class Seeder
                 CONSTRAINT fk_series_value_series FOREIGN KEY (series_id) REFERENCES category(id) ON DELETE CASCADE,
                 CONSTRAINT fk_series_value_field FOREIGN KEY (series_custom_field_id) REFERENCES series_custom_field(id) ON DELETE CASCADE,
                 UNIQUE KEY idx_series_value_unique (series_id, series_custom_field_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            SQL,
+                        <<<SQL
+            CREATE TABLE IF NOT EXISTS latex_template (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                title VARCHAR(255) NOT NULL,
+                description TEXT NULL,
+                latex_source LONGTEXT NOT NULL,
+                pdf_path VARCHAR(512) NULL,
+                created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             SQL,
                         <<<SQL
@@ -2248,294 +2264,820 @@ final class PublicCatalogService
 final class SpecSearchService
 {
     /**
-     * @var array<int, array<string, string>>
+     * @var array<int, array<string, mixed>>
      */
-    private const FACETS = [
-        ['id' => 'series', 'label' => 'Series'],
-        ['id' => 'acfField', 'label' => 'acf.field'],
-        ['id' => 'packageSize', 'label' => 'Package Size', 'metadataKey' => 'package_size'],
-        ['id' => 'powerClass', 'label' => 'Power Class', 'metadataKey' => 'power_class'],
+    private const ROOTS = [
+        ['id' => 'general', 'name' => 'General Product', 'default' => true],
+        ['id' => 'automotive', 'name' => 'Automotive Product', 'default' => false],
     ];
 
-    public function __construct(private PublicCatalogService $publicCatalogService)
-    {
-    }
-
     /**
-     * @return array<string, mixed>
+     * @var array<string, array<int, array<string, mixed>>>
      */
-    public function buildSnapshot(): array
+    private const CATEGORY_GROUPS = [
+        'general' => [
+            [
+                'group' => 'EMC Components',
+                'categories' => [
+                    ['id' => 'ferrite_chip_bead', 'name' => 'Ferrite Chip Bead'],
+                    ['id' => 'ferrite_chip_bead_large', 'name' => 'Ferrite Chip Bead (Large Current)'],
+                    ['id' => 'chip_inductor', 'name' => 'Chip Inductor'],
+                ],
+            ],
+            [
+                'group' => 'Transformer',
+                'categories' => [
+                    ['id' => 'planar_transformer', 'name' => 'Planar Transformer'],
+                ],
+            ],
+        ],
+        'automotive' => [
+            [
+                'group' => 'Magnetic Components',
+                'categories' => [
+                    ['id' => 'magnetic_core', 'name' => 'Magnetic Core'],
+                ],
+            ],
+            [
+                'group' => 'Wireless Power Transfer',
+                'categories' => [
+                    ['id' => 'wireless_power_transfer', 'name' => 'Wireless Power Transfer'],
+                ],
+            ],
+        ],
+    ];
+
+    /**
+     * @var array<string, string>
+     */
+    private const FACET_LABELS = [
+        'series' => 'Series',
+        'inductance' => 'Inductance',
+        'current_rating' => 'Current Rating',
+        'core_size' => 'Core Size',
+    ];
+
+    /**
+     * @var array<int, array<string, mixed>>
+     */
+    private const PRODUCTS = [
+        [
+            'root_id' => 'general',
+            'category_ids' => ['ferrite_chip_bead'],
+            'sku' => 'ZIK300-RC-10',
+            'series' => 'ZIK300-RC-10',
+            'attributes' => [
+                'inductance' => '2.2uH',
+                'current_rating' => '10A',
+                'core_size' => '8.0 x 5.0 x 4.0 mm',
+            ],
+        ],
+        [
+            'root_id' => 'general',
+            'category_ids' => ['chip_inductor'],
+            'sku' => 'ZIK200-LC-01',
+            'series' => 'ZIK200-LC-01',
+            'attributes' => [
+                'inductance' => '1.0uH',
+                'current_rating' => '4A',
+                'core_size' => '4.0 x 4.0 x 2.0 mm',
+            ],
+        ],
+        [
+            'root_id' => 'general',
+            'category_ids' => ['planar_transformer'],
+            'sku' => 'TRF-PT-500',
+            'series' => 'TRF-PT-500',
+            'attributes' => [
+                'inductance' => '10uH',
+                'current_rating' => '25A',
+                'core_size' => '12.0 x 12.0 x 6.0 mm',
+            ],
+        ],
+        [
+            'root_id' => 'automotive',
+            'category_ids' => ['magnetic_core'],
+            'sku' => 'AUTO-MAG-25',
+            'series' => 'AUTO-MAG-25',
+            'attributes' => [
+                'inductance' => '4.7uH',
+                'current_rating' => '15A',
+                'core_size' => '10.0 x 8.0 x 5.0 mm',
+            ],
+        ],
+        [
+            'root_id' => 'automotive',
+            'category_ids' => ['wireless_power_transfer'],
+            'sku' => 'WPT-450-MX-01',
+            'series' => 'WPT-450-MX-01',
+            'attributes' => [
+                'inductance' => '3.3uH',
+                'current_rating' => '20A',
+                'core_size' => '15.0 x 15.0 x 4.5 mm',
+            ],
+        ],
+    ];
+
+    public function __construct(private mysqli $connection)
     {
-        $baseSnapshot = $this->publicCatalogService->buildSnapshot();
-        $hierarchy = $baseSnapshot['hierarchy'] ?? [];
-
-        $roots = [];
-        $columnsByRoot = [];
-        $results = [];
-        $facetValues = [];
-        foreach (self::FACETS as $facet) {
-            $facetValues[$facet['id']] = [];
-        }
-
-        foreach ($hierarchy as $node) {
-            if (($node['type'] ?? '') !== 'category') {
-                continue;
-            }
-            if (isset($node['parentId']) && $node['parentId'] !== null) {
-                continue;
-            }
-            $rootId = $this->normalizeId($node['id'] ?? null);
-            $roots[] = [
-                'id' => $rootId,
-                'label' => (string) ($node['name'] ?? ('Category ' . $rootId)),
-            ];
-            $columnsByRoot[$rootId] = $this->buildCategoryColumns($node);
-            $this->walkNode($node, $rootId, [], $results, $facetValues);
-        }
-
-        $defaultRootId = $this->determineDefaultRootId($roots);
-        $rootsPayload = array_map(
-            static function (array $root) use ($defaultRootId): array {
-                $root['defaultSelected'] = isset($defaultRootId) && $root['id'] === $defaultRootId;
-                return $root;
-            },
-            $roots
-        );
-
-        $mechanicalFacets = array_map(
-            function (array $facet) use ($facetValues): array {
-                $values = array_keys($facetValues[$facet['id']] ?? []);
-                sort($values, SORT_NATURAL | SORT_FLAG_CASE);
-
-                return [
-                    'id' => $facet['id'],
-                    'label' => $facet['label'],
-                    'metadataKey' => $facet['metadataKey'] ?? null,
-                    'values' => $values,
-                ];
-            },
-            self::FACETS
-        );
-
-        return [
-            'generatedAt' => $baseSnapshot['generatedAt'] ?? gmdate('c'),
-            'defaultRootId' => $defaultRootId,
-            'roots' => $rootsPayload,
-            'categoryColumnsByRoot' => $columnsByRoot,
-            'mechanicalFacets' => $mechanicalFacets,
-            'results' => $results,
-        ];
-    }
-
-    private function normalizeId(mixed $value): string
-    {
-        if (is_string($value) || is_int($value) || is_float($value)) {
-            return (string) $value;
-        }
-
-        return uniqid('id_', true);
     }
 
     /**
-     * @param array<string, mixed> $rootNode
+     * Returns the available root categories (radio group).
      *
      * @return array<int, array<string, mixed>>
      */
-    private function buildCategoryColumns(array $rootNode): array
+    public function listRootCategories(): array
     {
-        $columns = [];
-        foreach ($rootNode['children'] ?? [] as $child) {
-            if (($child['type'] ?? '') !== 'category') {
-                continue;
-            }
-            $columns[] = [
-                'id' => $this->normalizeId($child['id'] ?? null),
-                'label' => (string) ($child['name'] ?? 'Category'),
-                'options' => $this->collectLeafCategories($child),
-            ];
-        }
-
-        return $columns;
+        return self::ROOTS;
     }
 
     /**
-     * @param array<string, mixed> $node
+     * Returns grouped category checkboxes for the given root.
      *
-     * @return array<int, array<string, string>>
+     * @return array<int, array<string, mixed>>
      */
-    private function collectLeafCategories(array $node): array
+    public function listProductCategoryGroups(string $rootId): array
     {
-        $options = [];
-        $seen = [];
-        $stack = [$node];
+        $this->assertValidRoot($rootId);
 
-        while ($stack !== []) {
-            $current = array_pop($stack);
-            if (($current['type'] ?? '') !== 'category') {
-                continue;
-            }
-
-            $children = is_array($current['children'] ?? null) ? $current['children'] : [];
-            $hasCategoryChild = false;
-            foreach ($children as $child) {
-                if (($child['type'] ?? '') === 'category') {
-                    $stack[] = $child;
-                    $hasCategoryChild = true;
-                }
-            }
-
-            if (!$hasCategoryChild) {
-                $id = $this->normalizeId($current['id'] ?? null);
-                if (!isset($seen[$id])) {
-                    $seen[$id] = true;
-                    $options[] = [
-                        'id' => $id,
-                        'label' => (string) ($current['name'] ?? ('Category ' . $id)),
-                    ];
-                }
-            }
-        }
-
-        if ($options === []) {
-            $id = $this->normalizeId($node['id'] ?? null);
-            $options[] = [
-                'id' => $id,
-                'label' => (string) ($node['name'] ?? ('Category ' . $id)),
-            ];
-        }
-
-        return $options;
+        return self::CATEGORY_GROUPS[$rootId] ?? [];
     }
 
     /**
-     * @param array<string, mixed> $node
-     * @param string $rootId
-     * @param array<int, string> $ancestorIds
-     * @param array<int, array<string, mixed>> $results
-     * @param array<string, array<string, true>> $facetValues
-     */
-    private function walkNode(array $node, string $rootId, array $ancestorIds, array &$results, array &$facetValues): void
-    {
-        $type = (string) ($node['type'] ?? '');
-        if ($type === 'category') {
-            $nextAncestors = $ancestorIds;
-            if (isset($node['parentId']) && $node['parentId'] !== null) {
-                $nextAncestors[] = $this->normalizeId($node['id'] ?? null);
-            }
-            foreach ($node['children'] ?? [] as $child) {
-                if (is_array($child)) {
-                    $this->walkNode($child, $rootId, $nextAncestors, $results, $facetValues);
-                }
-            }
-            return;
-        }
-
-        if ($type !== 'series') {
-            return;
-        }
-
-        $row = $this->buildSeriesRow($node, $rootId, $ancestorIds);
-        $results[] = $row;
-
-        foreach ($row['facetValues'] as $facetId => $value) {
-            $valueString = trim((string) $value);
-            if ($valueString === '') {
-                continue;
-            }
-            $facetValues[$facetId][$valueString] = true;
-        }
-    }
-
-    /**
-     * @param array<string, mixed> $seriesNode
-     * @param array<int, string> $ancestorIds
-     */
-    private function buildSeriesRow(array $seriesNode, string $rootId, array $ancestorIds): array
-    {
-        $seriesId = $this->normalizeId($seriesNode['id'] ?? null);
-        $seriesName = (string) ($seriesNode['name'] ?? ('Series ' . $seriesId));
-        $metadataValues = $this->normalizeMetadataValues($seriesNode['metadata']['values'] ?? []);
-        $primaryField = $this->derivePrimaryFieldLabel($seriesNode['productFields'] ?? []);
-
-        $facetValues = [
-            'series' => $seriesName,
-            'acfField' => $primaryField,
-            'packageSize' => (string) ($metadataValues['package_size'] ?? ''),
-            'powerClass' => (string) ($metadataValues['power_class'] ?? ''),
-        ];
-
-        return [
-            'id' => $seriesId,
-            'rootId' => $rootId,
-            'series' => $seriesName,
-            'categoryIds' => array_values(array_unique(array_map('strval', $ancestorIds))),
-            'acfField' => $primaryField,
-            'metadataValues' => $metadataValues,
-            'facetValues' => $facetValues,
-        ];
-    }
-
-    /**
-     * @param mixed $values
+     * Returns facet cards (Series + ACF attributes) for the selected categories.
      *
-     * @return array<string, string>
+     * @param array<int, string> $categoryIds
+     *
+     * @return array<int, array<string, mixed>>
      */
-    private function normalizeMetadataValues($values): array
+    public function listFacets(string $rootId, array $categoryIds): array
     {
-        if (!is_array($values)) {
-            return [];
+        $this->assertValidRoot($rootId);
+        if ($categoryIds === []) {
+            throw new CatalogApiException(
+                'VALIDATION_ERROR',
+                'At least one product category must be selected to load Mechanical Parameters.',
+                400,
+                ['category_ids' => 'Select at least one product category.']
+            );
         }
+
+        $products = $this->filterProductsByEnvelope($rootId, $categoryIds, []);
+
+        return $this->buildFacetDefinitions($products);
+    }
+
+    /**
+     * Returns product rows for the full filter envelope.
+     *
+     * @param array<int, string> $categoryIds
+     * @param array<string, array<int, string>> $filters
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function searchProducts(string $rootId, array $categoryIds, array $filters): array
+    {
+        $this->assertValidRoot($rootId);
+        if ($categoryIds === []) {
+            throw new CatalogApiException(
+                'VALIDATION_ERROR',
+                'At least one product category must be selected before searching products.',
+                400,
+                ['category_ids' => 'Select at least one product category.']
+            );
+        }
+
+        $normalizedFilters = $this->normalizeFilters($filters);
+        $products = $this->filterProductsByEnvelope($rootId, $categoryIds, $normalizedFilters);
+
+        return array_map(
+            static function (array $product): array {
+                $sku = (string) $product['sku'];
+
+                return [
+                    'sku' => $sku,
+                    'series' => (string) $product['series'],
+                    'attributes' => $product['attributes'],
+                    'editUrl' => 'catalog.php?sku=' . rawurlencode($sku),
+                ];
+            },
+            $products
+        );
+    }
+
+    /**
+     * Ensures a valid root identifier was supplied.
+     */
+    private function assertValidRoot(string $rootId): void
+    {
+        foreach (self::ROOTS as $root) {
+            if ((string) $root['id'] === $rootId) {
+                return;
+            }
+        }
+
+        throw new CatalogApiException(
+            'VALIDATION_ERROR',
+            'Unknown root category supplied.',
+            400,
+            ['root_id' => 'Unknown root category.']
+        );
+    }
+
+    /**
+     * Normalizes category identifiers to trimmed unique strings.
+     *
+     * @param array<int, string> $categoryIds
+     *
+     * @return array<int, string>
+     */
+    private function normalizeCategoryIds(array $categoryIds): array
+    {
         $normalized = [];
-        foreach ($values as $key => $value) {
-            if (!is_string($key)) {
+        foreach ($categoryIds as $id) {
+            $string = trim((string) $id);
+            if ($string === '') {
                 continue;
             }
-            $normalized[$key] = (string) $value;
+            $normalized[$string] = true;
+        }
+
+        return array_keys($normalized);
+    }
+
+    /**
+     * Normalizes the facet filters to arrays of strings.
+     *
+     * @param array<string, mixed> $filters
+     *
+     * @return array<string, array<int, string>>
+     */
+    private function normalizeFilters(array $filters): array
+    {
+        $normalized = [];
+        foreach ($filters as $key => $values) {
+            if (!is_string($key) || !array_key_exists($key, self::FACET_LABELS)) {
+                continue;
+            }
+            if (!is_array($values)) {
+                continue;
+            }
+            $set = [];
+            foreach ($values as $value) {
+                $string = trim((string) $value);
+                if ($string === '') {
+                    continue;
+                }
+                $set[$string] = true;
+            }
+            if ($set !== []) {
+                $normalized[$key] = array_keys($set);
+            }
         }
 
         return $normalized;
     }
 
     /**
-     * @param mixed $fields
+     * Filters the mock catalog by the root/category/facet selections.
+     *
+     * @param array<int, string> $categoryIds
+     * @param array<string, array<int, string>> $filters
+     *
+     * @return array<int, array<string, mixed>>
      */
-    private function derivePrimaryFieldLabel($fields): string
+    private function filterProductsByEnvelope(string $rootId, array $categoryIds, array $filters): array
     {
-        if (!is_array($fields) || $fields === []) {
-            return 'acf.field';
-        }
-        $field = $fields[0];
-        if (!is_array($field)) {
-            return 'acf.field';
-        }
+        $selectedCategories = $this->normalizeCategoryIds($categoryIds);
 
-        $candidates = [
-            $field['label'] ?? null,
-            $field['name'] ?? null,
-            $field['fieldKey'] ?? null,
-        ];
-        foreach ($candidates as $candidate) {
-            if ($candidate !== null && (string) $candidate !== '') {
-                return (string) $candidate;
+        return array_values(array_filter(
+            self::PRODUCTS,
+            function (array $product) use ($rootId, $selectedCategories, $filters): bool {
+                if (($product['root_id'] ?? null) !== $rootId) {
+                    return false;
+                }
+
+                if ($selectedCategories !== []) {
+                    $productCategories = array_map('strval', $product['category_ids'] ?? []);
+                    $overlap = array_intersect($productCategories, $selectedCategories);
+                    if ($overlap === []) {
+                        return false;
+                    }
+                }
+
+                foreach ($filters as $key => $values) {
+                    if ($values === []) {
+                        continue;
+                    }
+                    if ($key === 'series') {
+                        $candidate = (string) ($product['series'] ?? '');
+                    } else {
+                        $candidate = (string) ($product['attributes'][$key] ?? '');
+                    }
+                    if ($candidate === '' || !in_array($candidate, $values, true)) {
+                        return false;
+                    }
+                }
+
+                return true;
             }
-        }
-
-        return 'acf.field';
+        ));
     }
 
     /**
-     * @param array<int, array<string, mixed>> $roots
+     * Builds facet definitions (Series + custom attributes) from filtered rows.
+     *
+     * @param array<int, array<string, mixed>> $products
+     *
+     * @return array<int, array<string, mixed>>
      */
-    private function determineDefaultRootId(array $roots): ?string
+    private function buildFacetDefinitions(array $products): array
     {
-        foreach ($roots as $root) {
-            $label = strtolower((string) ($root['label'] ?? ''));
-            if (str_contains($label, 'general')) {
-                return $root['id'];
+        $definitions = [];
+
+        foreach (self::FACET_LABELS as $key => $label) {
+            $values = [];
+            foreach ($products as $product) {
+                if ($key === 'series') {
+                    $values[] = (string) ($product['series'] ?? '');
+                    continue;
+                }
+                $values[] = (string) ($product['attributes'][$key] ?? '');
             }
+            $filteredValues = array_values(array_filter($values, static fn ($value) => $value !== ''));
+            $unique = array_values(array_unique($filteredValues, SORT_STRING));
+            sort($unique, SORT_NATURAL | SORT_FLAG_CASE);
+
+            $definitions[] = [
+                'key' => $key,
+                'label' => $label,
+                'values' => $unique,
+            ];
         }
 
-        return isset($roots[0]['id']) ? $roots[0]['id'] : null;
+        return $definitions;
+    }
+}
+
+final class LatexTemplateService
+{
+    private string $projectRoot;
+
+    public function __construct(
+        private mysqli $connection,
+        private string $pdfStorageDir = LATEX_PDF_STORAGE
+    ) {
+        $this->projectRoot = rtrim(str_replace('\\', '/', __DIR__), '/');
+    }
+
+    /**
+     * Lists all LaTeX templates ordered by most recently updated.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function listTemplates(): array
+    {
+        $stmt = $this->connection->prepare(
+            'SELECT id, title, description, pdf_path, created_at, updated_at
+             FROM latex_template
+             ORDER BY updated_at DESC, id DESC'
+        );
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        $templates = [];
+        while ($row = $result->fetch_assoc()) {
+            $templates[] = $this->mapRow($row, false);
+        }
+        $stmt->close();
+
+        return $templates;
+    }
+
+    /**
+     * Fetches a single template.
+     *
+     * @return array<string, mixed>
+     */
+    public function getTemplate(int $templateId, bool $includeLatex = true): array
+    {
+        $row = $this->fetchRawTemplate($templateId);
+        if ($row === null) {
+            throw new CatalogApiException('LATEX_TEMPLATE_NOT_FOUND', 'Template not found.', 404);
+        }
+
+        return $this->mapRow($row, $includeLatex);
+    }
+
+    /**
+     * Creates a template.
+     *
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>
+     */
+    public function createTemplate(array $payload): array
+    {
+        [$title, $description, $latex] = $this->normalizePayload($payload);
+        $stmt = $this->connection->prepare(
+            'INSERT INTO latex_template (title, description, latex_source, created_at, updated_at)
+             VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)'
+        );
+        $stmt->bind_param('sss', $title, $description, $latex);
+        $stmt->execute();
+        $templateId = (int) $this->connection->insert_id;
+        $stmt->close();
+
+        $correlationId = $this->generateCorrelationId(); // Correlates mutation log entries.
+        $this->logOperation('create', $templateId, $correlationId);
+
+        return $this->getTemplate($templateId);
+    }
+
+    /**
+     * Updates a template.
+     *
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>
+     */
+    public function updateTemplate(int $templateId, array $payload): array
+    {
+        $this->requireTemplate($templateId);
+        [$title, $description, $latex] = $this->normalizePayload($payload);
+        $stmt = $this->connection->prepare(
+            'UPDATE latex_template
+             SET title = ?, description = ?, latex_source = ?, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ? LIMIT 1'
+        );
+        $stmt->bind_param('sssi', $title, $description, $latex, $templateId);
+        $stmt->execute();
+        $stmt->close();
+
+        $correlationId = $this->generateCorrelationId();
+        $this->logOperation('update', $templateId, $correlationId);
+
+        return $this->getTemplate($templateId);
+    }
+
+    /**
+     * Deletes a template and any cached PDF.
+     */
+    public function deleteTemplate(int $templateId): void
+    {
+        $row = $this->requireTemplate($templateId);
+        $pdfPath = isset($row['pdf_path']) ? (string) $row['pdf_path'] : null;
+        if ($pdfPath !== null) {
+            $this->deletePdfFile($pdfPath);
+        }
+
+        $stmt = $this->connection->prepare('DELETE FROM latex_template WHERE id = ? LIMIT 1');
+        $stmt->bind_param('i', $templateId);
+        $stmt->execute();
+        $stmt->close();
+
+        $correlationId = $this->generateCorrelationId();
+        $this->logOperation('delete', $templateId, $correlationId);
+    }
+
+    /**
+     * Persists the generated PDF path.
+     *
+     * @return array<string, mixed>
+     */
+    public function updatePdfPath(int $templateId, string $relativePath, ?string $previousPath = null): array
+    {
+        $this->requireTemplate($templateId);
+        if ($previousPath !== null && $previousPath !== $relativePath) {
+            $this->deletePdfFile($previousPath);
+        }
+
+        $stmt = $this->connection->prepare(
+            'UPDATE latex_template
+             SET pdf_path = ?, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ? LIMIT 1'
+        );
+        $stmt->bind_param('si', $relativePath, $templateId);
+        $stmt->execute();
+        $stmt->close();
+
+        $correlationId = $this->generateCorrelationId();
+        $this->logOperation('pdf_update', $templateId, $correlationId);
+
+        return $this->getTemplate($templateId, false);
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function fetchRawTemplate(int $templateId): ?array
+    {
+        $stmt = $this->connection->prepare(
+            'SELECT id, title, description, latex_source, pdf_path, created_at, updated_at
+             FROM latex_template
+             WHERE id = ? LIMIT 1'
+        );
+        $stmt->bind_param('i', $templateId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $row = $result->fetch_assoc() ?: null;
+        $stmt->close();
+
+        return $row;
+    }
+
+    /**
+     * Ensures a template exists.
+     *
+     * @return array<string, mixed>
+     */
+    private function requireTemplate(int $templateId): array
+    {
+        $row = $this->fetchRawTemplate($templateId);
+        if ($row === null) {
+            throw new CatalogApiException('LATEX_TEMPLATE_NOT_FOUND', 'Template not found.', 404);
+        }
+
+        return $row;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     *
+     * @return array{0:string,1:?string,2:string}
+     */
+    private function normalizePayload(array $payload): array
+    {
+        $title = isset($payload['title']) ? trim((string) $payload['title']) : '';
+        $descriptionRaw = array_key_exists('description', $payload) ? $payload['description'] : null;
+        $description = $descriptionRaw !== null ? trim((string) $descriptionRaw) : null;
+        $description = ($description !== null && $description !== '') ? $description : null;
+        $latex = isset($payload['latex']) ? (string) $payload['latex'] : '';
+
+        $errors = [];
+        if ($title === '') {
+            $errors['title'] = 'Title is required.';
+        }
+        if ($latex === '') {
+            $errors['latex'] = 'LaTeX source is required.';
+        }
+        if ($errors !== []) {
+            throw new CatalogApiException('LATEX_VALIDATION_ERROR', 'Template validation failed.', 400, $errors);
+        }
+
+        return [$title, $description, $latex];
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     *
+     * @return array<string, mixed>
+     */
+    private function mapRow(array $row, bool $includeLatex = true): array
+    {
+        $payload = [
+            'id' => (int) $row['id'],
+            'title' => (string) $row['title'],
+            'description' => isset($row['description']) ? ($row['description'] !== null ? (string) $row['description'] : null) : null,
+            'pdfPath' => isset($row['pdf_path']) ? ($row['pdf_path'] !== null ? (string) $row['pdf_path'] : null) : null,
+            'downloadUrl' => $this->buildDownloadUrl(isset($row['pdf_path']) ? $row['pdf_path'] : null),
+            'createdAt' => $this->formatTimestamp(isset($row['created_at']) ? $row['created_at'] : null),
+            'updatedAt' => $this->formatTimestamp(isset($row['updated_at']) ? $row['updated_at'] : null),
+        ];
+
+        if ($includeLatex && array_key_exists('latex_source', $row)) {
+            $payload['latex'] = (string) $row['latex_source'];
+        }
+
+        return $payload;
+    }
+
+    private function buildDownloadUrl(?string $relativePath): ?string
+    {
+        if ($relativePath === null || $relativePath === '') {
+            return null;
+        }
+
+        $normalized = '/' . ltrim(str_replace('\\', '/', $relativePath), '/');
+
+        return $normalized;
+    }
+
+    private function formatTimestamp(?string $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        try {
+            return (new \DateTimeImmutable($value))->format(\DateTimeInterface::ATOM);
+        } catch (Throwable) {
+            return $value;
+        }
+    }
+
+    private function deletePdfFile(?string $relativePath): void
+    {
+        if ($relativePath === null || $relativePath === '') {
+            return;
+        }
+        $normalizedRelative = ltrim(str_replace('\\', '/', $relativePath), '/');
+        $prefix = ltrim(LATEX_PDF_URL_PREFIX, '/');
+        if (!str_starts_with($normalizedRelative, $prefix)) {
+            return;
+        }
+
+        $absolute = $this->projectRoot . '/' . $normalizedRelative;
+        if (is_file($absolute)) {
+            @unlink($absolute);
+        }
+    }
+
+    private function generateCorrelationId(): string
+    {
+        return bin2hex(random_bytes(16));
+    }
+
+    private function logOperation(string $action, int $templateId, string $correlationId): void
+    {
+        error_log(
+            sprintf(
+                '[LatexTemplate] action=%s templateId=%d correlationId=%s',
+                $action,
+                $templateId,
+                $correlationId
+            )
+        );
+    }
+}
+
+final class LatexBuildService
+{
+    private string $pdflatexPath;
+
+    private string $storageDir;
+
+    private string $workingDir;
+
+    private string $relativePrefix;
+
+    public function __construct(
+        string $pdflatexPath,
+        string $storageDir = LATEX_PDF_STORAGE,
+        string $workingDir = LATEX_BUILD_WORKDIR
+    ) {
+        $this->pdflatexPath = $pdflatexPath !== '' ? $pdflatexPath : LATEX_DEFAULT_PDFLATEX;
+        $this->storageDir = rtrim($storageDir, DIRECTORY_SEPARATOR);
+        $this->workingDir = rtrim($workingDir, DIRECTORY_SEPARATOR);
+        $this->relativePrefix = ltrim(LATEX_PDF_URL_PREFIX, '/');
+
+        $this->ensureDirectory($this->storageDir);
+        $this->ensureDirectory($this->workingDir);
+    }
+
+    /**
+     * Compiles LaTeX into a PDF using MiKTeX.
+     *
+     * @return array<string, mixed>
+     */
+    public function build(int $templateId, string $latex): array
+    {
+        $timestamp = (new \DateTimeImmutable('now'))->format('YmdHis');
+        $token = bin2hex(random_bytes(4));
+        $baseName = sprintf('template_%d_%s_%s', $templateId, $timestamp, $token);
+        $texPath = $this->workingDir . DIRECTORY_SEPARATOR . $baseName . '.tex';
+
+        if (file_put_contents($texPath, $latex) === false) {
+            throw new CatalogApiException(
+                'LATEX_BUILD_ERROR',
+                'Unable to write temporary LaTeX source file.',
+                500
+            );
+        }
+
+        $command = sprintf(
+            '%s -interaction=nonstopmode -halt-on-error -output-directory %s %s',
+            escapeshellarg($this->pdflatexPath),
+            escapeshellarg($this->workingDir),
+            escapeshellarg($texPath)
+        );
+
+        $correlationId = bin2hex(random_bytes(16));
+        error_log(
+            sprintf(
+                '[LatexBuild] action=start templateId=%d correlationId=%s command=%s',
+                $templateId,
+                $correlationId,
+                $command
+            )
+        );
+
+        $descriptorSpec = [
+            0 => ['pipe', 'r'],
+            1 => ['pipe', 'w'],
+            2 => ['pipe', 'w'],
+        ];
+
+        $process = proc_open($command, $descriptorSpec, $pipes, $this->workingDir);
+        if (!is_resource($process)) {
+            $this->cleanupWorkingFiles($baseName);
+            throw new CatalogApiException('LATEX_TOOL_MISSING', 'Unable to execute MiKTeX pdflatex.', 500);
+        }
+
+        fclose($pipes[0]);
+        $stdout = stream_get_contents($pipes[1]) ?: '';
+        fclose($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]) ?: '';
+        fclose($pipes[2]);
+        $exitCode = proc_close($process);
+        $pdfSource = $this->workingDir . DIRECTORY_SEPARATOR . $baseName . '.pdf';
+
+        try {
+            if ($exitCode !== 0 || !is_file($pdfSource)) {
+                error_log(
+                    sprintf(
+                        '[LatexBuild] action=fail templateId=%d correlationId=%s exitCode=%d',
+                        $templateId,
+                        $correlationId,
+                        $exitCode
+                    )
+                );
+                throw new CatalogApiException(
+                    'LATEX_BUILD_ERROR',
+                    'MiKTeX compilation failed.',
+                    500,
+                    [
+                        'stdout' => trim($stdout),
+                        'stderr' => trim($stderr),
+                        'exitCode' => $exitCode,
+                        'correlationId' => $correlationId,
+                    ]
+                );
+            }
+
+            $pdfFilename = sprintf('%d-%s-%s.pdf', $templateId, $timestamp, $token);
+            $targetPath = $this->storageDir . DIRECTORY_SEPARATOR . $pdfFilename;
+            $this->movePdf($pdfSource, $targetPath);
+            $relativePath = $this->relativePrefix . '/' . $pdfFilename;
+
+            error_log(
+                sprintf(
+                    '[LatexBuild] action=success templateId=%d correlationId=%s file=%s',
+                    $templateId,
+                    $correlationId,
+                    $targetPath
+                )
+            );
+
+            return [
+                'relativePath' => $relativePath,
+                'absolutePath' => $targetPath,
+                'stdout' => trim($stdout),
+                'stderr' => trim($stderr),
+                'exitCode' => $exitCode,
+                'log' => trim($stdout . PHP_EOL . $stderr),
+                'correlationId' => $correlationId,
+            ];
+        } finally {
+            $this->cleanupWorkingFiles($baseName);
+        }
+    }
+
+    private function ensureDirectory(string $directory): void
+    {
+        if (!is_dir($directory)) {
+            if (!mkdir($directory, 0775, true) && !is_dir($directory)) {
+                throw new RuntimeException('Unable to create directory: ' . $directory);
+            }
+        }
+    }
+
+    private function cleanupWorkingFiles(string $baseName): void
+    {
+        $extensions = ['tex', 'aux', 'log', 'out', 'toc', 'pdf'];
+        foreach ($extensions as $extension) {
+            $path = $this->workingDir . DIRECTORY_SEPARATOR . $baseName . '.' . $extension;
+            if (is_file($path)) {
+                @unlink($path);
+            }
+        }
+    }
+
+    private function movePdf(string $source, string $destination): void
+    {
+        if (@rename($source, $destination)) {
+            return;
+        }
+
+        if (!@copy($source, $destination)) {
+            throw new CatalogApiException(
+                'LATEX_BUILD_ERROR',
+                'Unable to move generated PDF into storage.',
+                500
+            );
+        }
+        @unlink($source);
     }
 }
 
@@ -3821,7 +4363,9 @@ final class CatalogApplication
         private CatalogCsvService $csvService,
         private CatalogTruncateService $truncateService,
         private PublicCatalogService $publicCatalogService,
-        private SpecSearchService $specSearchService
+        private SpecSearchService $specSearchService,
+        private LatexTemplateService $latexTemplateService,
+        private LatexBuildService $latexBuildService
     ) {
     }
 
@@ -3847,7 +4391,13 @@ final class CatalogApplication
             $seriesAttributeService,
             $productService
         );
-        $specSearchService = new SpecSearchService($publicCatalogService);
+        $specSearchService = new SpecSearchService($connection);
+        $latexTemplateService = new LatexTemplateService($connection);
+        $pdflatexBinary = getenv(LATEX_PDFLATEX_ENV);
+        $pdflatexPath = is_string($pdflatexBinary) && $pdflatexBinary !== ''
+            ? $pdflatexBinary
+            : LATEX_DEFAULT_PDFLATEX;
+        $latexBuildService = new LatexBuildService($pdflatexPath, LATEX_PDF_STORAGE, LATEX_BUILD_WORKDIR);
 
         $app = new self(
             $connection,
@@ -3861,7 +4411,9 @@ final class CatalogApplication
             $csvService,
             $truncateService,
             $publicCatalogService,
-            $specSearchService
+            $specSearchService,
+            $latexTemplateService,
+            $latexBuildService
         );
 
         if ($performBootstrap) {
@@ -4028,9 +4580,96 @@ final class CatalogApplication
             case 'v1.publicCatalogSnapshot':
                 $this->requestReader->requireMethod('GET', $method);
                 return $this->publicCatalogService->buildSnapshot();
-            case 'v1.specSearchSnapshot':
+            case 'v1.specSearchRootCategories':
                 $this->requestReader->requireMethod('GET', $method);
-                return $this->specSearchService->buildSnapshot();
+                return $this->specSearchService->listRootCategories();
+            case 'v1.specSearchProductCategories':
+                $this->requestReader->requireMethod('GET', $method);
+                $rootId = isset($_GET['root_id']) ? (string) $_GET['root_id'] : '';
+                if ($rootId === '') {
+                    throw new CatalogApiException(
+                        'VALIDATION_ERROR',
+                        'Root category is required.',
+                        400,
+                        ['root_id' => 'Root category is required.']
+                    );
+                }
+                return $this->specSearchService->listProductCategoryGroups($rootId);
+            case 'v1.specSearchFacets':
+                $this->requestReader->requireMethod('POST', $method);
+                $facetsPayload = $this->requestReader->readJsonBody();
+                $facetsRootId = isset($facetsPayload['root_id']) ? (string) $facetsPayload['root_id'] : '';
+                if ($facetsRootId === '') {
+                    throw new CatalogApiException(
+                        'VALIDATION_ERROR',
+                        'Root category is required.',
+                        400,
+                        ['root_id' => 'Root category is required.']
+                    );
+                }
+                $facetCategoryIds = $this->normalizeSelectedCategoryIds($facetsPayload['category_ids'] ?? []);
+                return $this->specSearchService->listFacets($facetsRootId, $facetCategoryIds);
+            case 'v1.specSearchProducts':
+                $this->requestReader->requireMethod('POST', $method);
+                $productPayload = $this->requestReader->readJsonBody();
+                $productRootId = isset($productPayload['root_id']) ? (string) $productPayload['root_id'] : '';
+                if ($productRootId === '') {
+                    throw new CatalogApiException(
+                        'VALIDATION_ERROR',
+                        'Root category is required.',
+                        400,
+                        ['root_id' => 'Root category is required.']
+                    );
+                }
+                $productCategoryIds = $this->normalizeSelectedCategoryIds($productPayload['category_ids'] ?? []);
+                $filters = isset($productPayload['filters']) && is_array($productPayload['filters'])
+                    ? $productPayload['filters']
+                    : [];
+                return $this->specSearchService->searchProducts($productRootId, $productCategoryIds, $filters);
+            case 'v1.listLatexTemplates':
+                $this->requestReader->requireMethod('GET', $method);
+                return $this->latexTemplateService->listTemplates();
+            case 'v1.getLatexTemplate':
+                $this->requestReader->requireMethod('GET', $method);
+                $templateId = $this->requireLatexTemplateId();
+                return $this->latexTemplateService->getTemplate($templateId);
+            case 'v1.createLatexTemplate':
+                $this->requestReader->requireMethod('POST', $method);
+                $payload = $this->requestReader->readJsonBody();
+                return $this->latexTemplateService->createTemplate($payload);
+            case 'v1.updateLatexTemplate':
+                $this->requestReader->requireMethod('PUT', $method);
+                $templateId = $this->requireLatexTemplateId();
+                $payload = $this->requestReader->readJsonBody();
+                return $this->latexTemplateService->updateTemplate($templateId, $payload);
+            case 'v1.deleteLatexTemplate':
+                $this->requestReader->requireMethod('DELETE', $method);
+                $templateId = $this->requireLatexTemplateId();
+                $this->latexTemplateService->deleteTemplate($templateId);
+                return ['deleted' => true];
+            case 'v1.buildLatexTemplate':
+                $this->requestReader->requireMethod('POST', $method);
+                $templateId = $this->requireLatexTemplateId();
+                $template = $this->latexTemplateService->getTemplate($templateId);
+                $buildResult = $this->latexBuildService->build(
+                    $templateId,
+                    (string) ($template['latex'] ?? '')
+                );
+                $updated = $this->latexTemplateService->updatePdfPath(
+                    $templateId,
+                    (string) $buildResult['relativePath'],
+                    $template['pdfPath'] ?? null
+                );
+                return [
+                    'pdfPath' => $updated['pdfPath'],
+                    'downloadUrl' => $updated['downloadUrl'],
+                    'updatedAt' => $updated['updatedAt'],
+                    'stdout' => $buildResult['stdout'],
+                    'stderr' => $buildResult['stderr'],
+                    'exitCode' => $buildResult['exitCode'],
+                    'log' => $buildResult['log'],
+                    'correlationId' => $buildResult['correlationId'],
+                ];
             case 'v1.getSeriesAttributes':
                 $this->requestReader->requireMethod('GET', $method);
                 $seriesId = isset($_GET['seriesId']) ? (int) $_GET['seriesId'] : 0;
@@ -4140,6 +4779,45 @@ final class CatalogApplication
             default:
                 throw new CatalogApiException('ACTION_NOT_FOUND', 'Unknown action requested.', 404);
         }
+    }
+
+    /**
+     * Normalizes category identifiers from client payloads.
+     *
+     * @param mixed $raw
+     *
+     * @return array<int, string>
+     */
+    private function normalizeSelectedCategoryIds(mixed $raw): array
+    {
+        if (!is_array($raw)) {
+            return [];
+        }
+        $normalized = [];
+        foreach ($raw as $value) {
+            $string = trim((string) $value);
+            if ($string === '') {
+                continue;
+            }
+            $normalized[$string] = true;
+        }
+
+        return array_keys($normalized);
+    }
+
+    private function requireLatexTemplateId(): int
+    {
+        $templateId = isset($_GET['id']) ? (int) $_GET['id'] : 0;
+        if ($templateId <= 0) {
+            throw new CatalogApiException(
+                'LATEX_VALIDATION_ERROR',
+                'Template ID is required.',
+                400,
+                ['id' => 'Template ID is required.']
+            );
+        }
+
+        return $templateId;
     }
 }
 

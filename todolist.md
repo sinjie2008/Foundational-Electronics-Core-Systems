@@ -56,6 +56,33 @@
 1. **Document API + UX update (rootId query, AJAX per root)** - *Status: Completed* - *Tests*: Proofread `docs/spec.md`, `docs/api.md`, `docs/decisions.md`.
 2. **Implement dynamic snapshot fetching + caching in `spec-search.html`** - *Status: Completed* - *Tests*: `.\scripts\run-tests.ps1`, manual browser validation still advised (demo payload toggle + live API).
 
+## Context Reset Checklist (28 Nov 2025 - Spec Search Multi-Facet API Split)
+- [x] Summarize previous task results in todolist (noted the completed 2025-11-27 snapshot refresh above).
+- [x] Close or carry over open TODOs (none remained after the prior Spec Search adjustments).
+- [x] Re-read `docs/spec.md`, `docs/api.md`, and `docs/decisions.md` to capture the new multi-panel layout + API requirements.
+- [x] Sync repository / clean local state (verified working tree via `git status`; no pending code before doc updates).
+- [x] Refresh test data/mocks and local environment (reviewed the current `spec-search.html` demo payload + API stubs to anchor documentation changes).
+
+### Task Breakdown (2025-11-28 Spec Search Multi-Facet Funnel)
+1. **Update specification + API docs for the multi-endpoint Spec Search funnel** - *Status: In Progress* - *Tests*: Manual proofread of `docs/spec.md` + `docs/api.md`, `Select-String '```mermaid' docs/spec.md` to confirm Mermaid coverage.
+2. **Implement backend `/api/spec-search/*` endpoints (PHP controllers + service stubs)** - *Status: Not Started* - *Tests*: `.\scripts\run-tests.ps1`, targeted `Invoke-RestMethod` smoke calls for each endpoint.
+3. **Rebuild `spec-search.html` layout, CSS, and jQuery glue per the new three-section spec** - *Status: Not Started* - *Tests*: Manual browser verification (root/category/facet/result flows), console log inspection, DataTables pagination/search behavior check.
+4. **Regression + integration testing** - *Status: Not Started* - *Tests*: `.\scripts\run-tests.ps1` plus manual API/UI walkthrough covering root changes, category toggles, facet selection, Edit link navigation.
+
+## Context Reset Checklist (29 Nov 2025 - LaTeX Template Workspace)
+- [x] Summarize previous task results in todolist (Spec Search multi-endpoint work captured above; no other active strands).
+- [x] Close or carry over open TODOs (no incomplete LaTeX-related entries existed prior to this request).
+- [x] Re-read `docs/spec.md`, `docs/api.md`, and `docs/decisions.md` to anchor new LaTeX module requirements before editing.
+- [x] Sync repository / clean local state (`git status` verified clean before documentation updates).
+- [x] Refresh test data/mocks and local environment (confirmed database seeder status, ensured `storage/latex-pdfs` exists, and validated MiKTeX availability via `pdflatex --version` locally).
+
+### Task Breakdown (2025-11-29 LaTeX Template Workspace)
+1. **Document architecture + API surface + decisions for LaTeX templating** - *Status: Completed* - *Tests*: Proofread `docs/spec.md`, `docs/api.md`, `docs/decisions.md`; optional Mermaid presence check `if (-not (Select-String -Path .\docs\spec.md -Pattern '```mermaid' -Quiet)) { throw "docs/spec.md must contain Mermaid diagrams." }`.
+2. **Extend database schema & backend services (Seeder + LatexTemplateService + dispatcher actions) including CRUD validation** - *Status: Completed* - *Tests*: `php -l catalog.php`, `.\scripts\run-tests.ps1`, manual `Invoke-RestMethod` CRUD smoke checks planned for QA.
+3. **Implement MiKTeX build pipeline (file handling, `pdflatex` invocation, PDF storage, API response)** - *Status: Completed* - *Tests*: `.\scripts\run-tests.ps1`, manual build call with sample LaTeX (documented in test notes), verified PDF emission under `storage/latex-pdfs`.
+4. **Create `latex-templating.html` + `assets/js/latex-templating.js` (Bootstrap layout, DataTables list, MathJax preview, CRUD/build wiring)** - *Status: Completed* - *Tests*: Browser smoke (Chrome) exercising DataTables search/pagination, preview typing, alert messaging, iframe PDF refresh.
+5. **End-to-end regression + documentation cross-linking** - *Status: Completed* - *Tests*: `.\scripts\run-tests.ps1`, `php -l catalog.php`, Mermaid presence check (see doc note), manual walkthrough (create → build → download) recorded in QA notes.
+
 ## Context Reset Checklist (29 Oct 2025)
 - [x] Summarize previous task results in todolist.
 - [x] Close or carry over TODOs.
