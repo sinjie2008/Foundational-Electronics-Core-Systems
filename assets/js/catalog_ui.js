@@ -78,6 +78,7 @@
         truncateConfirmButton: '#truncate-confirm-button',
         truncateModalError: '#truncate-modal-error',
         truncateAuditTable: '#truncate-audit-table',
+        hierarchySearch: '#hierarchy-search',
     };
 
     const domCache = new Map();
@@ -102,6 +103,10 @@
             submitting: false,
             serverLock: false,
         },
+        matchedNodes: new Set(),
+        matchedProducts: new Set(),
+        expandedNodes: new Set(),
+        searchQuery: '',
     };
     const dataTableRegistry = new Map();
     const DATA_TABLE_DOM =
@@ -330,46 +335,70 @@
         }
 
         const renderList = (list, depth = 0) => {
-            const items = list
-                .map((node) => {
-                    const label = `${escapeHtml(
-                        node.name ?? node.Name ?? '(unnamed)'
-                    )} [${escapeHtml(node.type ?? node.Type ?? 'unknown')}]`;
-                    const children = Array.isArray(node.children)
-                        ? node.children
-                        : [];
-                    const hasAccordion =
-                        node.type === 'category' && children.length > 0;
-                    const expanded = depth === 0;
-                    const childMarkup = hasAccordion
-                        ? `<div class="node-children${expanded ? ' is-open' : ''}" id="node-${node.id}">
-                               ${renderList(children, depth + 1)}
-                           </div>`
-                        : '';
-                    const toggle = hasAccordion
-                        ? `<button type="button"
-                                   class="node-toggle"
-                                   aria-expanded="${expanded}"
-                                   aria-label="Toggle children for ${escapeHtml(
-                                       node.name ?? ''
-                                   )}"
-                                   data-node-toggle="node-${node.id}"></button>`
-                        : '<span class="node-toggle-spacer"></span>';
+            return list.map((node) => {
+                const isCategory = node.type === 'category';
+                const isSeries = node.type === 'series';
 
-                    return `<li class="hierarchy-node">
-                                <div class="node-row">
-                                    ${toggle}
-                                    <a href="#" data-node-id="${node.id}">${label}</a>
-                                </div>
-                                ${childMarkup}
-                            </li>`;
-                })
-                .join('');
+                let label = escapeHtml(node.name ?? node.Name ?? '(unnamed)');
+                let countLabel = '';
 
-            return `<ul class="hierarchy-list">${items}</ul>`;
+                if (isCategory) {
+                    countLabel = ` [category] (${node.category_count || 0})`;
+                } else if (isSeries) {
+                    countLabel = ` [series] (${node.product_count || 0})`;
+                }
+
+                const children = Array.isArray(node.children) ? node.children : [];
+                const products = Array.isArray(node.products) ? node.products : [];
+                const hasChildren = children.length > 0 || products.length > 0;
+
+                const isMatched = state.matchedNodes.has(node.id);
+                const isExpanded = state.expandedNodes.has(node.id) || (state.searchQuery === '' && depth === 0);
+                const matchClass = isMatched ? ' search-match' : '';
+
+                let childMarkup = '';
+                if (hasChildren) {
+                    childMarkup = `<div class="node-children${isExpanded ? ' is-open' : ''}" id="node-children-${node.id}">
+                        <ul class="hierarchy-list">
+                            ${renderList(children, depth + 1)}
+                            ${renderProducts(products)}
+                        </ul>
+                    </div>`;
+                }
+
+                const toggle = hasChildren
+                    ? `<button type="button" 
+                               class="node-toggle" 
+                               aria-expanded="${isExpanded}"
+                               data-node-toggle="${node.id}"></button>`
+                    : '<span class="node-toggle-spacer"></span>';
+
+                return `<li class="hierarchy-node${matchClass}">
+                            <div class="node-row">
+                                ${toggle}
+                                <a href="#" data-node-id="${node.id}" data-node-type="${node.type}">
+                                    ${label}${countLabel}
+                                </a>
+                            </div>
+                            ${childMarkup}
+                        </li>`;
+            }).join('');
         };
 
-        return renderList(nodes);
+        const renderProducts = (products) => {
+            return products.map(p => {
+                const isMatched = state.matchedProducts.has(p.id);
+                const matchClass = isMatched ? ' search-match' : '';
+                return `<li class="hierarchy-node product-node${matchClass}">
+                    <div class="node-row">
+                        <span class="node-toggle-spacer"></span>
+                        <span class="product-name">${escapeHtml(p.name)}</span>
+                    </div>
+                 </li>`;
+            }).join('');
+        };
+
+        return `<ul class="hierarchy-list">${renderList(nodes)}</ul>`;
     };
 
     const renderHierarchy = () => {
@@ -447,15 +476,13 @@
     const loadHierarchy = async () => {
         try {
             setStatus('');
-            const response = await requestJson({ action: 'v1.listHierarchy' });
+            const response = await toPromise($.getJSON('api/catalog/hierarchy.php'));
             if (!response.success) {
                 handleErrorResponse(response);
                 return;
             }
-            const payload = response.data || {};
-            state.hierarchy = Array.isArray(payload.hierarchy)
-                ? payload.hierarchy
-                : [];
+            const payload = response.data || [];
+            state.hierarchy = Array.isArray(payload) ? payload : [];
             state.nodeIndex = new Map();
             buildNodeIndex(state.hierarchy);
             if (!state.nodeIndex.has(state.selectedNodeId)) {
@@ -466,6 +493,57 @@
         } catch (error) {
             console.error(error);
             setStatus('Unable to load hierarchy.', true);
+        }
+    };
+
+    const handleSearch = async (query) => {
+        state.searchQuery = query;
+        state.matchedNodes.clear();
+        state.matchedProducts.clear();
+        state.expandedNodes.clear();
+
+        if (!query) {
+            renderHierarchy();
+            return;
+        }
+
+        try {
+            const response = await toPromise($.getJSON('api/catalog/search.php', { q: query }));
+            if (response.success && Array.isArray(response.data)) {
+                response.data.forEach(match => {
+                    if (match.type === 'product') {
+                        state.matchedProducts.add(match.id);
+                        // Expand parent series
+                        if (match.parent_id) {
+                            expandAncestors(match.parent_id);
+                        }
+                    } else {
+                        state.matchedNodes.add(match.id);
+                        // Expand ancestors
+                        if (match.parent_id) {
+                            expandAncestors(match.parent_id);
+                        }
+                        // Also expand the node itself if it matches? Maybe not, usually we expand *to* the node.
+                        // But if it's a category matching, maybe we want to see its children?
+                        // Requirement: "auto-expand the tree to show matched results"
+                        // If I match a category, showing it is enough.
+                        // If I match a product, I must expand the series.
+                    }
+                });
+            }
+            renderHierarchy();
+        } catch (error) {
+            console.error('Search failed', error);
+        }
+    };
+
+    const expandAncestors = (nodeId) => {
+        let currentId = nodeId;
+        while (currentId) {
+            state.expandedNodes.add(currentId);
+            const node = state.nodeIndex.get(currentId);
+            if (!node) break;
+            currentId = node.parentId;
         }
     };
 
@@ -647,8 +725,8 @@
                 return `<div class="metadata-field-row">
                     <label>${escapeHtml(field.label)} (${escapeHtml(field.fieldKey)})${required}: </label>
                     <input type="text" data-metadata-key="${field.fieldKey}" value="${escapeHtml(
-                        values[field.fieldKey] ?? ''
-                    )}">
+                    values[field.fieldKey] ?? ''
+                )}">
                 </div>`;
             })
             .join('');
@@ -669,8 +747,8 @@
                 return `<div>
                     <label>${escapeHtml(field.label)} (${escapeHtml(field.fieldKey)})${required}: </label>
                     <input type="text" data-field-key="${field.fieldKey}" value="${escapeHtml(
-                        values[field.fieldKey] ?? ''
-                    )}">
+                    values[field.fieldKey] ?? ''
+                )}">
                 </div>`;
             })
             .join('');
@@ -1036,33 +1114,54 @@
             populateProductForm(product);
             return;
         }
-    if (action === 'delete') {
-        if (!window.confirm('Delete this product?')) {
-            return;
-        }
-        try {
-            const response = await postJson('v1.deleteProduct', { id: productId });
-            if (!response.success) {
-                handleErrorResponse(response);
+        if (action === 'delete') {
+            if (!window.confirm('Delete this product?')) {
                 return;
             }
-            setStatus('Product deleted.', false);
-            resetProductForm();
-            await loadProductsOnly(state.selectedNodeId);
-        } catch (error) {
-            console.error(error);
-            setStatus('Failed to delete product.', true);
+            try {
+                const response = await postJson('v1.deleteProduct', { id: productId });
+                if (!response.success) {
+                    handleErrorResponse(response);
+                    return;
+                }
+                setStatus('Product deleted.', false);
+                resetProductForm();
+                await loadProductsOnly(state.selectedNodeId);
+            } catch (error) {
+                console.error(error);
+                setStatus('Failed to delete product.', true);
+            }
         }
-    }
-};
+    };
 
     const bindHierarchyEvents = () => {
+        $el('hierarchyContainer').on('click', '.node-toggle', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const $btn = $(event.currentTarget);
+            const nodeId = Number($btn.data('node-toggle'));
+
+            if (state.expandedNodes.has(nodeId)) {
+                state.expandedNodes.delete(nodeId);
+            } else {
+                state.expandedNodes.add(nodeId);
+            }
+            renderHierarchy();
+        });
+
         $el('hierarchyContainer').on('click', 'a[data-node-id]', (event) => {
             event.preventDefault();
-            const nodeId = toInt($(event.currentTarget).data('node-id'));
-            if (nodeId) {
-                selectNode(nodeId);
-            }
+            const nodeId = Number($(event.currentTarget).data('node-id'));
+            selectNode(nodeId);
+        });
+
+        let searchTimeout;
+        $el('hierarchySearch').on('input', (event) => {
+            const query = $(event.target).val().trim();
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                handleSearch(query);
+            }, 300);
         });
 
         $el('nodeCreateForm').on('submit', async (event) => {
@@ -1522,14 +1621,14 @@
         });
     };
 
-const bindGlobalEvents = () => {
-    bindHierarchyEvents();
-    bindSeriesFieldEvents();
-    bindMetadataEvents();
-    bindProductEvents();
-    bindCsvEvents();
+    const bindGlobalEvents = () => {
+        bindHierarchyEvents();
+        bindSeriesFieldEvents();
+        bindMetadataEvents();
+        bindProductEvents();
+        bindCsvEvents();
         bindTruncateEvents();
-};
+    };
 
     const init = async () => {
         bindGlobalEvents();

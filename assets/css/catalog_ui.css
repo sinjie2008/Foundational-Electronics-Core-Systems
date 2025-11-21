@@ -12,7 +12,8 @@ h1 {
     font-size: 28px;
 }
 
-h2, h3 {
+h2,
+h3 {
     margin-top: 24px;
     margin-bottom: 12px;
     color: #102a43;
@@ -69,6 +70,11 @@ h2, h3 {
     border-radius: 8px;
     padding: 16px;
     box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.panel-hierarchy {
+    overflow-y: auto;
+    max-height: 80vh;
 }
 
 form {
@@ -278,10 +284,20 @@ table th {
     text-decoration: underline;
 }
 
+.search-match>.node-row a,
+.search-match>.node-row .product-name {
+    background-color: #fff3bf;
+    font-weight: bold;
+    border-radius: 2px;
+    padding: 0 4px;
+}
+
 #series-management {
     margin-top: 16px;
 }
 
+.panel-series-fields,
+.panel-series-metadata {
     background-color: #ffffff;
     border: 1px solid #d9e2ec;
     border-radius: 6px;
@@ -290,9 +306,13 @@ table th {
     box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
 }
 
+.panel-series-fields h3,
+.panel-series-metadata h3 {
     margin-top: 0;
 }
 
+.panel-series-fields form,
+.panel-series-metadata form {
     background: transparent;
     border: none;
     box-shadow: none;
@@ -300,9 +320,18 @@ table th {
     margin-bottom: 0;
 }
 
+.panel-series-fields form div,
+.panel-series-metadata form div {
     margin-bottom: 10px;
 }
 
+.metadata-field-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.metadata-field-row label {
     display: inline-flex;
     align-items: center;
     margin-right: 12px;
@@ -310,20 +339,19 @@ table th {
     color: #243b53;
 }
 
-    margin-right: 6px;
-    width: auto;
+.metadata-field-row input {
+    flex: 1;
 }
 
-    margin-bottom: 8px;
-}
-
-    font-style: italic;
-    color: #829ab1;
-}
-
+.panel-products {
     margin-top: 16px;
 }
 
+.panel-products h3 {
+    margin-top: 0;
+}
+
+.panel-products form {
     background-color: #ffffff;
     border: 1px solid #d9e2ec;
     border-radius: 6px;
@@ -331,30 +359,9 @@ table th {
     margin-bottom: 12px;
 }
 
+.panel-products form label {
     margin: 0 0 8px 0;
     color: #102a43;
-}
-
-    list-style: none;
-    padding-left: 0;
-    margin: 0;
-}
-
-    padding: 6px 0;
-    border-bottom: 1px solid #d9e2ec;
-    font-size: 14px;
-}
-
-    border-bottom: none;
-}
-
-    display: block;
-    font-size: 12px;
-    color: #627d98;
-    margin-top: 2px;
-}
-
-    margin-left: 8px;
 }
 
 .csv-section {
