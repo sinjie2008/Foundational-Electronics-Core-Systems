@@ -4526,6 +4526,16 @@ final class CatalogApplication
         return $this->truncateService;
     }
 
+    public function getLatexTemplateService(): LatexTemplateService
+    {
+        return $this->latexTemplateService;
+    }
+
+    public function getLatexBuildService(): LatexBuildService
+    {
+        return $this->latexBuildService;
+    }
+
     public function getPublicCatalogService(): PublicCatalogService
     {
         return $this->publicCatalogService;
