@@ -33,6 +33,34 @@ class SpecSearchPage {
     }
 
     /**
+     * Build a catalog UI deep-link with query parameters.
+     */
+    buildEditUrl(row) {
+        const category =
+            row.category ??
+            row.category_name ??
+            row.categoryId ??
+            row.category_id ??
+            '';
+        const series =
+            row.series ??
+            row.series_name ??
+            '';
+        const product =
+            row.sku ??
+            row.product ??
+            row.itemCode ??
+            row.item_code ??
+            '';
+        const params = new URLSearchParams({
+            category,
+            series,
+            product,
+        });
+        return `catalog_ui.html?${params.toString()}`;
+    }
+
+    /**
      * Initialize event bindings, DataTable, and initial data load.
      */
     init() {
@@ -50,6 +78,13 @@ class SpecSearchPage {
             this.renderSelectedFilters();
             this.renderFacets([]);
             this.loadProducts();
+        });
+
+        this.$table.on('click', 'button[data-edit-url]', (event) => {
+            const url = event.currentTarget.getAttribute('data-edit-url');
+            if (url) {
+                window.location.href = url;
+            }
         });
     }
 
@@ -85,6 +120,16 @@ class SpecSearchPage {
                 { data: 'sku', title: 'SKU' },
                 { data: 'name', title: 'Name' },
                 { data: 'series', title: 'Series' },
+                {
+                    title: 'Edit',
+                    data: null,
+                    orderable: false,
+                    searchable: false,
+                    render: (_, __, row) => {
+                        const url = this.buildEditUrl(row);
+                        return `<button type="button" class="btn btn-sm btn-outline-primary" data-edit-url="${url}">Edit</button>`;
+                    },
+                },
             ];
 
         if (this.tableInstance) {
@@ -367,19 +412,29 @@ class SpecSearchPage {
                 });
             });
 
-            const columns = [
-                { title: 'SKU', data: (row) => row.sku ?? '' },
-                { title: 'Name', data: (row) => row.name ?? '' },
-                { title: 'Series', data: (row) => row.series ?? '' },
-                ...Array.from(dynamicKeys).map((key) => ({
-                    title: key,
-                    data: (row) => (row[key] !== undefined && row[key] !== null ? row[key] : ''),
-                })),
-            ];
+        const columns = [
+            { title: 'SKU', data: (row) => row.sku ?? '' },
+            { title: 'Name', data: (row) => row.name ?? '' },
+            { title: 'Series', data: (row) => row.series ?? '' },
+            ...Array.from(dynamicKeys).map((key) => ({
+                title: key,
+                data: (row) => (row[key] !== undefined && row[key] !== null ? row[key] : ''),
+            })),
+            {
+                title: 'Edit',
+                data: null,
+                orderable: false,
+                searchable: false,
+                render: (_, __, row) => {
+                    const url = this.buildEditUrl(row);
+                    return `<button type="button" class="btn btn-sm btn-outline-primary" data-edit-url="${url}">Edit</button>`;
+                },
+            },
+        ];
 
-            this.initTable(items, columns);
-        } catch (err) {
-            this.setStatus(`Error loading products: ${err.message}`);
+        this.initTable(items, columns);
+    } catch (err) {
+        this.setStatus(`Error loading products: ${err.message}`);
         } finally {
             this.setStatus('');
         }

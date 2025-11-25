@@ -66,7 +66,7 @@ Resources
 
 - `POST /api/spec-search/products`
   - Body: `{ "category_ids": int[], "filters": object }`.
-  - Response `200`: `data: { items: ProductSummary[], total: int }`.
+  - Response `200`: `data: { items: ProductSummary[], total: int }` where each item includes `sku`, `series` (series name), `category` (parent category name), `seriesId`, `categoryId`, and any custom fields for that product.
 
 - `POST /api/spec-search/facets`
   - Body: `{ "category_ids": int[] }`.
@@ -76,7 +76,7 @@ Data Shapes
 -----------
 - `CategoryNode`: `{ id, parentId, name, type, displayOrder, productCount, categoryCount, products: ProductSummary[], children: CategoryNode[] }`.
 - `CategorySummary`: `{ id, name, type }`.
-- `ProductSummary`: `{ id, sku, name, description, status, categoryId }`.
+- `ProductSummary`: `{ id, sku, name, description, status, categoryId, series, category, seriesId }`.
 - `Facet`: `{ name, label, type, options: { value, count }[] }`.
 
 Status Codes

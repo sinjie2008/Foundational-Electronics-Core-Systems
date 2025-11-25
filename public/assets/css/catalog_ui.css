@@ -2,8 +2,12 @@ body {
     font-family: Arial, Helvetica, sans-serif;
     background-color: #f5f7fa;
     margin: 0;
-    padding: 24px;
+    padding: 0;
     color: #1f2933;
+}
+
+.catalog-shell main {
+    padding: 24px;
 }
 
 h1 {
@@ -531,6 +535,12 @@ table th {
 
 #product-list-table_wrapper .dataTables_scrollBody {
     overflow-x: auto !important;
+    overflow-y: hidden;
+}
+
+#product-list-table_wrapper .dataTables_scroll {
+    overflow: auto !important;
+    width: 100% !important;
 }
 
 #product-list-table_wrapper .dtfc-fixed-left {

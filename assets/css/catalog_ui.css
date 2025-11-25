@@ -2,8 +2,12 @@ body {
     font-family: Arial, Helvetica, sans-serif;
     background-color: #f5f7fa;
     margin: 0;
-    padding: 24px;
+    padding: 0;
     color: #1f2933;
+}
+
+.catalog-shell main {
+    padding: 24px;
 }
 
 h1 {

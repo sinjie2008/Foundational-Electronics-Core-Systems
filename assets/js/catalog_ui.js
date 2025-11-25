@@ -108,6 +108,13 @@ class CatalogUI {
         matchedProducts: new Set(),
         expandedNodes: new Set(),
         searchQuery: '',
+        // Deep-link values from spec-search Edit button.
+        deepLink: {
+            category: null,
+            series: null,
+            product: null,
+            applied: false,
+        },
     };
     const dataTableRegistry = new Map();
     const DATA_TABLE_DOM =
@@ -239,6 +246,23 @@ class CatalogUI {
 
     const createCorrelationId = () =>
         window.crypto?.randomUUID?.() ?? `truncate-${Date.now()}`;
+
+    /**
+     * Read deep-link query params (category, series, product) from the URL.
+     */
+    const readDeepLinkParams = () => {
+        const params = new URLSearchParams(window.location.search);
+        const normalize = (value) => {
+            if (value === null || value === undefined) {
+                return null;
+            }
+            const trimmed = value.toString().trim();
+            return trimmed.length ? trimmed : null;
+        };
+        state.deepLink.category = normalize(params.get('category'));
+        state.deepLink.series = normalize(params.get('series'));
+        state.deepLink.product = normalize(params.get('product'));
+    };
 
     const toPromise = (jqXHR) =>
         new Promise((resolve, reject) => {
@@ -491,6 +515,7 @@ class CatalogUI {
             }
             renderHierarchy();
             updateSelectedNodePanel();
+            await applyDeepLinkSelection();
         } catch (error) {
             console.error(error);
             setStatus('Unable to load hierarchy.', true);
@@ -546,6 +571,74 @@ class CatalogUI {
             if (!node) break;
             currentId = node.parentId;
         }
+    };
+
+    /**
+     * Locate a series node by name (and optional parent category name).
+     */
+    const findSeriesNodeByName = (seriesName, categoryName) => {
+        if (!seriesName) {
+            return null;
+        }
+        const targetSeries = seriesName.toString().trim().toLowerCase();
+        const targetCategory = categoryName
+            ? categoryName.toString().trim().toLowerCase()
+            : null;
+
+        for (const node of state.nodeIndex.values()) {
+            if (node.type !== 'series') {
+                continue;
+            }
+            const nodeSeries = (node.name ?? '').toString().trim().toLowerCase();
+            if (nodeSeries !== targetSeries) {
+                continue;
+            }
+
+            if (targetCategory) {
+                const parent = state.nodeIndex.get(node.parentId);
+                const parentName = (parent?.name ?? '').toString().trim().toLowerCase();
+                if (parentName !== targetCategory) {
+                    continue;
+                }
+            }
+
+            return node;
+        }
+
+        return null;
+    };
+
+    /**
+     * Apply deep-link selection from spec-search Edit flow (prefill search + auto-select series).
+     */
+    const applyDeepLinkSelection = async () => {
+        if (state.deepLink.applied) {
+            return;
+        }
+
+        const hasParams = Boolean(state.deepLink.series || state.deepLink.product);
+        if (!hasParams) {
+            state.deepLink.applied = true;
+            return;
+        }
+
+        if (state.deepLink.product) {
+            $el('hierarchySearch').val(state.deepLink.product);
+            await handleSearch(state.deepLink.product);
+        }
+
+        const targetNode = findSeriesNodeByName(
+            state.deepLink.series,
+            state.deepLink.category
+        );
+        if (targetNode) {
+            expandAncestors(targetNode.id);
+            state.expandedNodes.add(targetNode.id);
+            renderHierarchy();
+            selectNode(targetNode.id);
+        }
+
+        state.deepLink.applied = true;
     };
 
     const loadSeriesContext = async (seriesId) => {
@@ -1634,6 +1727,7 @@ class CatalogUI {
     const init = async () => {
         bindGlobalEvents();
         resetSeriesUI();
+        readDeepLinkParams();
         await loadHierarchy();
         await loadCsvHistory();
     };

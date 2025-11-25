@@ -217,9 +217,10 @@ final class SpecSearchService
         $catIds = array_map('intval', $categoryIds);
         $catIdsStr = implode(',', $catIds);
 
-        $sql = "SELECT p.id, p.sku, p.name, s.name as series_name, s.id as series_id 
+        $sql = "SELECT p.id, p.sku, p.name, s.name as series_name, s.id as series_id, c.name as category_name, c.id as category_id
                 FROM product p
                 JOIN category s ON p.series_id = s.id
+                JOIN category c ON s.parent_id = c.id
                 WHERE s.parent_id IN ({$catIdsStr}) AND s.type = 'series'";
 
         if (isset($filters['series']) && !empty($filters['series'])) {
@@ -260,7 +261,11 @@ final class SpecSearchService
             $rawProducts[$row['id']] = [
                 'id' => (int) $row['id'],
                 'sku' => $row['sku'],
+                'name' => $row['name'],
                 'series' => $row['series_name'],
+                'seriesId' => (int) $row['series_id'],
+                'category' => $row['category_name'],
+                'categoryId' => (int) $row['category_id'],
             ];
             $productIds[] = (int) $row['id'];
         }

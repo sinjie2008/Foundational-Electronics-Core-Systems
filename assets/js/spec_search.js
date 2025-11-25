@@ -51,6 +51,8 @@ class SpecSearchPage {
             this.renderFacets([]);
             this.loadProducts();
         });
+
+        this.$table.on('click', '[data-action="edit"]', (event) => this.handleEditClick(event));
     }
 
     /**
@@ -85,6 +87,14 @@ class SpecSearchPage {
                 { data: 'sku', title: 'SKU' },
                 { data: 'name', title: 'Name' },
                 { data: 'series', title: 'Series' },
+                { data: 'category', title: 'Category' },
+                {
+                    data: () => '',
+                    title: 'Actions',
+                    orderable: false,
+                    searchable: false,
+                    className: 'text-nowrap',
+                },
             ];
 
         if (this.tableInstance) {
@@ -361,7 +371,17 @@ class SpecSearchPage {
             const dynamicKeys = new Set();
             items.forEach((item) => {
                 Object.keys(item).forEach((k) => {
-                    if (!['id', 'sku', 'name', 'series'].includes(k)) {
+                    if (
+                        ![
+                            'id',
+                            'sku',
+                            'name',
+                            'series',
+                            'category',
+                            'seriesId',
+                            'categoryId',
+                        ].includes(k)
+                    ) {
                         dynamicKeys.add(k);
                     }
                 });
@@ -371,10 +391,19 @@ class SpecSearchPage {
                 { title: 'SKU', data: (row) => row.sku ?? '' },
                 { title: 'Name', data: (row) => row.name ?? '' },
                 { title: 'Series', data: (row) => row.series ?? '' },
+                { title: 'Category', data: (row) => row.category ?? '' },
                 ...Array.from(dynamicKeys).map((key) => ({
                     title: key,
                     data: (row) => (row[key] !== undefined && row[key] !== null ? row[key] : ''),
                 })),
+                {
+                    title: 'Actions',
+                    data: () =>
+                        '<button type="button" class="btn btn-sm btn-outline-primary" data-action="edit">Edit</button>',
+                    orderable: false,
+                    searchable: false,
+                    className: 'text-nowrap',
+                },
             ];
 
             this.initTable(items, columns);
@@ -383,6 +412,28 @@ class SpecSearchPage {
         } finally {
             this.setStatus('');
         }
+    }
+
+    /**
+     * Redirect to catalog UI with query params for the selected row.
+     */
+    handleEditClick(event) {
+        if (!this.tableInstance) {
+            return;
+        }
+        const $row = $(event.currentTarget).closest('tr');
+        const rowData = this.tableInstance.row($row).data();
+        if (!rowData) {
+            return;
+        }
+
+        const params = new URLSearchParams({
+            category: rowData.category ?? '',
+            series: rowData.series ?? '',
+            product: rowData.sku ?? '',
+        });
+
+        window.location.href = `catalog_ui.html?${params.toString()}`;
     }
 }
 

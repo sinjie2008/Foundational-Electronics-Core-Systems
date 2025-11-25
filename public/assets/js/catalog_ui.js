@@ -108,6 +108,8 @@ class CatalogUI {
         matchedProducts: new Set(),
         expandedNodes: new Set(),
         searchQuery: '',
+        deepLinkApplied: false,
+        deepLinkProductFilter: '',
     };
     const dataTableRegistry = new Map();
     const DATA_TABLE_DOM =
@@ -175,6 +177,29 @@ class CatalogUI {
         }
         dataTableRegistry.delete(tableKey);
     };
+    const adjustAllTables = () => {
+        dataTableRegistry.forEach(({ instance }) => {
+            if (!instance) return;
+            try {
+                instance.columns.adjust().draw(false);
+                const fc = instance.fixedColumns ? instance.fixedColumns() : null;
+                if (fc && typeof fc.relayout === 'function') {
+                    fc.relayout();
+                }
+                const container = instance.table().container();
+                const scrollBody = container.querySelector('.dataTables_scrollBody');
+                const scrollWrapper = container.querySelector('.dataTables_scroll');
+                if (scrollBody) {
+                    scrollBody.style.overflowX = 'auto';
+                }
+                if (scrollWrapper) {
+                    scrollWrapper.style.overflowX = 'auto';
+                }
+            } catch (error) {
+                console.warn('DataTable adjust failed', error);
+            }
+        });
+    };
     const syncDataTable = (tableKey, columns, rows, options = {}) => {
         if (!Array.isArray(rows) || !rows.length) {
             destroyDataTable(tableKey);
@@ -215,6 +240,8 @@ class CatalogUI {
                 DATA_TABLE_DEFAULTS.order,
         });
         dataTableRegistry.set(tableKey, { instance, signature });
+        adjustAllTables();
+        setTimeout(adjustAllTables, 200);
     };
     const escapeHtml = (value = '') =>
         String(value ?? '')
@@ -223,6 +250,59 @@ class CatalogUI {
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
+    const debounce = (fn, delay = 150) => {
+        let timer;
+        return (...args) => {
+            clearTimeout(timer);
+            timer = setTimeout(() => fn(...args), delay);
+        };
+    };
+    const handleLayoutChange = debounce(() => {
+        adjustAllTables();
+        setTimeout(adjustAllTables, 300);
+    }, 50);
+
+    const applyProductTableFilter = (filterValue) => {
+        if (!filterValue) {
+            return;
+        }
+        const entry = dataTableRegistry.get('productListTable');
+        const instance = entry?.instance;
+        if (!instance) {
+            return;
+        }
+        instance.search(filterValue).draw(false);
+        const input = document.querySelector('#product-list-table_filter input[type="search"]');
+        if (input) {
+            input.value = filterValue;
+        }
+    };
+
+    const observeSidebarState = () => {
+        const shell = document.querySelector('.app-shell');
+        if (!shell || typeof MutationObserver === 'undefined') {
+            return;
+        }
+        const observer = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                    handleLayoutChange();
+                    break;
+                }
+            }
+        });
+        observer.observe(shell, { attributes: true, attributeFilter: ['class'] });
+    };
+    const bindLayoutReflowEvents = () => {
+        const sidebarPanel = document.querySelector('.sidebar-panel');
+        if (sidebarPanel) {
+            ['click', 'transitionend'].forEach((evt) => {
+                sidebarPanel.addEventListener(evt, handleLayoutChange);
+            });
+        }
+        document.addEventListener('sidebar:state', handleLayoutChange);
+        window.addEventListener('resize', handleLayoutChange);
+    };
 
     const toInt = (value, fallback = 0) => {
         const parsed = parseInt(value, 10);
@@ -239,6 +319,45 @@ class CatalogUI {
 
     const createCorrelationId = () =>
         window.crypto?.randomUUID?.() ?? `truncate-${Date.now()}`;
+
+    // Normalize strings for case-insensitive comparisons.
+    const normalize = (value = '') => value.toString().trim().toLowerCase();
+
+    // Read URL query parameters into a plain object.
+    const getQueryParams = () => {
+        const params = new URLSearchParams(window.location.search || '');
+        const result = {};
+        params.forEach((value, key) => {
+            result[key] = value;
+        });
+        return result;
+    };
+
+    // Locate a series node by its name, optionally matching parent category name.
+    const findSeriesNodeByName = (seriesName, categoryName) => {
+        if (!seriesName) {
+            return null;
+        }
+        const targetSeries = normalize(seriesName);
+        const targetCategory = normalize(categoryName || '');
+        let candidate = null;
+        state.nodeIndex.forEach((node) => {
+            if (node.type !== 'series') {
+                return;
+            }
+            if (normalize(node.name) !== targetSeries) {
+                return;
+            }
+            const parent = node.parentId ? state.nodeIndex.get(node.parentId) : null;
+            const parentName = normalize(parent?.name || '');
+            if (targetCategory && parentName === targetCategory) {
+                candidate = node;
+            } else if (!candidate) {
+                candidate = node;
+            }
+        });
+        return candidate;
+    };
 
     const toPromise = (jqXHR) =>
         new Promise((resolve, reject) => {
@@ -548,6 +667,34 @@ class CatalogUI {
         }
     };
 
+    // Apply deep-link params to prefill search and select a series node.
+    const applyDeepLinkFromQuery = async () => {
+        if (state.deepLinkApplied) {
+            return;
+        }
+        const params = getQueryParams();
+        const categoryParam = params.category || '';
+        const seriesParam = params.series || '';
+        const productParam = params.product || '';
+
+        if (productParam) {
+            $el('hierarchySearch').val(productParam);
+            await handleSearch(productParam);
+            state.deepLinkProductFilter = productParam;
+        }
+
+        if (seriesParam) {
+            const target = findSeriesNodeByName(seriesParam, categoryParam);
+            if (target) {
+                expandAncestors(target.parentId);
+                expandAncestors(target.id);
+                renderHierarchy();
+                selectNode(target.id);
+            }
+        }
+        state.deepLinkApplied = true;
+    };
+
     const loadSeriesContext = async (seriesId) => {
         if (!seriesId) {
             return;
@@ -811,12 +958,19 @@ class CatalogUI {
             signatureKey: 'product-fixed-columns',
             extraOptions: {
                 scrollX: true,
-                scrollCollapse: true,
+                scrollCollapse: false,
                 fixedColumns: {
                     left: 3,
                 },
             },
         });
+        // Ensure the fixed columns relayout after render.
+        adjustAllTables();
+        setTimeout(adjustAllTables, 250);
+        if (state.deepLinkProductFilter) {
+            applyProductTableFilter(state.deepLinkProductFilter);
+            state.deepLinkProductFilter = '';
+        }
     };
 
     const resetSeriesFieldForm = () => {
@@ -1633,8 +1787,11 @@ class CatalogUI {
 
     const init = async () => {
         bindGlobalEvents();
+        bindLayoutReflowEvents();
+        observeSidebarState();
         resetSeriesUI();
         await loadHierarchy();
+        await applyDeepLinkFromQuery();
         await loadCsvHistory();
     };
 

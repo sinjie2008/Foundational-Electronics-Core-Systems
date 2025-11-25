@@ -1,5 +1,11 @@
 body {
     background: #f7f8fb;
+    margin: 0;
+    padding: 0;
+}
+
+.app-shell main {
+    padding: 24px;
 }
 
 #status-message {

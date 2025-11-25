@@ -11,6 +11,7 @@ Goals
 --------------------------------------
 - **Server**: PHP (OO), manual autoload/require with a small bootstrap; thin public controllers that delegate to services.
 - **UI**: Bootstrap 5 for layout, DataTables for tabular interactions; jQuery used via ES6 class wrappers for DOM/events.
+- **Styling**: Global Meyer reset (v2) loaded before Bootstrap to normalize spacing; sidebar brand is text-only (no icon), collapse control uses icon-only trigger; sidebar/grid rows use zero gutters with body padding removed (main content handles its own spacing) to prevent white rails; sidebar is sticky from top to bottom (100vh) on desktop with mobile slide-over behavior.
 - **Data**: MySQL for catalog and search data; local storage for CSV imports and LaTeX build/PDF outputs.
 - **Error handling**: Centralized exception type for API errors; structured JSON `{ error: { code, message, correlationId } }`.
 - **Logging**: Service-boundary logging with correlation IDs; no secrets/PII.
@@ -31,9 +32,11 @@ Goals
 ----------------
 - Catalog hierarchy fetch for UI tree (categories with nested products).
 - Faceted/spec search (root categories, product categories, products, facets).
+- Spec-search edit handoff to Catalog UI via query params (category/series/product) to pre-fill the series tree and search field.
 - CSV import for products and series metadata with validation and audit trail.
 - LaTeX PDF generation for catalog/series outputs.
 - Catalog truncate with confirmation token and audit logging.
+- Sidebar navigation panel linking Catalog UI, Spec Search, and LaTeX templating pages; AdminLTE-like persistent left rail on desktop with slide-over toggle on mobile.
 
 4. Pseudocode (Critical Paths)
 ------------------------------
@@ -66,6 +69,49 @@ importProducts(csvPath, user, reason):
     logAudit("import", user, reason, correlationId)
   db.commit()
   return { imported: count(validated) }
+```
+
+**Sidebar Navigation Panel**
+```
+initSidebarNav(currentPage):
+  navItems = [
+    { id: "catalog", label: "Catalog UI", href: "catalog_ui.html" },
+    { id: "spec", label: "Spec Search", href: "spec-search.html" },
+    { id: "latex", label: "LaTeX Templating", href: "latex-templating.html" }
+  ]
+  render AdminLTE-like left rail with Bootstrap 5 classes
+  mark item as active when href matches currentPage
+  if viewport < md:
+    slide sidebar in/out via toggle button and backdrop
+  else:
+    keep sidebar sticky while main content scrolls
+    collapse class shrinks rail to 80px (icons only) and main content expands without extra gutter
+```
+
+**Spec Search Edit → Catalog Prefill**
+```
+onSpecSearchEditClick(record):
+  url = buildUrl("catalog_ui.html", {
+    category: record.category,
+    series: record.series,
+    product: record.sku
+  })
+  redirect(url)
+
+onCatalogLoad():
+  params = parseQuery()
+  if params.product:
+    setInputValue("#hierarchy-search", params.product)
+    triggerSearch(params.product)
+    setPendingProductFilter(params.product) // forward to DataTables search once products load
+  if params.series:
+    match = findSeriesNodeByName(params.series, parentName=params.category)
+    if match:
+      expandAncestors(match.id)
+      selectNode(match.id)
+      loadSeriesContext(match.id)
+  if pendingProductFilter and product DataTable exists:
+    applyDataTableSearch("#product-list-table", pendingProductFilter)
 ```
 
 5. System Context Diagram (Mermaid)
@@ -114,18 +160,21 @@ graph LR
 ```mermaid
 sequenceDiagram
   participant U as User
-  participant UI as Catalog UI (DataTables)
+  participant Spec as Spec Search UI
+  participant Catalog as Catalog UI
   participant API as Catalog API
-  participant SVC as Catalog Service
   participant DB as MySQL
-  U->>UI: Load catalog page
-  UI->>API: GET /api/catalog/hierarchy
-  API->>SVC: fetchHierarchy()
-  SVC->>DB: SELECT categories + products
-  DB-->>SVC: rows
-  SVC-->>API: tree JSON
-  API-->>UI: 200 OK + JSON
-  UI-->>U: Render Bootstrap table/tree via DataTables
+  U->>Spec: View spec-search results table
+  Spec->>Spec: Render Edit buttons with category/series/product payload
+  U->>Spec: Click Edit
+  Spec-->>Catalog: Redirect catalog_ui.html?category=...&series=...&product=...
+  Catalog->>Catalog: Parse query params; prefill hierarchy-search with product
+  Catalog->>API: GET /api/catalog/hierarchy
+  API->>DB: SELECT categories + series + products
+  DB-->>API: rows
+  API-->>Catalog: 200 OK + hierarchy JSON
+  Catalog->>Catalog: Auto-select matching series node; load products for that series
+  Catalog-->>U: Series node selected and search prefilled
 ```
 
 9. ER Diagram (Mermaid)
@@ -255,6 +304,7 @@ Testing Approach
 - **Integration**: endpoint calls hitting MySQL with seeded data; verify JSON shapes expected by DataTables.
 - **Contract**: error envelope shape `{ error: { code, message, correlationId } }` and success envelopes consumed by UI.
 - **Optional E2E**: load catalog UI, ensure DataTables renders and paginates via real APIs.
+- **Manual**: spec-search Edit deep link redirects to catalog UI, pre-selects the target series, and fills `hierarchy-search` with the product SKU/item code.
 
 Non-Functional & Constraints
 ----------------------------
@@ -262,3 +312,4 @@ Non-Functional & Constraints
 - Avoid global jQuery usage; define ES6 classes per page (e.g., `class CatalogTable` that binds events and DataTables init).
 - Local storage writable under `storage/*`; do not serve private CSV files publicly.
 - Ensure LaTeX binary path is configurable via env/`config/app.php` (default `pdflatex`).
+- Sidebar navigation uses Bootstrap 5 vertical nav with AdminLTE-inspired left rail; sticky on desktop, slide-over on mobile, active state must reflect current page without breaking existing layouts.
