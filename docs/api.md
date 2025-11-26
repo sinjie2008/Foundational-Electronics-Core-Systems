@@ -24,6 +24,7 @@ Resources
 ---------
 
 ### Catalog
+- CSV endpoints are consumed by the dedicated CSV tools page (`catalog-csv.html`) separate from the primary catalog UI.
 - `GET /api/catalog/hierarchy`
   - Purpose: return category tree with products for UI tree/table hybrid.
   - Query params: none.

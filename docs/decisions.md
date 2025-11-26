@@ -17,3 +17,4 @@ Decisions Log
 - 2025-11-30: Implement structured JSONL logging in backend (`storage/logs/app.log`) with correlation IDs; honor inbound `X-Correlation-ID`, generate if missing, and include in all responses.
 - 2025-11-30: Frontend error handling will surface API errors via shared utility, display user-friendly copy plus correlation ID, and avoid console logging in production (dev-only structured console logs).
 - 2025-11-30: Introduce `logging.enabled` flag (backend config, frontend-aware) to disable log writes while still generating/returning correlation IDs for troubleshooting scenarios.
+- 2025-11-30: Split CSV import/export + truncate UI into dedicated `catalog-csv.html`; sidebar nav order expands to Spec Search, Catalog UI, CSV Import/Export, LaTeX Templating across all pages.

@@ -6,6 +6,7 @@ Goals
 - Reorganize the codebase into clear front-end and back-end boundaries while keeping PHP fully object-oriented (no Composer/PSR-4).
 - Adopt Bootstrap 5 and DataTables for UI tables; encapsulate jQuery usage inside ES6 classes to avoid global procedural code.
 - Preserve existing CSV/LaTeX flows but wrap them in service classes with explicit error handling and logging (with correlation IDs).
+- Move CSV import/export + truncate tooling into a dedicated CSV management page while keeping API behavior unchanged.
 
 1. Architecture and Technology Choices
 --------------------------------------
@@ -34,6 +35,7 @@ Goals
 - Faceted/spec search (root categories, product categories, products, facets).
 - Spec-search edit handoff to Catalog UI via query params (category/series/product) to pre-fill the series tree and search field.
 - CSV import for products and series metadata with validation and audit trail.
+- CSV import/export/truncate history management in a dedicated CSV page (`catalog-csv.html`) with download/restore/delete actions.
 - LaTeX PDF generation for catalog/series outputs.
 - Catalog truncate with confirmation token and audit logging.
 - Sidebar navigation panel linking Catalog UI, Spec Search, and LaTeX templating pages; AdminLTE-like persistent left rail on desktop with slide-over toggle on mobile.
@@ -75,8 +77,9 @@ importProducts(csvPath, user, reason):
 ```
 initSidebarNav(currentPage):
   navItems = [
-    { id: "catalog", label: "Catalog UI", href: "catalog_ui.html" },
     { id: "spec", label: "Spec Search", href: "spec-search.html" },
+    { id: "catalog", label: "Catalog UI", href: "catalog_ui.html" },
+    { id: "csv", label: "CSV Import/Export", href: "catalog-csv.html" },
     { id: "latex", label: "LaTeX Templating", href: "latex-templating.html" }
   ]
   render AdminLTE-like left rail with Bootstrap 5 classes
@@ -143,7 +146,9 @@ graph TB
 -------------------------------------------------------------
 ```mermaid
 graph LR
-  Frontend[Frontend Pages\n(Bootstrap 5, DataTables, jQuery ES6 classes)] -->|AJAX| ApiControllers
+  SpecUI[Spec Search UI] -->|AJAX| ApiControllers
+  CatalogUI[Catalog UI] -->|AJAX| ApiControllers
+  CsvUI[CSV Tools UI] -->|AJAX| ApiControllers
   ApiControllers[Public Controllers] --> CatalogSvc[Catalog Service]
   ApiControllers --> SearchSvc[SpecSearch Service]
   CatalogSvc --> CatRepo[Category Repository]
@@ -162,6 +167,7 @@ sequenceDiagram
   participant U as User
   participant Spec as Spec Search UI
   participant Catalog as Catalog UI
+  participant Csv as CSV Tools UI
   participant API as Catalog API
   participant DB as MySQL
   U->>Spec: View spec-search results table
@@ -175,6 +181,14 @@ sequenceDiagram
   API-->>Catalog: 200 OK + hierarchy JSON
   Catalog->>Catalog: Auto-select matching series node; load products for that series
   Catalog-->>U: Series node selected and search prefilled
+  U->>Csv: Open catalog-csv.html
+  Csv->>API: GET /api/catalog/csv/history
+  API-->>Csv: 200 OK + files + audits + lock state
+  U->>Csv: Trigger export/import/restore/delete
+  Csv->>API: POST /api/catalog/csv/export|restore|import
+  API->>DB: Write/read catalog rows + audit JSONL
+  API-->>Csv: 200/202 OK + correlationId
+  Csv-->>U: Show status and refresh history tables
 ```
 
 9. ER Diagram (Mermaid)
@@ -305,6 +319,7 @@ Testing Approach
 - **Contract**: error envelope shape `{ error: { code, message, correlationId } }` and success envelopes consumed by UI.
 - **Optional E2E**: load catalog UI, ensure DataTables renders and paginates via real APIs.
 - **Manual**: spec-search Edit deep link redirects to catalog UI, pre-selects the target series, and fills `hierarchy-search` with the product SKU/item code.
+- **Manual (CSV page)**: catalog-csv.html loads CSV history/ truncate audit tables, runs export/import/restore/delete flows, and surfaces correlation IDs in status messages.
 
 Non-Functional & Constraints
 ----------------------------
@@ -312,7 +327,7 @@ Non-Functional & Constraints
 - Avoid global jQuery usage; define ES6 classes per page (e.g., `class CatalogTable` that binds events and DataTables init).
 - Local storage writable under `storage/*`; do not serve private CSV files publicly.
 - Ensure LaTeX binary path is configurable via env/`config/app.php` (default `pdflatex`).
-- Sidebar navigation uses Bootstrap 5 vertical nav with AdminLTE-inspired left rail; sticky on desktop, slide-over on mobile, active state must reflect current page without breaking existing layouts.
+- Sidebar navigation uses Bootstrap 5 vertical nav with AdminLTE-inspired left rail; sticky on desktop, slide-over on mobile, active state must reflect current page without breaking existing layouts. Navigation order: Spec Search, Catalog UI, CSV Import/Export, LaTeX Templating.
 
 Error Logging Plan (Backend & Frontend)
 ---------------------------------------

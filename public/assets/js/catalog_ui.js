@@ -1810,23 +1810,28 @@ class CatalogUI {
         });
     };
 
-    const bindGlobalEvents = () => {
+    const bindGlobalEvents = (csvUiPresent) => {
         bindHierarchyEvents();
         bindSeriesFieldEvents();
         bindMetadataEvents();
         bindProductEvents();
-        bindCsvEvents();
-        bindTruncateEvents();
+        if (csvUiPresent) {
+            bindCsvEvents();
+            bindTruncateEvents();
+        }
     };
 
     const init = async () => {
-        bindGlobalEvents();
+        const csvUiPresent = $el('csvHistoryTable').length > 0;
+        bindGlobalEvents(csvUiPresent);
         bindLayoutReflowEvents();
         observeSidebarState();
         resetSeriesUI();
         await loadHierarchy();
         await applyDeepLinkFromQuery();
-        await loadCsvHistory();
+        if (csvUiPresent) {
+            await loadCsvHistory();
+        }
     };
 
     $(init);

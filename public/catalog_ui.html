@@ -38,6 +38,10 @@
                             <span class="sidebar-indicator"></span>
                             <span class="nav-label">Catalog UI</span>
                         </a>
+                        <a class="nav-link" href="catalog-csv.html">
+                            <span class="sidebar-indicator"></span>
+                            <span class="nav-label">CSV Import/Export</span>
+                        </a>
                         <a class="nav-link" href="latex-templating.html">
                             <span class="sidebar-indicator"></span>
                             <span class="nav-label">LaTeX Templating</span>
@@ -172,117 +176,35 @@
                     <div class="products-list-block">
                         <div class="product-table-scroll">
                             <table id="product-list-table"
-                                class="table table-striped table-hover align-middle datatable w-100">
-                                <thead></thead>
-                                <tbody>
-                                    <tr>
-                                        <td>Loading...</td>
-                                    </tr>
-                                </tbody>
-                            </table>
+                                    class="table table-striped table-hover align-middle datatable w-100">
+                                    <thead></thead>
+                                    <tbody>
+                                        <tr>
+                                            <td>Loading...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <button type="button" id="product-delete-button">Delete Selected Product</button>
                         </div>
-                        <button type="button" id="product-delete-button">Delete Selected Product</button>
+                        <form id="product-form" class="stacked-form products-form">
+                            <input type="hidden" id="product-id">
+                            <label>SKU:<input type="text" id="product-sku" required></label>
+                            <label>Name:<input type="text" id="product-name" required></label>
+                            <label>Description:<textarea id="product-description" rows="4"></textarea></label>
+                            <div id="product-custom-fields"></div>
+                            <div class="inline-actions">
+                                <button type="submit" id="product-submit">Save Product</button>
+                                <button type="button" id="product-clear-button">Clear</button>
+                            </div>
+                        </form>
                     </div>
-                    <form id="product-form" class="stacked-form products-form">
-                        <input type="hidden" id="product-id">
-                        <label>SKU:<input type="text" id="product-sku" required></label>
-                        <label>Name:<input type="text" id="product-name" required></label>
-                        <label>Description:<textarea id="product-description" rows="4"></textarea></label>
-                        <div id="product-custom-fields"></div>
-                        <div class="inline-actions">
-                            <button type="submit" id="product-submit">Save Product</button>
-                            <button type="button" id="product-clear-button">Clear</button>
-                        </div>
-                    </form>
                 </div>
             </div>
-        </div>
-        <div class="section row g-0 no-bootstrap-gap">
-            <div class="panel panel-csv csv-section">
-                <h2>CSV Import / Export</h2>
-                <div class="csv-actions">
-                    <button type="button" id="csv-export-button">Export Catalog CSV</button>
-                    <form id="csv-import-form" enctype="multipart/form-data">
-                        <label for="csv-import-file">Import CSV:</label>
-                        <input type="file" id="csv-import-file" accept=".csv">
-                        <button type="submit" id="csv-import-submit">Import</button>
-                    </form>
-                    <button type="button" id="truncate-button" class="danger-button">Truncate Catalog</button>
-                </div>
-                <div class="truncate-warning">
-                    Truncate wipes every category, series, product, and custom field definition/value before reseeding
-                    the baseline tree.
-                    Use only when you are ready to import a fresh CSV snapshot.
-                </div>
-                <div class="csv-history">
-                    <h3>CSV History</h3>
-                    <table id="csv-history-table" class="table table-striped table-hover align-middle datatable w-100">
-                        <thead>
-                            <tr>
-                                <th>Type</th>
-                                <th>Name</th>
-                                <th>Timestamp</th>
-                                <th>Size (bytes)</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td colspan="5">Loading...</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-                <div class="truncate-history">
-                    <h3>Truncate Audit History</h3>
-                    <p class="truncate-history-note">Latest destructive actions with operator reason and audit
-                        identifiers.</p>
-                    <table id="truncate-audit-table"
-                        class="table table-striped table-hover align-middle datatable w-100">
-                        <thead>
-                            <tr>
-                                <th>Timestamp</th>
-                                <th>Reason</th>
-                                <th>Deleted</th>
-                                <th>Audit ID</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td colspan="4">No truncate actions logged.</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-            </main>
-        </div>
-        <div class="sidebar-backdrop" aria-hidden="true"></div>
-
-        <div id="truncate-modal-backdrop" class="modal-backdrop" hidden></div>
-        <div id="truncate-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="truncate-modal-title"
-            hidden>
-            <div class="modal-content">
-                <h3 id="truncate-modal-title">Confirm Catalog Truncate</h3>
-                <p>Type <strong>TRUNCATE</strong> and provide a short reason before continuing. This will delete every
-                    record.</p>
-                <form id="truncate-form">
-                    <label for="truncate-confirm-input">Confirmation Text</label>
-                    <input type="text" id="truncate-confirm-input" autocomplete="off" placeholder="TRUNCATE" required>
-                    <label for="truncate-reason-input">Reason</label>
-                    <textarea id="truncate-reason-input" rows="3" maxlength="256"
-                        placeholder="Describe why you are truncating." required></textarea>
-                    <div id="truncate-modal-error" class="modal-error" aria-live="polite"></div>
-                    <div class="modal-actions">
-                        <button type="button" id="truncate-cancel-button">Cancel</button>
-                        <button type="submit" id="truncate-confirm-button" class="danger-button" disabled>Confirm
-                            Truncate</button>
-                    </div>
-                </form>
-            </div>
-        </div>
+        </main>
     </div>
+    <div class="sidebar-backdrop" aria-hidden="true"></div>
+</div>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
     <script src="https://cdn.datatables.net/1.13.8/js/dataTables.bootstrap5.min.js"></script>
