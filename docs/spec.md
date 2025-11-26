@@ -313,3 +313,36 @@ Non-Functional & Constraints
 - Local storage writable under `storage/*`; do not serve private CSV files publicly.
 - Ensure LaTeX binary path is configurable via env/`config/app.php` (default `pdflatex`).
 - Sidebar navigation uses Bootstrap 5 vertical nav with AdminLTE-inspired left rail; sticky on desktop, slide-over on mobile, active state must reflect current page without breaking existing layouts.
+
+Error Logging Plan (Backend & Frontend)
+---------------------------------------
+- **Correlation IDs**: Generate per request in a bootstrap hook; accept inbound `X-Correlation-ID` if present; attach to all responses and pass into services/repositories and LaTeX/CSV workers. Frontend echoes correlation ID in UI error to assist support.
+- **Backend logging target**: JSONL file `storage/logs/app.log` (ensure directory exists/writable). Fields: `ts`, `level`, `corr`, `route`, `action`, `status`, `errorCode`, `msg`, `durationMs`, `context` (sanitized). Rotate daily or by size; no PII or secrets.
+- **Levels & usage**: `info` for request start/end at controller boundary; `warn` for recoverable validation issues; `error` for exceptions. Include input hashes/sizes instead of payloads; include SQL timings where available (no raw SQL with secrets).
+- **Frontend handling**: Central `handleApiError` utility used by DataTables AJAX and custom calls; shows toast/banner with friendly copy and correlation ID. Dev console logs structured entry `{ level, endpoint, status, errorCode, correlationId, message }`; production console logging disabled unless feature-flagged.
+- **Audit linkage**: Truncate/import flows log to both main log and existing audit JSONL with correlation ID. CSV/LaTeX paths are referenced, not dumped.
+- **Config**: Log path, rotation policy, level thresholds, timezone set in `config/app.php` (with defaults); disable `display_errors` in production while preserving logs. Include `logging.enabled` flag—when false, logger becomes a no-op (correlation IDs still generated and returned) to allow silent modes or perf troubleshooting.
+- **Testing**: Unit-test logger writes valid JSON with required fields; unit-test error handler envelopes; integration tests verify correlation ID propagation and that representative endpoints emit log lines on both success/failure paths.
+
+Error Handling Sequence (Mermaid)
+---------------------------------
+```mermaid
+sequenceDiagram
+  participant FE as Frontend (DataTables/ES6)
+  participant API as PHP Controllers
+  participant SVC as Services
+  participant LOG as Logger
+  FE->>API: AJAX request (optional X-Correlation-ID)
+  API->>API: Ensure correlationId (generate if missing)
+  API->>LOG: info start {route, corr}
+  API->>SVC: call service with corr
+  SVC-->>API: result or CatalogApiException
+  alt success
+    API->>LOG: info end {status:200,duration}
+    API-->>FE: 200 {data, correlationId}
+  else error
+    API->>LOG: error {status, code, message, stack}
+    API-->>FE: status {error:{code,message,correlationId}}
+  end
+  FE->>FE: handleApiError or render data; show toast with correlationId on failure
+```

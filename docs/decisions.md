@@ -14,3 +14,6 @@ Decisions Log
 - 2025-11-28: Spec search results include Edit links that deep-link to catalog UI with category/series/product query params; catalog UI must pre-fill search and select the series accordingly.
 - 2025-11-29: Catalog UI must propagate deep-link product query param into the DataTables search input for the product list and trigger filtering automatically after table load.
 - 2025-11-28: Spec-search results require an Edit button that deep-links to `catalog_ui.html` with category/series/product query params; catalog UI must parse them, prefill the hierarchy search with the product code, and auto-select the matching series node.
+- 2025-11-30: Implement structured JSONL logging in backend (`storage/logs/app.log`) with correlation IDs; honor inbound `X-Correlation-ID`, generate if missing, and include in all responses.
+- 2025-11-30: Frontend error handling will surface API errors via shared utility, display user-friendly copy plus correlation ID, and avoid console logging in production (dev-only structured console logs).
+- 2025-11-30: Introduce `logging.enabled` flag (backend config, frontend-aware) to disable log writes while still generating/returning correlation IDs for troubleshooting scenarios.

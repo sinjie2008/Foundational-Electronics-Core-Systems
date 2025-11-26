@@ -17,11 +17,13 @@ final class Response
     {
         http_response_code($status);
         header('Content-Type: application/json; charset=utf-8');
+        $cid = $correlationId ?? CorrelationId::generate();
+        header('X-Correlation-ID: ' . $cid);
 
         echo json_encode([
             'success' => true,
             'data' => $data,
-            'correlationId' => $correlationId ?? CorrelationId::generate(),
+            'correlationId' => $cid,
         ]);
     }
 
@@ -29,12 +31,14 @@ final class Response
     {
         http_response_code($status);
         header('Content-Type: application/json; charset=utf-8');
+        $cid = $correlationId ?? CorrelationId::generate();
+        header('X-Correlation-ID: ' . $cid);
 
         echo json_encode([
             'error' => [
                 'code' => $code,
                 'message' => $message,
-                'correlationId' => $correlationId ?? CorrelationId::generate(),
+                'correlationId' => $cid,
             ],
         ]);
     }

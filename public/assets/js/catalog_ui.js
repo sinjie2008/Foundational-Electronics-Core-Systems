@@ -359,12 +359,27 @@ class CatalogUI {
         return candidate;
     };
 
-    const toPromise = (jqXHR) =>
+    const toPromise = (jqXHR, action = 'ajax') =>
         new Promise((resolve, reject) => {
-            jqXHR.done(resolve).fail(reject);
+            jqXHR
+                .done((data, textStatus, xhr) => {
+                    const correlationId = AppError.extractCorrelationId(data, xhr);
+                    AppError.logDev({
+                        level: 'info',
+                        endpoint: action,
+                        status: xhr?.status,
+                        correlationId,
+                        message: 'ok',
+                    });
+                    resolve(data);
+                })
+                .fail((xhr) => {
+                    const error = AppError.handleAjaxFailure(xhr, action, 'Request failed.');
+                    reject(error);
+                });
         });
 
-    const requestJson = (params) => toPromise($.getJSON(apiBase, params));
+    const requestJson = (params) => toPromise($.getJSON(apiBase, params), params?.action ?? 'ajax:get');
 
     const postJson = (action, payload = {}) =>
         toPromise(
@@ -374,7 +389,8 @@ class CatalogUI {
                 contentType: 'application/json',
                 dataType: 'json',
                 data: JSON.stringify(payload),
-            })
+            }),
+            action
         );
 
     const postMultipart = (action, formData) =>
@@ -386,7 +402,8 @@ class CatalogUI {
                 contentType: false,
                 dataType: 'json',
                 data: formData,
-            })
+            }),
+            action
         );
 
     const setStatus = (message = '', isError = false) => {
@@ -401,12 +418,21 @@ class CatalogUI {
             .addClass(isError ? 'status-error' : 'status-info');
     };
 
-    const handleErrorResponse = (response) => {
+    const setStatusWithError = (message, error) => {
+        const correlationId = error?.correlationId ?? null;
+        setStatus(AppError.buildUserMessage(message, correlationId), true);
+    };
+
+    const handleErrorResponse = (response, fallback = 'Request failed.') => {
         if (!response) {
-            setStatus('Unexpected error occurred.', true);
+            setStatus(AppError.buildUserMessage('Unexpected error occurred.', null), true);
             return;
         }
-        let message = response.message || 'Request failed.';
+        const correlationId = AppError.extractCorrelationId(response);
+        let message =
+            response.message ||
+            response.error?.message ||
+            fallback;
         if (response.details) {
             const parts = Object.values(response.details)
                 .filter(Boolean)
@@ -415,7 +441,7 @@ class CatalogUI {
                 message = `${message} (${parts.join('; ')})`;
             }
         }
-        setStatus(message, true);
+        setStatus(AppError.buildUserMessage(message, correlationId), true);
     };
 
     const applyCsvLockState = () => {
@@ -526,6 +552,9 @@ class CatalogUI {
     };
 
     const resetSeriesUI = () => {
+        destroyDataTable('seriesFieldsTable');
+        destroyDataTable('seriesMetadataFieldsTable');
+        destroyDataTable('productListTable');
         $el('seriesFieldsTable').empty();
         $el('seriesMetadataFieldsTable').empty();
         $el('seriesMetadataValues').empty();
@@ -534,6 +563,10 @@ class CatalogUI {
         resetSeriesMetadataFieldForm();
         resetSeriesMetadataForm();
         resetProductForm();
+        state.seriesFields = [];
+        state.seriesMetadataFields = [];
+        state.seriesMetadataValues = {};
+        state.products = [];
         $el('seriesManagement').prop('hidden', true);
     };
 
@@ -612,7 +645,7 @@ class CatalogUI {
             updateSelectedNodePanel();
         } catch (error) {
             console.error(error);
-            setStatus('Unable to load hierarchy.', true);
+            setStatusWithError('Unable to load hierarchy.', error);
         }
     };
 
@@ -756,7 +789,7 @@ class CatalogUI {
             renderProductFormFields();
         } catch (error) {
             console.error(error);
-            setStatus('Unable to load series context.', true);
+            setStatusWithError('Unable to load series context.', error);
         }
     };
     const getProductFields = () => state.seriesFields || [];
@@ -1045,7 +1078,7 @@ class CatalogUI {
             renderProductList();
         } catch (error) {
             console.error(error);
-            setStatus('Unable to load products.', true);
+            setStatusWithError('Unable to load products.', error);
         }
     };
     const renderCsvHistory = (files) => {
@@ -1171,7 +1204,7 @@ class CatalogUI {
             applyCsvLockState();
         } catch (error) {
             console.error(error);
-            setStatus('Unable to load CSV history.', true);
+            setStatusWithError('Unable to load CSV history.', error);
         }
     };
 
@@ -1248,7 +1281,7 @@ class CatalogUI {
                 loadSeriesContext(state.selectedNodeId);
             } catch (error) {
                 console.error(error);
-                setStatus('Failed to delete series field.', true);
+                setStatusWithError('Failed to delete series field.', error);
             }
         }
     };
@@ -1284,7 +1317,7 @@ class CatalogUI {
                 await loadProductsOnly(state.selectedNodeId);
             } catch (error) {
                 console.error(error);
-                setStatus('Failed to delete product.', true);
+                setStatusWithError('Failed to delete product.', error);
             }
         }
     };
@@ -1340,7 +1373,7 @@ class CatalogUI {
                 await loadHierarchy();
             } catch (error) {
                 console.error(error);
-                setStatus('Failed to create node.', true);
+                setStatusWithError('Failed to create node.', error);
             }
         });
 
@@ -1366,7 +1399,7 @@ class CatalogUI {
                 await loadHierarchy();
             } catch (error) {
                 console.error(error);
-                setStatus('Failed to update node.', true);
+                setStatusWithError('Failed to update node.', error);
             }
         });
 
@@ -1390,7 +1423,7 @@ class CatalogUI {
                 await loadHierarchy();
             } catch (error) {
                 console.error(error);
-                setStatus('Failed to delete node.', true);
+                setStatusWithError('Failed to delete node.', error);
             }
         });
 
@@ -1445,7 +1478,7 @@ class CatalogUI {
                 await loadSeriesContext(state.selectedNodeId);
             } catch (error) {
                 console.error(error);
-                setStatus('Failed to save series field.', true);
+                setStatusWithError('Failed to save series field.', error);
             }
         });
 
@@ -1482,7 +1515,7 @@ class CatalogUI {
                 await loadSeriesContext(state.selectedNodeId);
             } catch (error) {
                 console.error(error);
-                setStatus('Failed to save metadata field.', true);
+                setStatusWithError('Failed to save metadata field.', error);
             }
         });
 
@@ -1517,7 +1550,7 @@ class CatalogUI {
                 await loadSeriesContext(state.selectedNodeId);
             } catch (error) {
                 console.error(error);
-                setStatus('Failed to save metadata.', true);
+                setStatusWithError('Failed to save metadata.', error);
             }
         });
 
@@ -1562,7 +1595,7 @@ class CatalogUI {
                 await loadProductsOnly(state.selectedNodeId);
             } catch (error) {
                 console.error(error);
-                setStatus('Failed to save product.', true);
+                setStatusWithError('Failed to save product.', error);
             }
         });
 
@@ -1590,7 +1623,7 @@ class CatalogUI {
                 await loadProductsOnly(state.selectedNodeId);
             } catch (error) {
                 console.error(error);
-                setStatus('Failed to delete product.', true);
+                setStatusWithError('Failed to delete product.', error);
             }
         });
 
@@ -1618,7 +1651,7 @@ class CatalogUI {
                 }
             } catch (error) {
                 console.error(error);
-                setStatus('Failed to export catalog CSV.', true);
+                setStatusWithError('Failed to export catalog CSV.', error);
             } finally {
                 $button.prop('disabled', false);
             }
@@ -1653,7 +1686,7 @@ class CatalogUI {
                 await loadCsvHistory();
             } catch (error) {
                 console.error(error);
-                setStatus('Failed to import CSV.', true);
+                setStatusWithError('Failed to import CSV.', error);
             } finally {
                 $submit.prop('disabled', false);
             }
@@ -1684,7 +1717,7 @@ class CatalogUI {
                 await loadCsvHistory();
             } catch (error) {
                 console.error(error);
-                setStatus('Failed to restore CSV file.', true);
+                setStatusWithError('Failed to restore CSV file.', error);
             } finally {
                 $button.prop('disabled', false);
             }
@@ -1708,7 +1741,7 @@ class CatalogUI {
                 await loadCsvHistory();
             } catch (error) {
                 console.error(error);
-                setStatus('Failed to delete CSV file.', true);
+                setStatusWithError('Failed to delete CSV file.', error);
             }
         });
     };
@@ -1767,8 +1800,9 @@ class CatalogUI {
                 await loadCsvHistory();
             } catch (error) {
                 console.error(error);
-                $el('truncateModalError').text('Unable to truncate catalog.');
-                setStatus('Unable to truncate catalog.', true);
+                const message = AppError.buildUserMessage('Unable to truncate catalog.', error?.correlationId);
+                $el('truncateModalError').text(message);
+                setStatusWithError('Unable to truncate catalog.', error);
             } finally {
                 state.truncate.submitting = false;
                 applyCsvLockState();

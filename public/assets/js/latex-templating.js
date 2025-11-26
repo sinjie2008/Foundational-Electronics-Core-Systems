@@ -27,7 +27,7 @@
                             return '<span class="text-muted">No description</span>';
                         }
                         const text = String(data);
-                        return text.length > 80 ? text.slice(0, 80) + '…' : text;
+                        return text.length > 80 ? text.slice(0, 80) + 'â€¦' : text;
                     }
                 },
                 { data: 'createdAt', title: 'Created', render: renderDate },
@@ -49,7 +49,7 @@
             ],
             language: {
                 search: '',
-                searchPlaceholder: 'Search templates…'
+                searchPlaceholder: 'Search templatesâ€¦'
             },
             lengthMenu: [10, 25, 50]
         });
@@ -309,7 +309,7 @@
                     renderEl.innerHTML = '<div class="alert alert-warning mb-0">Preview limited to raw source for this template.</div>';
                 });
         } else {
-            renderEl.innerHTML = '<p class="text-muted mb-0">MathJax is loading…</p>';
+            renderEl.innerHTML = '<p class="text-muted mb-0">MathJax is loadingâ€¦</p>';
         }
     }
 
@@ -379,7 +379,7 @@
     /** Formats ISO timestamps for DataTable cells. */
     function renderDate(value) {
         if (!value) {
-            return '<span class="text-muted">—</span>';
+            return '<span class="text-muted">â€”</span>';
         }
         return formatDateTime(value);
     }
@@ -434,15 +434,16 @@
         }
     }
 
-    /** Builds a user-visible error message from an API exception. */
+    /** Builds a user-visible error message from an API exception (with correlation ID). */
     function buildErrorMessage(error) {
         if (!error) {
             return 'Unable to complete the request.';
         }
-        if (error.message) {
-            return error.message;
-        }
-        return 'Request failed. Check the server logs for details.';
+        const correlationId = error.correlationId || null;
+        const baseMessage = error.message
+            ? error.message
+            : 'Request failed. Check the server logs for details.';
+        return AppError.buildUserMessage(baseMessage, correlationId);
     }
 
     /** Issues an AJAX request against catalog.php with JSON handling. */
@@ -464,13 +465,48 @@
             fetchOptions.body = JSON.stringify(opts.body);
         }
         const response = await fetch('catalog.php?' + params.toString(), fetchOptions);
-        const payload = await response.json();
-        if (!payload.success) {
-            const error = new Error(payload.message || 'Request failed.');
-            error.details = payload.details || {};
-            error.errorCode = payload.errorCode || 'UNKNOWN_ERROR';
+        const text = await response.text();
+        let payload = {};
+        try {
+            payload = text ? JSON.parse(text) : {};
+        } catch (parseError) {
+            payload = {};
+        }
+
+        const correlationId = AppError.extractCorrelationId(payload, response);
+
+        if (!response.ok || !payload.success) {
+            const message =
+                payload?.message ||
+                payload?.error?.message ||
+                'Request failed.';
+            const errorCode =
+                payload?.errorCode ||
+                payload?.error?.code ||
+                'UNKNOWN_ERROR';
+            AppError.logDev({
+                level: 'error',
+                endpoint: action,
+                status: response.status,
+                errorCode: errorCode,
+                correlationId,
+                message,
+            });
+            const error = new Error(AppError.buildUserMessage(message, correlationId));
+            error.details = payload.details || payload.error?.details || {};
+            error.errorCode = errorCode;
+            error.correlationId = correlationId;
             throw error;
         }
+
+        AppError.logDev({
+            level: 'info',
+            endpoint: action,
+            status: response.status,
+            correlationId,
+            message: 'ok',
+        });
+
         return payload.data || null;
     }
 })();

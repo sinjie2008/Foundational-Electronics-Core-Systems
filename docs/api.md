@@ -9,6 +9,16 @@ Conventions
 - Errors: structured as `{ "error": { "code": "string", "message": "string", "correlationId": "uuid" } }`.
 - Success envelope: `{ "data": <payload>, "correlationId": "uuid" }` for consistency with front-end DataTables consumption.
 - Auth: none yet (assumes trusted environment); add token/header later if required.
+- Correlation ID: inbound `X-Correlation-ID` is honored; if absent, the server generates one and returns it in the envelope. Logs always include the correlation ID.
+- Logging: each request logs at start/end with route/status; errors log `errorCode`, `message`, sanitized `context`, and correlation ID. No PII/secrets in logs. `logging.enabled=false` disables log writes but responses still include correlation IDs.
+
+Error Codes (current)
+---------------------
+- `validation_error` (400): request payload/params invalid.
+- `invalid_token` (400): truncate/import token mismatch.
+- `forbidden` (403): reserved for future auth.
+- `not_found` (404): resource missing (future use).
+- `internal_error` (500): unhandled exception or infrastructure issue.
 
 Resources
 ---------

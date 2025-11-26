@@ -1,6 +1,11 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/app/bootstrap.php';
+
+use App\Support\Logger;
+use App\Support\Request as SupportRequest;
+
 /**
  * Catalog management entrypoint using object-oriented services.
  *
@@ -79,6 +84,20 @@ class CatalogApiException extends Exception
  */
 final class HttpResponder
 {
+    private ?string $correlationId = null;
+
+    public function setCorrelationId(string $correlationId): void
+    {
+        $this->correlationId = $correlationId;
+    }
+
+    private function emitCorrelationHeader(): void
+    {
+        if ($this->correlationId && !headers_sent()) {
+            header('X-Correlation-ID: ' . $this->correlationId);
+        }
+    }
+
     /**
      * Emits a JSON payload.
      *
@@ -86,12 +105,16 @@ final class HttpResponder
      */
     public function sendJson(array $payload, int $statusCode = 200): void
     {
+        $this->emitCorrelationHeader();
         if (!headers_sent()) {
             http_response_code($statusCode);
             header('Content-Type: application/json; charset=utf-8');
         }
 
         try {
+            if ($this->correlationId) {
+                $payload['correlationId'] = $payload['correlationId'] ?? $this->correlationId;
+            }
             echo json_encode(
                 $payload,
                 JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
@@ -135,6 +158,7 @@ final class HttpResponder
         if (!is_file($filePath)) {
             throw new CatalogApiException('CSV_NOT_FOUND', 'CSV file not found.', 404);
         }
+        $this->emitCorrelationHeader();
         if (!headers_sent()) {
             header('Content-Type: ' . $contentType);
             header('Content-Disposition: attachment; filename="' . basename($downloadName) . '"');
@@ -4446,10 +4470,26 @@ final class CatalogApplication
         }
 
         $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+        $correlationId = SupportRequest::correlationId();
+        $this->responder->setCorrelationId($correlationId);
+        $route = SupportRequest::route();
+        $startedAt = microtime(true);
+        Logger::info('request_start', [
+            'route' => $route,
+            'method' => $method,
+            'action' => $action,
+        ], $correlationId);
 
         try {
             $data = $this->dispatch($action, $method);
             if ($data === self::RESPONSE_STREAMED) {
+                Logger::info('request_success', [
+                    'route' => $route,
+                    'method' => $method,
+                    'action' => $action,
+                    'status' => 200,
+                    'durationMs' => (int) round((microtime(true) - $startedAt) * 1000),
+                ], $correlationId);
                 return;
             }
             $payload = ['success' => true];
@@ -4473,6 +4513,15 @@ final class CatalogApplication
                 $exception->getStatusCode(),
                 $details
             );
+            Logger::error('request_failed', [
+                'route' => $route,
+                'method' => $method,
+                'action' => $action,
+                'status' => $exception->getStatusCode(),
+                'errorCode' => $exception->getErrorCode(),
+                'exception' => $exception,
+                'durationMs' => (int) round((microtime(true) - $startedAt) * 1000),
+            ], $correlationId);
         } catch (Throwable $exception) {
             error_log('Catalog API failure: ' . $exception->getMessage());
             $this->responder->sendError(
@@ -4481,7 +4530,25 @@ final class CatalogApplication
                 500,
                 ['error' => $exception->getMessage()]
             );
+            Logger::error('request_failed', [
+                'route' => $route,
+                'method' => $method,
+                'action' => $action,
+                'status' => 500,
+                'errorCode' => 'SERVER_ERROR',
+                'exception' => $exception,
+                'durationMs' => (int) round((microtime(true) - $startedAt) * 1000),
+            ], $correlationId);
+            return;
         }
+
+        Logger::info('request_success', [
+            'route' => $route,
+            'method' => $method,
+            'action' => $action,
+            'status' => 200,
+            'durationMs' => (int) round((microtime(true) - $startedAt) * 1000),
+        ], $correlationId);
 
         exit(0);
     }

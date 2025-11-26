@@ -24,4 +24,34 @@ final class Request
     {
         return $_GET[$key] ?? $default;
     }
+
+    /**
+     * Return the HTTP method (defaults to GET when unavailable).
+     */
+    public static function method(): string
+    {
+        return $_SERVER['REQUEST_METHOD'] ?? 'GET';
+    }
+
+    /**
+     * Return the current route/path for logging purposes.
+     */
+    public static function route(): string
+    {
+        if (!empty($_SERVER['REQUEST_URI'])) {
+            return $_SERVER['REQUEST_URI'];
+        }
+        if (!empty($_SERVER['SCRIPT_NAME'])) {
+            return $_SERVER['SCRIPT_NAME'];
+        }
+        return 'unknown';
+    }
+
+    /**
+     * Return or generate a correlation ID for the request lifecycle.
+     */
+    public static function correlationId(): string
+    {
+        return CorrelationId::fromRequest();
+    }
 }

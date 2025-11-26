@@ -14,6 +14,9 @@ Legend: Pending | In Progress | Blocked | Done
 | Remove sidebar white margin/gutters | Done | Visual check on catalog/spec/latex pages: sidebar flush to viewport, content retains intended padding | Update layout gutters + body padding |
 | Remove sidebar top offset and forced min-height | Done | Visual check: sidebar aligns naturally without forced 100vh; sticky + mobile slide-over unchanged | Update shared sidebar CSS |
 | CSV/LaTeX service wrap (no behavior change) with logging and correlation IDs | Pending | Unit tests for import validation; integration test for PDF URL generation | Depends on backend refactor |
+| Backend structured logging + global error handler (correlation ID propagation) | In Progress | Unit tests for logger/envelope; integration tests hitting representative endpoints to assert logs + correlation IDs | Requires docs/spec/api/decisions updates (ready) |
+| Frontend error handling utility (shared toast/banner, dev console structured log) | In Progress | Browser/dev-mode tests; verify DataTables AJAX and custom calls surface correlation IDs and friendly messages | Depends on backend error envelope |
+| Logging enable/disable flag wiring (backend config + frontend awareness) | In Progress | Unit test logger no-op when disabled; integration test still returns correlation IDs; dev browser check that console logging is suppressed when off | Depends on logging tasks above |
 | Build/test scripts (PowerShell) and test consolidation (unit/integration/contract) | Pending | Run `scripts/run-tests.ps1` (to be updated) | Depends on refactor tasks |
 | Clean-up and verify paths (public/, storage/, assets/) and update docs/todolist statuses | Pending | Regression smoke + contract tests | Final step |
 | Document spec-search → catalog edit deep link (query params + prefill behaviors) | Done | Manual review; ensure spec/decisions capture assumptions | Pre-req for implementation |

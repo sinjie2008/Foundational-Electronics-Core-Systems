@@ -103,11 +103,45 @@ class SpecSearchPage {
             headers: { 'Content-Type': 'application/json' },
             ...options,
         });
-        if (!response.ok) {
-            const body = await response.text();
-            throw new Error(body || `Request failed: ${response.status}`);
+
+        const text = await response.text();
+        let payload = {};
+        try {
+            payload = text ? JSON.parse(text) : {};
+        } catch (parseError) {
+            payload = {};
         }
-        return response.json();
+
+        const correlationId = AppError.extractCorrelationId(payload, response);
+
+        if (!response.ok) {
+            const message =
+                payload?.error?.message ??
+                payload?.message ??
+                `Request failed: ${response.status}`;
+            AppError.logDev({
+                level: 'error',
+                endpoint: url,
+                status: response.status,
+                errorCode: payload?.error?.code ?? 'request_failed',
+                correlationId,
+                message,
+            });
+            const error = new Error(AppError.buildUserMessage(message, correlationId));
+            error.correlationId = correlationId;
+            error.errorCode = payload?.error?.code ?? 'request_failed';
+            throw error;
+        }
+
+        AppError.logDev({
+            level: 'info',
+            endpoint: url,
+            status: response.status,
+            correlationId,
+            message: 'ok',
+        });
+
+        return payload;
     }
 
     /**
