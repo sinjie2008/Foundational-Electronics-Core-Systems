@@ -186,6 +186,13 @@ class CatalogUI {
         }
         dataTableRegistry.delete(tableKey);
     };
+    // Remove any existing rows so DataTables can rebuild cleanly when column sets change.
+    const clearTableBody = (tableKey) => {
+        const $table = $el(tableKey);
+        if ($table?.length) {
+            $table.find('tbody').empty();
+        }
+    };
     const syncDataTable = (tableKey, columns, rows, options = {}) => {
         if (!Array.isArray(rows) || !rows.length) {
             destroyDataTable(tableKey);
@@ -211,6 +218,7 @@ class CatalogUI {
             return;
         }
         destroyDataTable(tableKey);
+        clearTableBody(tableKey);
         const instance = $table.DataTable({
             ...DATA_TABLE_DEFAULTS,
             ...extraOptions,

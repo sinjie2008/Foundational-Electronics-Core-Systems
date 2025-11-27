@@ -27,3 +27,4 @@ Decisions Log
 - 2025-12-02: Add a global loading overlay with a top-of-page progress bar that blocks pointer/keyboard interaction (including scroll) while UI pages load or save data; clear overlay and bar once all tracked requests complete.
 - 2025-11-27: Remove custom padding/margin/border overrides from DataTables pagination buttons to align with native pagination sizing while keeping current/hover/disabled colors.
 - 2025-11-27: Remove DataTables pagination focus ring/box-shadow to stop blue blink and ensure single-click page changes (no second click needed).
+- 2025-12-03: When series custom fields change (add/delete), the product list DataTable must clear existing DOM rows before rebuilding so the new column set matches the header and prevents DataTables “incorrect column count” errors during reloads.

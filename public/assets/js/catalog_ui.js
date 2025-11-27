@@ -194,6 +194,13 @@ class CatalogUI {
         }
         dataTableRegistry.delete(tableKey);
     };
+    // Clear existing DOM rows before rebuilding so column counts stay aligned after schema changes.
+    const clearTableBody = (tableKey) => {
+        const $table = $el(tableKey);
+        if ($table?.length) {
+            $table.find('tbody').empty();
+        }
+    };
     const adjustAllTables = () => {
         dataTableRegistry.forEach(({ instance }) => {
             if (!instance) return;
@@ -242,6 +249,7 @@ class CatalogUI {
             return;
         }
         destroyDataTable(tableKey);
+        clearTableBody(tableKey);
         const instance = $table.DataTable({
             ...DATA_TABLE_DEFAULTS,
             ...extraOptions,

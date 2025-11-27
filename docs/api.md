@@ -70,6 +70,7 @@ Resources
 - `GET /api/catalog/series/{seriesId}/products`
   - Purpose: list products for a series including custom field values.
   - Response `200`: `data: ProductWithCustom[]`.
+  - Notes: values for deleted field definitions are omitted; when the client changes the product-attribute field set (add/delete/rename), it must clear any existing product table rows before reinitializing DataTables so the header/column set matches the new schema and avoids “incorrect column count” warnings.
 
 - `POST /api/catalog/series/{seriesId}/products`
   - Purpose: create or update a product and its custom field values.
