@@ -25,6 +25,7 @@ Decisions Log
 - 2025-11-27: Display order edits for hierarchy nodes always include the stored `parentId` and keep the prior order value when the input is blank to avoid resetting to zero and to keep backend ordering consistent.
 - 2025-11-27: Hierarchy reloads must not clear status banners when triggered by create/update/delete/import/restore/truncate, so users see confirmation after saving nodes or CSV actions.
 - 2025-12-02: Add a global loading overlay with a top-of-page progress bar that blocks pointer/keyboard interaction (including scroll) while UI pages load or save data; clear overlay and bar once all tracked requests complete.
+- 2025-12-05: Spec Search page opts out of the global loading overlay and progress bar; it stays fully interactive during requests and uses only inline spinners while Catalog/CSV/LaTeX pages keep the overlay behavior.
 - 2025-11-27: Remove custom padding/margin/border overrides from DataTables pagination buttons to align with native pagination sizing while keeping current/hover/disabled colors.
 - 2025-11-27: Remove DataTables pagination focus ring/box-shadow to stop blue blink and ensure single-click page changes (no second click needed).
-- 2025-12-03: When series custom fields change (add/delete), the product list DataTable must clear existing DOM rows before rebuilding so the new column set matches the header and prevents DataTables “incorrect column count” errors during reloads.
+- 2025-12-03: When series custom fields change (add/delete), the product list DataTable must clear existing DOM rows before rebuilding so the new column set matches the header and prevents DataTables "incorrect column count" errors during reloads.

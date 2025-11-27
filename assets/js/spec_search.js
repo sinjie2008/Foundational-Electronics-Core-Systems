@@ -56,10 +56,21 @@ class SpecSearchPage {
     }
 
     /**
-     * Set transient status text.
+     * Set transient status text with optional inline spinner.
      */
-    setStatus(text) {
-        this.$status.text(text);
+    setStatus(text, isLoading = false) {
+        this.$status.empty();
+        if (isLoading) {
+            const spinner = document.createElement('span');
+            spinner.className = 'spinner-border spinner-border-sm me-2';
+            spinner.setAttribute('role', 'status');
+            spinner.setAttribute('aria-hidden', 'true');
+            this.$status.append(spinner);
+        }
+        if (text) {
+            this.$status.append(document.createTextNode(text));
+        }
+        this.$status.attr('aria-busy', isLoading ? 'true' : 'false');
     }
 
     /**
@@ -124,7 +135,7 @@ class SpecSearchPage {
      */
     async loadRoots() {
         try {
-            this.setStatus('Loading roots...');
+            this.setStatus('Loading roots...', true);
             const res = await this.fetchJson(this.api.roots);
             const roots = res?.data?.categories || [];
             this.$rootOptions.empty();
@@ -164,7 +175,7 @@ class SpecSearchPage {
      */
     async loadCategories(rootId) {
         try {
-            this.setStatus('Loading categories...');
+            this.setStatus('Loading categories...', true);
             this.$categoryContainer.html('<div class="text-muted small">Loading...</div>');
             const res = await this.fetchJson(`${this.api.productCategories}?root_id=${rootId}`);
             const groups = res?.data?.groups || [];
@@ -236,7 +247,7 @@ class SpecSearchPage {
      */
     async loadFacets() {
         try {
-            this.setStatus('Loading filters...');
+            this.setStatus('Loading filters...', true);
             const res = await this.fetchJson(this.api.facets, {
                 method: 'POST',
                 body: JSON.stringify({ category_ids: this.state.categoryIds }),
@@ -356,7 +367,7 @@ class SpecSearchPage {
         }
 
         try {
-            this.setStatus('Loading products...');
+            this.setStatus('Loading products...', true);
             const res = await this.fetchJson(this.api.products, {
                 method: 'POST',
                 body: JSON.stringify({

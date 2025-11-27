@@ -12,6 +12,7 @@ Conventions
 - Auth: none yet (assumes trusted environment); add token/header later if required.
 - Correlation ID: inbound `X-Correlation-ID` is honored; if absent, the server generates one and returns it in the envelope. Logs always include the correlation ID.
 - Logging: each request logs at start/end with route/status; errors log `errorCode`, `message`, sanitized `context`, and correlation ID. No PII/secrets in logs. `logging.enabled=false` disables log writes but responses still include correlation IDs.
+- UI note: Spec Search consumes these endpoints without the global overlay/progress bar; request/response contracts stay unchanged.
 
 Error Codes (current)
 ---------------------

@@ -14,7 +14,6 @@
     <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js" defer></script>
     <script src="https://cdn.datatables.net/1.13.8/js/dataTables.bootstrap5.min.js" defer></script>
     <script src="assets/js/sidebar-nav.js" defer></script>
-    <script src="assets/js/app_loading.js" defer></script>
     <script src="assets/js/app_error.js" defer></script>
     <script src="assets/js/spec_search.js" defer></script>
 </head>
@@ -64,7 +63,7 @@
                     </button>
                 </div>
 
-                <div id="status-message" class="small text-muted mb-3"></div>
+                <div id="status-message" class="small text-muted mb-3" role="status" aria-live="polite"></div>
 
                 <section class="section-block mb-3">
             <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between">

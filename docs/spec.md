@@ -45,7 +45,7 @@ Goals
 - LaTeX PDF generation for catalog/series outputs.
 - Custom field management: series custom field definitions support selectable types (text, number, file) for product attributes and series metadata; file uploads are validated (image/pdf/glb) and stored under `storage/media/...` using category/series folders; replacing or clearing updates storage and persisted value. Each field now tracks `Public Portal Hidden` and `Backend Portal Hidden` flags (stored as booleans) alongside `Required` to control downstream portal visibility while keeping catalog editor visibility unchanged.
 - Product table resiliency: when series custom fields are added or deleted, the product DataTable must be rebuilt after clearing any previously rendered rows so the updated column set (base + dynamic custom fields + actions) matches the header and avoids DataTables “incorrect column count” warnings during reinitialization.
-- Global loading affordance: when any UI data load or save is in-flight, render a top progress bar and a light white/grey overlay across the entire app shell, block pointer/keyboard interactions (including scroll), and clear both once all tracked requests finish.
+- Global loading affordance: Catalog UI, CSV, and LaTeX pages display a top progress bar plus a light white/grey overlay that blocks pointer/keyboard interactions (including scroll) until tracked requests finish; the Spec Search page stays fully interactive with no overlay or progress bar.
 - Catalog UI status feedback is scoped per section: hierarchy/product catalog manager actions surface messages in a localized banner, while series custom fields, series metadata, and products each render their own inline status message container to avoid cross-section confusion.
 - Catalog truncate with confirmation token and audit logging.
 - Sidebar navigation panel linking Catalog UI, Spec Search, and LaTeX templating pages; AdminLTE-like persistent left rail on desktop with slide-over toggle on mobile.
@@ -147,7 +147,7 @@ saveCustomFieldValue(entityType, entityId, fieldDef, input):
   return normalized
 ```
 
-**Global Loading Overlay + Progress Bar**
+**Global Loading Overlay + Progress Bar (Catalog/CSV/LaTeX pages)**
 ```
 loadingState = { activeCount: 0, timer: null }
 
@@ -168,6 +168,17 @@ wrapRequest(promiseFactory):
     return await promiseFactory()
   finally:
     endLoading()
+```
+
+**Spec Search Loading (no overlay)**
+```
+onSpecSearchRequest(promiseFactory):
+  // keep UI interactive; no overlay/progress bar
+  showInlineSpinner()
+  try:
+    return await promiseFactory()
+  finally:
+    hideInlineSpinner()
 ```
 
 5. System Context Diagram (Mermaid)
@@ -374,6 +385,7 @@ Testing Approach
 - **Contract**: error envelope shape `{ error: { code, message, correlationId } }` and success envelopes consumed by UI; file-field responses include `{ filename, url, sizeBytes, storedAt }` where applicable.
 - **Optional E2E**: load catalog UI, ensure DataTables renders and paginates via real APIs; create field definitions of each type and save values including file upload, then view/download link.
 - **Manual**: spec-search Edit deep link redirects to catalog UI, pre-selects the target series, and fills `hierarchy-search` with the product SKU/item code.
+- **Manual (Spec search overlay removal)**: spec-search page requests keep the overlay/progress bar hidden and allow scrolling/inputs while data loads; inline spinner displays instead.
 - **Manual (CSV page)**: catalog-csv.html loads CSV history/ truncate audit tables, runs export/import/restore/delete flows, and surfaces correlation IDs in status messages.
 - **Manual (Catalog UI status banners)**: actions in Product Catalog Manager, Series Custom Fields, Series Metadata, and Products only update the status banner within the same section; no other section should change or display a message.
 
@@ -386,7 +398,7 @@ Non-Functional & Constraints
 - Field type validation: number fields accept decimals but are stored as text; required fields enforced on save; file fields validated via multipart requests when present, otherwise JSON-only saves remain supported.
 - DataTables pagination buttons retain native sizing/borders (no custom padding, margin, radius, or border overrides) to match Bootstrap pagination affordances.
 - DataTables pagination focus ring/box-shadow removed so page clicks do not blink or require a second click; hover/current styles remain for feedback.
-- Global loading overlay is neutral (#f8f9fa overlay with slight opacity) with a high-z-index top progress bar; overlay captures pointer events to block clicks/inputs and applies `overflow: hidden` on body to freeze scroll until all tracked requests complete.
+- Global loading overlay is neutral (#f8f9fa overlay with slight opacity) with a high-z-index top progress bar; overlay captures pointer events to block clicks/inputs and applies `overflow: hidden` on body to freeze scroll until all tracked requests complete. Spec Search does not use this overlay/progress bar and keeps scrolling and pointer/keyboard interaction available during requests.
 - Ensure LaTeX binary path is configurable via env/`config/app.php` (default `pdflatex`).
 - Sidebar navigation uses Bootstrap 5 vertical nav with AdminLTE-inspired left rail; sticky on desktop, slide-over on mobile, active state must reflect current page without breaking existing layouts. Navigation order: Spec Search, Catalog UI, CSV Import/Export, LaTeX Templating.
 
