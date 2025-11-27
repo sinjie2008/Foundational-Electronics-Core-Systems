@@ -39,6 +39,8 @@ class CatalogUI {
         seriesFieldLabel: '#series-field-label',
         seriesFieldSortOrder: '#series-field-sort-order',
         seriesFieldRequired: '#series-field-required',
+        seriesFieldPublicHidden: '#series-field-public-hidden',
+        seriesFieldBackendHidden: '#series-field-backend-hidden',
         seriesFieldSubmit: '#series-field-submit',
         seriesFieldClearButton: '#series-field-clear-button',
         seriesMetadataFieldsTable: '#series-metadata-fields-table',
@@ -48,6 +50,8 @@ class CatalogUI {
         seriesMetadataFieldLabel: '#series-metadata-field-label',
         seriesMetadataFieldSortOrder: '#series-metadata-field-sort-order',
         seriesMetadataFieldRequired: '#series-metadata-field-required',
+        seriesMetadataFieldPublicHidden: '#series-metadata-field-public-hidden',
+        seriesMetadataFieldBackendHidden: '#series-metadata-field-backend-hidden',
         seriesMetadataFieldSubmit: '#series-metadata-field-submit',
         seriesMetadataFieldClearButton: '#series-metadata-field-clear-button',
         seriesMetadataForm: '#series-metadata-form',
@@ -720,8 +724,10 @@ class CatalogUI {
             { title: 'ID', data: 'id', width: '60px' },
             { title: 'Key', data: 'fieldKey' },
             { title: 'Label', data: 'label' },
+            { title: 'Public Hidden', data: 'publicHidden', width: '140px' },
+            { title: 'Backend Hidden', data: 'backendHidden', width: '150px' },
             { title: 'Required', data: 'required', width: '90px' },
-            { title: 'Sort', data: 'sortOrder', width: '70px' },
+            { title: 'Sort', data: 'sortOrder', width: '80px' },
             {
                 title: 'Actions',
                 data: 'actions',
@@ -744,6 +750,8 @@ class CatalogUI {
             id: Number(field.id),
             fieldKey: escapeHtml(field.fieldKey),
             label: escapeHtml(field.label),
+            publicHidden: field.publicPortalHidden ? 'Yes' : 'No',
+            backendHidden: field.backendPortalHidden ? 'Yes' : 'No',
             required: field.isRequired ? 'Yes' : 'No',
             sortOrder: field.sortOrder ?? 0,
             actions: `<div class="datatable-actions">
@@ -752,7 +760,7 @@ class CatalogUI {
             </div>`,
         }));
         syncDataTable('seriesFieldsTable', columns, rows, {
-            order: [[4, 'asc']],
+            order: [[6, 'asc']],
             pageLength: 5,
             emptyMessage: 'No product attribute fields defined for this series.',
         });
@@ -765,8 +773,10 @@ class CatalogUI {
             { title: 'ID', data: 'id', width: '60px' },
             { title: 'Key', data: 'fieldKey' },
             { title: 'Label', data: 'label' },
+            { title: 'Public Hidden', data: 'publicHidden', width: '140px' },
+            { title: 'Backend Hidden', data: 'backendHidden', width: '150px' },
             { title: 'Required', data: 'required', width: '90px' },
-            { title: 'Sort', data: 'sortOrder', width: '70px' },
+            { title: 'Sort', data: 'sortOrder', width: '80px' },
             {
                 title: 'Actions',
                 data: 'actions',
@@ -789,6 +799,8 @@ class CatalogUI {
             id: Number(field.id),
             fieldKey: escapeHtml(field.fieldKey),
             label: escapeHtml(field.label),
+            publicHidden: field.publicPortalHidden ? 'Yes' : 'No',
+            backendHidden: field.backendPortalHidden ? 'Yes' : 'No',
             required: field.isRequired ? 'Yes' : 'No',
             sortOrder: field.sortOrder ?? 0,
             actions: `<div class="datatable-actions">
@@ -797,7 +809,7 @@ class CatalogUI {
             </div>`,
         }));
         syncDataTable('seriesMetadataFieldsTable', columns, rows, {
-            order: [[4, 'asc']],
+            order: [[6, 'asc']],
             pageLength: 5,
             emptyMessage: 'No series metadata fields defined.',
         });
@@ -915,12 +927,18 @@ class CatalogUI {
     const resetSeriesFieldForm = () => {
         $el('seriesFieldForm')[0].reset();
         $el('seriesFieldId').val('');
+        $el('seriesFieldPublicHidden').prop('checked', false);
+        $el('seriesFieldBackendHidden').prop('checked', false);
+        $el('seriesFieldRequired').prop('checked', false);
         $el('seriesFieldSubmit').text('Save Field');
     };
 
     const resetSeriesMetadataFieldForm = () => {
         $el('seriesMetadataFieldForm')[0].reset();
         $el('seriesMetadataFieldId').val('');
+        $el('seriesMetadataFieldPublicHidden').prop('checked', false);
+        $el('seriesMetadataFieldBackendHidden').prop('checked', false);
+        $el('seriesMetadataFieldRequired').prop('checked', false);
         $el('seriesMetadataFieldSubmit').text('Save Metadata Field');
     };
 
@@ -946,6 +964,8 @@ class CatalogUI {
         $el('seriesFieldKey').val(field.fieldKey);
         $el('seriesFieldLabel').val(field.label);
         $el('seriesFieldSortOrder').val(field.sortOrder ?? 0);
+        $el('seriesFieldPublicHidden').prop('checked', !!field.publicPortalHidden);
+        $el('seriesFieldBackendHidden').prop('checked', !!field.backendPortalHidden);
         $el('seriesFieldRequired').prop('checked', !!field.isRequired);
         $el('seriesFieldSubmit').text('Update Field');
     };
@@ -955,6 +975,8 @@ class CatalogUI {
         $el('seriesMetadataFieldKey').val(field.fieldKey);
         $el('seriesMetadataFieldLabel').val(field.label);
         $el('seriesMetadataFieldSortOrder').val(field.sortOrder ?? 0);
+        $el('seriesMetadataFieldPublicHidden').prop('checked', !!field.publicPortalHidden);
+        $el('seriesMetadataFieldBackendHidden').prop('checked', !!field.backendPortalHidden);
         $el('seriesMetadataFieldRequired').prop('checked', !!field.isRequired);
         $el('seriesMetadataFieldSubmit').text('Update Metadata Field');
     };
@@ -1368,6 +1390,8 @@ class CatalogUI {
                 label: $el('seriesFieldLabel').val(),
                 fieldScope: FIELD_SCOPE.PRODUCT,
                 sortOrder: toInt($el('seriesFieldSortOrder').val()),
+                publicPortalHidden: $el('seriesFieldPublicHidden').is(':checked'),
+                backendPortalHidden: $el('seriesFieldBackendHidden').is(':checked'),
                 isRequired: $el('seriesFieldRequired').is(':checked'),
             };
             if (!payload.id) {
@@ -1405,6 +1429,8 @@ class CatalogUI {
                 label: $el('seriesMetadataFieldLabel').val(),
                 fieldScope: FIELD_SCOPE.SERIES,
                 sortOrder: toInt($el('seriesMetadataFieldSortOrder').val()),
+                publicPortalHidden: $el('seriesMetadataFieldPublicHidden').is(':checked'),
+                backendPortalHidden: $el('seriesMetadataFieldBackendHidden').is(':checked'),
                 isRequired: $el('seriesMetadataFieldRequired').is(':checked'),
             };
             if (!payload.id) {

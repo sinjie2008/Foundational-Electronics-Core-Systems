@@ -127,7 +127,18 @@
                         <input type="hidden" id="series-field-id">
                         <label>Field Key:<input type="text" id="series-field-key" required></label>
                         <label>Label:<input type="text" id="series-field-label" required></label>
+                        <label>Field Type:
+                            <select id="series-field-type">
+                                <option value="text">Text</option>
+                                <option value="number">Number</option>
+                                <option value="file">File (image/PDF/GLB)</option>
+                            </select>
+                        </label>
                         <label>Sort Order:<input type="number" id="series-field-sort-order" value="0"></label>
+                        <label class="inline-checkbox"><input type="checkbox" id="series-field-public-hidden">
+                            Public Portal Hidden</label>
+                        <label class="inline-checkbox"><input type="checkbox" id="series-field-backend-hidden">
+                            Backend Portal Hidden</label>
                         <label class="inline-checkbox"><input type="checkbox" id="series-field-required">
                             Required</label>
                         <div class="inline-actions">
@@ -152,7 +163,18 @@
                         <input type="hidden" id="series-metadata-field-id">
                         <label>Field Key:<input type="text" id="series-metadata-field-key" required></label>
                         <label>Label:<input type="text" id="series-metadata-field-label" required></label>
+                        <label>Field Type:
+                            <select id="series-metadata-field-type">
+                                <option value="text">Text</option>
+                                <option value="number">Number</option>
+                                <option value="file">File (image/PDF/GLB)</option>
+                            </select>
+                        </label>
                         <label>Sort Order:<input type="number" id="series-metadata-field-sort-order" value="0"></label>
+                        <label class="inline-checkbox"><input type="checkbox" id="series-metadata-field-public-hidden">
+                            Public Portal Hidden</label>
+                        <label class="inline-checkbox"><input type="checkbox" id="series-metadata-field-backend-hidden">
+                            Backend Portal Hidden</label>
                         <label class="inline-checkbox"><input type="checkbox" id="series-metadata-field-required">
                             Required</label>
                         <div class="inline-actions">

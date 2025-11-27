@@ -25,6 +25,15 @@ const CATALOG_TRUNCATE_LOCK_KEY = 'catalog_truncate_lock';
 const CATALOG_TRUNCATE_REASON_MAX = 256;
 const SERIES_FIELD_SCOPE_SERIES = 'series_metadata';
 const SERIES_FIELD_SCOPE_PRODUCT = 'product_attribute';
+const CATALOG_MEDIA_STORAGE = __DIR__ . '/storage/media';
+const CATALOG_MEDIA_MAX_BYTES = 10485760; // 10 MB default limit
+const CATALOG_MEDIA_ALLOWED_MIME = [
+    'application/pdf',
+    'model/gltf-binary',
+];
+const CATALOG_MEDIA_ALLOWED_EXT = [
+    'glb',
+];
 const LATEX_PDF_STORAGE = __DIR__ . '/storage/latex-pdfs';
 const LATEX_BUILD_WORKDIR = __DIR__ . '/storage/latex-build';
 const LATEX_PDF_URL_PREFIX = '/storage/latex-pdfs';
@@ -236,6 +245,314 @@ final class HttpRequestReader
 
         return $data;
     }
+
+    /**
+     * Reads JSON from either multipart form (metadata field) or raw body.
+     *
+     * @return array<string, mixed>
+     *
+     * @throws CatalogApiException When metadata is invalid JSON.
+     */
+    public function readJsonBodyOrMultipart(string $metadataField = 'metadata'): array
+    {
+        $contentType = (string) ($_SERVER['CONTENT_TYPE'] ?? '');
+        if (stripos($contentType, 'multipart/form-data') !== false) {
+            $raw = isset($_POST[$metadataField]) ? (string) $_POST[$metadataField] : '';
+            if ($raw === '') {
+                return [];
+            }
+            try {
+                $decoded = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+            } catch (JsonException $exception) {
+                throw new CatalogApiException(
+                    'INVALID_JSON',
+                    'Unable to parse metadata JSON.',
+                    400,
+                    ['error' => $exception->getMessage()]
+                );
+            }
+            if (!is_array($decoded)) {
+                throw new CatalogApiException('INVALID_JSON', 'Unable to parse metadata JSON.', 400);
+            }
+
+            return $decoded;
+        }
+
+        return $this->readJsonBody();
+    }
+
+    /**
+     * Normalizes uploaded file arrays keyed by field key.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    public function getUploadedFiles(string $field = 'files'): array
+    {
+        if (!isset($_FILES[$field])) {
+            return [];
+        }
+
+        $files = $_FILES[$field];
+        $normalized = [];
+
+        if (is_array($files['name'])) {
+            foreach ($files['name'] as $key => $name) {
+                $error = $files['error'][$key] ?? null;
+                if ($error === UPLOAD_ERR_NO_FILE) {
+                    continue;
+                }
+                $normalized[$key] = [
+                    'name' => $name,
+                    'type' => $files['type'][$key] ?? null,
+                    'tmp_name' => $files['tmp_name'][$key] ?? null,
+                    'error' => $error,
+                    'size' => $files['size'][$key] ?? null,
+                ];
+            }
+        } else {
+            if (($files['error'] ?? null) === UPLOAD_ERR_NO_FILE) {
+                return [];
+            }
+            $normalized['file'] = [
+                'name' => $files['name'],
+                'type' => $files['type'],
+                'tmp_name' => $files['tmp_name'],
+                'error' => $files['error'],
+                'size' => $files['size'],
+            ];
+        }
+
+        return $normalized;
+    }
+}
+
+/**
+ * Handles validation, storage, and retrieval of uploaded media files.
+ */
+final class MediaStorageService
+{
+    private string $rootDir;
+
+    public function __construct(
+        private mysqli $connection,
+        ?string $rootDir = null,
+        private int $maxBytes = CATALOG_MEDIA_MAX_BYTES,
+        private array $allowedMime = CATALOG_MEDIA_ALLOWED_MIME,
+        private array $allowedExtensions = CATALOG_MEDIA_ALLOWED_EXT
+    ) {
+        $this->rootDir = rtrim($rootDir ?? CATALOG_MEDIA_STORAGE, DIRECTORY_SEPARATOR);
+        $this->ensureRootDir();
+    }
+
+    /**
+     * Stores an uploaded file for a series-scoped field and returns path info.
+     *
+     * @param array<string, mixed> $file
+     *
+     * @return array{relativePath:string, absolutePath:string}
+     */
+    public function saveSeriesFile(int $seriesId, int $entityId, string $fieldKey, array $file): array
+    {
+        $this->validateUpload($file);
+        $context = $this->fetchSeriesContext($seriesId);
+        $safeFilename = $this->sanitizeFilename($file['name'] ?? 'file');
+        $relativePath = $this->buildRelativePath($context, $fieldKey, $entityId, $safeFilename);
+        $absolutePath = $this->rootDir . DIRECTORY_SEPARATOR . $relativePath;
+        $directory = dirname($absolutePath);
+        if (!is_dir($directory) && !mkdir($directory, 0775, true) && !is_dir($directory)) {
+            throw new CatalogApiException('MEDIA_WRITE_FAILED', 'Unable to create media directory.', 500);
+        }
+
+        $moved = move_uploaded_file($file['tmp_name'], $absolutePath);
+        if ($moved === false && !rename($file['tmp_name'], $absolutePath)) {
+            throw new CatalogApiException('MEDIA_WRITE_FAILED', 'Unable to store uploaded file.', 500);
+        }
+
+        return [
+            'relativePath' => $relativePath,
+            'absolutePath' => $absolutePath,
+        ];
+    }
+
+    /**
+     * Deletes a stored media file if it exists.
+     */
+    public function deleteFile(?string $relativePath): void
+    {
+        if ($relativePath === null || $relativePath === '') {
+            return;
+        }
+        $absolutePath = $this->resolveAbsolutePath($relativePath);
+        if (is_file($absolutePath)) {
+            @unlink($absolutePath);
+        }
+    }
+
+    /**
+     * Builds a media value payload for responses.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function buildMediaValue(?string $relativePath): ?array
+    {
+        if ($relativePath === null || $relativePath === '') {
+            return null;
+        }
+        $absolutePath = $this->resolveAbsolutePath($relativePath);
+        if (!is_file($absolutePath)) {
+            return null;
+        }
+
+        $size = filesize($absolutePath);
+        $mtime = filemtime($absolutePath);
+
+        return [
+            'filename' => basename($relativePath),
+            'url' => 'catalog.php?action=v1.downloadMedia&id=' . rawurlencode($relativePath),
+            'sizeBytes' => $size === false ? null : $size,
+            'storedAt' => $mtime === false ? null : gmdate(DATE_ATOM, $mtime),
+        ];
+    }
+
+    /**
+     * Streams a stored media file to the client.
+     */
+    public function streamMedia(string $relativePath, HttpResponder $responder): void
+    {
+        $absolutePath = $this->resolveAbsolutePath($relativePath);
+        if (!is_file($absolutePath)) {
+            throw new CatalogApiException('MEDIA_NOT_FOUND', 'Media file not found.', 404);
+        }
+        $mime = mime_content_type($absolutePath) ?: 'application/octet-stream';
+        $responder->sendFile($absolutePath, basename($absolutePath), $mime);
+    }
+
+    /**
+     * @param array<string, mixed> $file
+     */
+    private function validateUpload(array $file): void
+    {
+        $error = isset($file['error']) ? (int) $file['error'] : UPLOAD_ERR_NO_FILE;
+        if ($error !== UPLOAD_ERR_OK) {
+            throw new CatalogApiException('MEDIA_UPLOAD_ERROR', 'File upload failed.', 400, ['error' => $error]);
+        }
+        $size = isset($file['size']) ? (int) $file['size'] : 0;
+        if ($size <= 0) {
+            throw new CatalogApiException('MEDIA_EMPTY', 'Uploaded file is empty.', 400);
+        }
+        if ($size > $this->maxBytes) {
+            throw new CatalogApiException('MEDIA_TOO_LARGE', 'Uploaded file exceeds size limit.', 400);
+        }
+
+        $tmpPath = (string) ($file['tmp_name'] ?? '');
+        $mime = $this->detectMime($tmpPath);
+        $extension = strtolower(pathinfo((string) ($file['name'] ?? ''), PATHINFO_EXTENSION));
+
+        $isImage = str_starts_with($mime, 'image/');
+        $isAllowedMime = in_array($mime, $this->allowedMime, true);
+        $isAllowedExt = in_array($extension, $this->allowedExtensions, true);
+
+        if (!$isImage && !$isAllowedMime && !$isAllowedExt) {
+            throw new CatalogApiException('MEDIA_TYPE_INVALID', 'Unsupported file type (images, PDF, GLB only).', 400);
+        }
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function fetchSeriesContext(int $seriesId): array
+    {
+        $stmt = $this->connection->prepare(
+            "SELECT s.id, s.name AS series_name, c.name AS category_name
+             FROM category s
+             LEFT JOIN category c ON s.parent_id = c.id
+             WHERE s.id = ? AND s.type = 'series'
+             LIMIT 1"
+        );
+        $stmt->bind_param('i', $seriesId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $row = $result->fetch_assoc();
+        $stmt->close();
+
+        if ($row === null) {
+            throw new CatalogApiException('SERIES_NOT_FOUND', 'Series not found for media storage.', 404);
+        }
+
+        return [
+            'category' => (string) ($row['category_name'] ?? 'root'),
+            'series' => (string) $row['series_name'],
+        ];
+    }
+
+    /**
+     * @param array<string, string> $context
+     */
+    private function buildRelativePath(array $context, string $fieldKey, int $entityId, string $filename): string
+    {
+        $categorySlug = $this->slug($context['category']);
+        $seriesSlug = $this->slug($context['series']);
+        $fieldSlug = $this->slug($fieldKey);
+
+        return implode(
+            '/',
+            [$categorySlug, $seriesSlug, $fieldSlug, (string) $entityId, $filename]
+        );
+    }
+
+    private function slug(string $value): string
+    {
+        $normalized = strtolower(trim($value));
+        $normalized = preg_replace('/[^a-z0-9]+/i', '-', $normalized);
+        $normalized = trim((string) $normalized, '-');
+
+        return $normalized !== '' ? $normalized : 'item';
+    }
+
+    private function sanitizeFilename(string $filename): string
+    {
+        $basename = basename(str_replace('\\', '/', $filename));
+        $clean = preg_replace('/[^a-zA-Z0-9._-]/', '_', $basename);
+
+        return $clean !== '' ? $clean : 'file';
+    }
+
+    private function detectMime(string $path): string
+    {
+        if ($path === '' || !is_file($path)) {
+            return 'application/octet-stream';
+        }
+        $info = finfo_open(FILEINFO_MIME_TYPE);
+        if ($info === false) {
+            return 'application/octet-stream';
+        }
+        $mime = finfo_file($info, $path);
+        finfo_close($info);
+
+        return $mime !== false ? $mime : 'application/octet-stream';
+    }
+
+    private function resolveAbsolutePath(string $relativePath): string
+    {
+        $clean = str_replace('\\', '/', $relativePath);
+        $clean = preg_replace('#/+#', '/', $clean);
+        $clean = ltrim($clean, '/');
+        $absolute = $this->rootDir . DIRECTORY_SEPARATOR . $clean;
+        $realRoot = realpath($this->rootDir);
+        $realTarget = realpath($absolute) ?: $absolute;
+        if ($realRoot !== false && str_starts_with($realTarget, $realRoot) === false) {
+            throw new CatalogApiException('MEDIA_PATH_INVALID', 'Invalid media path.', 400);
+        }
+
+        return $absolute;
+    }
+
+    private function ensureRootDir(): void
+    {
+        if (!is_dir($this->rootDir)) {
+            @mkdir($this->rootDir, 0775, true);
+        }
+    }
 }
 
 /**
@@ -337,11 +654,13 @@ final class Seeder
                 series_id INT NOT NULL,
                 field_key VARCHAR(64) NOT NULL,
                 label VARCHAR(255) NOT NULL,
-                field_type ENUM('text') NOT NULL DEFAULT 'text',
+                field_type ENUM('text','number','file') NOT NULL DEFAULT 'text',
                 field_scope ENUM('series_metadata', 'product_attribute') NOT NULL DEFAULT 'product_attribute',
                 default_value TEXT NULL,
                 sort_order INT NOT NULL DEFAULT 0,
                 is_required TINYINT(1) NOT NULL DEFAULT 0,
+                is_public_portal_hidden TINYINT(1) NOT NULL DEFAULT 0,
+                is_backend_portal_hidden TINYINT(1) NOT NULL DEFAULT 0,
                 created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 CONSTRAINT fk_series_custom_field_series FOREIGN KEY (series_id) REFERENCES category(id) ON DELETE CASCADE,
@@ -409,6 +728,16 @@ final class Seeder
             'default_value',
             'default_value TEXT NULL AFTER field_scope'
         );
+        $this->ensureColumnExists(
+            'series_custom_field',
+            'is_public_portal_hidden',
+            'is_public_portal_hidden TINYINT(1) NOT NULL DEFAULT 0 AFTER is_required'
+        );
+        $this->ensureColumnExists(
+            'series_custom_field',
+            'is_backend_portal_hidden',
+            'is_backend_portal_hidden TINYINT(1) NOT NULL DEFAULT 0 AFTER is_public_portal_hidden'
+        );
 
         $this->connection->query(
             sprintf(
@@ -417,6 +746,7 @@ final class Seeder
             )
         );
 
+        $this->ensureFieldTypeEnumUpdated();
         $this->ensureSeriesMetadataDefaults();
         $this->ensureSeriesFieldScopeIndex();
     }
@@ -574,8 +904,10 @@ final class Seeder
                 field_scope,
                 default_value,
                 sort_order,
-                is_required
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+                is_required,
+                is_public_portal_hidden,
+                is_backend_portal_hidden
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $fieldKey = (string) $fieldDefinition['field_key'];
         $label = (string) $fieldDefinition['label'];
@@ -586,9 +918,13 @@ final class Seeder
             : null;
         $isRequired = (bool) ($fieldDefinition['is_required'] ?? false);
         $requiredValue = $isRequired ? 1 : 0;
+        $isPublicPortalHidden = (bool) ($fieldDefinition['is_public_portal_hidden'] ?? false);
+        $publicPortalHiddenValue = $isPublicPortalHidden ? 1 : 0;
+        $isBackendPortalHidden = (bool) ($fieldDefinition['is_backend_portal_hidden'] ?? false);
+        $backendPortalHiddenValue = $isBackendPortalHidden ? 1 : 0;
 
         $stmt->bind_param(
-            'isssssii',
+            'isssssiiii',
             $seriesId,
             $fieldKey,
             $label,
@@ -596,7 +932,9 @@ final class Seeder
             $normalizedScope,
             $defaultValue,
             $sortOrder,
-            $requiredValue
+            $requiredValue,
+            $publicPortalHiddenValue,
+            $backendPortalHiddenValue
         );
         $stmt->execute();
         $insertId = (int) $stmt->insert_id;
@@ -646,6 +984,26 @@ final class Seeder
         $stmt->bind_param('iis', $seriesId, $fieldId, $value);
         $stmt->execute();
         $stmt->close();
+    }
+
+    private function ensureFieldTypeEnumUpdated(): void
+    {
+        $result = $this->connection->query(
+            "SHOW COLUMNS FROM series_custom_field WHERE Field = 'field_type'"
+        );
+        $type = null;
+        if ($result instanceof mysqli_result) {
+            $row = $result->fetch_assoc();
+            $type = $row['Type'] ?? null;
+            $result->close();
+        }
+        if ($type !== null && stripos((string) $type, 'file') !== false && stripos((string) $type, 'number') !== false) {
+            return;
+        }
+
+        $this->connection->query(
+            "ALTER TABLE series_custom_field MODIFY field_type ENUM('text','number','file') NOT NULL DEFAULT 'text'"
+        );
     }
 
     private function ensureSeriesMetadataDefaults(): void
@@ -1267,7 +1625,8 @@ final class SeriesFieldService
     ): array {
         $normalizedScope = $this->normalizeScope($fieldScope);
         $stmt = $this->connection->prepare(
-            'SELECT id, field_key, label, field_type, field_scope, default_value, sort_order, is_required
+            'SELECT id, field_key, label, field_type, field_scope, default_value, sort_order, is_required,
+                    is_public_portal_hidden, is_backend_portal_hidden
              FROM series_custom_field
              WHERE series_id = ? AND field_scope = ?
              ORDER BY sort_order, id'
@@ -1287,6 +1646,8 @@ final class SeriesFieldService
                 'defaultValue' => $row['default_value'],
                 'sortOrder' => (int) $row['sort_order'],
                 'isRequired' => ((int) $row['is_required']) === 1,
+                'publicPortalHidden' => ((int) $row['is_public_portal_hidden']) === 1,
+                'backendPortalHidden' => ((int) $row['is_backend_portal_hidden']) === 1,
             ];
         }
         $stmt->close();
@@ -1307,10 +1668,16 @@ final class SeriesFieldService
         $seriesId = isset($payload['seriesId']) ? (int) $payload['seriesId'] : null;
         $label = isset($payload['label']) ? trim((string) $payload['label']) : '';
         $fieldKey = isset($payload['fieldKey']) ? trim((string) $payload['fieldKey']) : '';
-        $fieldType = isset($payload['fieldType']) ? (string) $payload['fieldType'] : 'text';
+        $fieldType = isset($payload['fieldType']) ? strtolower((string) $payload['fieldType']) : 'text';
         $fieldScopeRaw = isset($payload['fieldScope']) ? (string) $payload['fieldScope'] : SERIES_FIELD_SCOPE_PRODUCT;
         $sortOrder = isset($payload['sortOrder']) ? (int) $payload['sortOrder'] : 0;
         $isRequired = isset($payload['isRequired']) ? (bool) $payload['isRequired'] : false;
+        $publicPortalHidden = isset($payload['publicPortalHidden'])
+            ? (bool) $payload['publicPortalHidden']
+            : false;
+        $backendPortalHidden = isset($payload['backendPortalHidden'])
+            ? (bool) $payload['backendPortalHidden']
+            : false;
         $defaultValue = array_key_exists('defaultValue', $payload) ? $payload['defaultValue'] : null;
         $normalizedDefaultValue = $defaultValue !== null ? (string) $defaultValue : null;
         $fieldScope = $this->normalizeScope($fieldScopeRaw);
@@ -1325,7 +1692,7 @@ final class SeriesFieldService
         if ($fieldKey === '') {
             $errors['fieldKey'] = 'Field key is required.';
         }
-        if (!in_array($fieldType, ['text'], true)) {
+        if (!in_array($fieldType, ['text', 'number', 'file'], true)) {
             $errors['fieldType'] = 'Unsupported field type.';
         }
         if ($errors !== []) {
@@ -1352,21 +1719,27 @@ final class SeriesFieldService
 
         $this->ensureUniqueFieldKey($seriesId, $fieldKey, $targetScope, $fieldId);
 
+        $requiredValue = $isRequired ? 1 : 0;
+        $publicPortalHiddenValue = $publicPortalHidden ? 1 : 0;
+        $backendPortalHiddenValue = $backendPortalHidden ? 1 : 0;
+
         if ($fieldId !== null) {
             $stmt = $this->connection->prepare(
                 'UPDATE series_custom_field
-                 SET label = ?, field_key = ?, field_type = ?, default_value = ?, sort_order = ?, is_required = ?
+                 SET label = ?, field_key = ?, field_type = ?, default_value = ?, sort_order = ?, is_required = ?,
+                     is_public_portal_hidden = ?, is_backend_portal_hidden = ?
                  WHERE id = ? AND series_id = ?'
             );
-            $requiredValue = $isRequired ? 1 : 0;
             $stmt->bind_param(
-                'ssssiiii',
+                'ssssiiiiii',
                 $label,
                 $fieldKey,
                 $fieldType,
                 $normalizedDefaultValue,
                 $sortOrder,
                 $requiredValue,
+                $publicPortalHiddenValue,
+                $backendPortalHiddenValue,
                 $fieldId,
                 $seriesId
             );
@@ -1383,12 +1756,13 @@ final class SeriesFieldService
                     field_scope,
                     default_value,
                     sort_order,
-                    is_required
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+                    is_required,
+                    is_public_portal_hidden,
+                    is_backend_portal_hidden
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
             );
-            $requiredValue = $isRequired ? 1 : 0;
             $stmt->bind_param(
-                'isssssii',
+                'isssssiiii',
                 $seriesId,
                 $fieldKey,
                 $label,
@@ -1396,7 +1770,9 @@ final class SeriesFieldService
                 $targetScope,
                 $normalizedDefaultValue,
                 $sortOrder,
-                $requiredValue
+                $requiredValue,
+                $publicPortalHiddenValue,
+                $backendPortalHiddenValue
             );
             $stmt->execute();
             $id = (int) $stmt->insert_id;
@@ -1425,6 +1801,8 @@ final class SeriesFieldService
             'defaultValue' => $field['defaultValue'],
             'sortOrder' => $field['sortOrder'],
             'isRequired' => $field['isRequired'],
+            'publicPortalHidden' => $field['publicPortalHidden'],
+            'backendPortalHidden' => $field['backendPortalHidden'],
         ];
     }
 
@@ -1540,7 +1918,8 @@ final class SeriesFieldService
 
         $stmt = $this->connection->prepare(
             sprintf(
-                'SELECT id, series_id, field_key, label, field_type, field_scope, default_value, sort_order, is_required
+                'SELECT id, series_id, field_key, label, field_type, field_scope, default_value, sort_order, is_required,
+                        is_public_portal_hidden, is_backend_portal_hidden
                  FROM series_custom_field
                  WHERE series_id IN (%s) AND field_scope = ?
                  ORDER BY sort_order, id',
@@ -1567,6 +1946,8 @@ final class SeriesFieldService
                 'defaultValue' => $row['default_value'],
                 'sortOrder' => (int) $row['sort_order'],
                 'isRequired' => ((int) $row['is_required']) === 1,
+                'publicPortalHidden' => ((int) $row['is_public_portal_hidden']) === 1,
+                'backendPortalHidden' => ((int) $row['is_backend_portal_hidden']) === 1,
             ];
         }
         $stmt->close();
@@ -1600,7 +1981,8 @@ final class SeriesAttributeService
 {
     public function __construct(
         private mysqli $connection,
-        private SeriesFieldService $seriesFieldService
+        private SeriesFieldService $seriesFieldService,
+        private MediaStorageService $mediaStorageService
     ) {
     }
 
@@ -1621,7 +2003,7 @@ final class SeriesAttributeService
      *
      * @return array<string, mixed>
      */
-    public function saveAttributes(array $payload, bool $wrapInTransaction = true): array
+    public function saveAttributes(array $payload, array $files = [], bool $wrapInTransaction = true): array
     {
         $seriesId = isset($payload['seriesId']) ? (int) $payload['seriesId'] : null;
         $valuesPayload = isset($payload['values']) && is_array($payload['values'])
@@ -1644,36 +2026,99 @@ final class SeriesAttributeService
             $definitionMap[$definition['fieldKey']] = $definition;
         }
 
-        $errors = [];
-        foreach ($valuesPayload as $fieldKey => $value) {
-            if (!isset($definitionMap[$fieldKey])) {
-                $errors[$fieldKey] = 'Unknown series metadata field.';
-            }
+        $rawValueMap = $this->fetchValueMapForSeries([$seriesId]);
+        $existingValues = [];
+        foreach ($definitionMap as $fieldKey => $definition) {
+            $fieldId = (int) $definition['id'];
+            $existingValues[$fieldKey] = $rawValueMap[$seriesId][$fieldId] ?? null;
         }
 
+        $errors = [];
+        $plans = [];
         foreach ($definitionMap as $fieldKey => $definition) {
-            $value = array_key_exists($fieldKey, $valuesPayload) ? $valuesPayload[$fieldKey] : null;
-            $normalized = $this->normalizeValue($value);
-            if ($definition['isRequired'] && $normalized === null) {
+            $fieldType = $definition['fieldType'] ?? 'text';
+            $existingValue = $existingValues[$fieldKey] ?? null;
+            $incomingProvided = array_key_exists($fieldKey, $valuesPayload);
+            $incomingValue = $incomingProvided ? $valuesPayload[$fieldKey] : null;
+            $fileUpload = $files[$fieldKey] ?? null;
+
+            $plan = [
+                'definition' => $definition,
+                'value' => $existingValue,
+                'action' => 'keep',
+                'file' => $fileUpload,
+                'oldPath' => ($fieldType === 'file' && $existingValue !== null && $existingValue !== '')
+                    ? (string) $existingValue
+                    : null,
+            ];
+
+            if ($fieldType === 'file') {
+                if (is_array($fileUpload)) {
+                    $plan['action'] = 'upload';
+                } elseif ($incomingProvided && ($incomingValue === '' || $incomingValue === null)) {
+                    $plan['action'] = 'clear';
+                    $plan['value'] = null;
+                }
+            } else {
+                if ($incomingProvided) {
+                    $normalized = $this->normalizeValue($incomingValue);
+                    if ($fieldType === 'number' && $normalized !== null && !is_numeric($normalized)) {
+                        $errors[$fieldKey] = 'Must be numeric.';
+                    }
+                    $plan['value'] = $normalized;
+                }
+            }
+
+            $hasIncomingFile = $fieldType === 'file' && $plan['action'] === 'upload';
+            $finalValue = $plan['action'] === 'clear' ? null : $plan['value'];
+            if (($definition['isRequired'] ?? false) && !$hasIncomingFile && ($finalValue === null || trim((string) $finalValue) === '')) {
                 $errors[$fieldKey] = 'Field is required.';
             }
+
+            $plans[] = $plan;
         }
 
         if ($errors !== []) {
             throw new CatalogApiException('VALIDATION_ERROR', 'Series metadata validation failed.', 400, $errors);
         }
 
+        $newFiles = [];
+        $deleteAfterCommit = [];
+
         if ($wrapInTransaction) {
             $this->connection->begin_transaction();
         }
         try {
-            foreach ($definitionMap as $definition) {
-                $fieldKey = $definition['fieldKey'];
-                $fieldId = (int) $definition['id'];
-                $value = array_key_exists($fieldKey, $valuesPayload) ? $valuesPayload[$fieldKey] : null;
-                $normalized = $this->normalizeValue($value);
-                $this->upsertSeriesValue($seriesId, $fieldId, $normalized);
+            foreach ($plans as $index => $plan) {
+                $field = $plan['definition'];
+                $fieldId = (int) $field['id'];
+                $fieldKey = $field['fieldKey'];
+                $fieldType = $field['fieldType'] ?? 'text';
+                $value = $plan['value'];
+
+                if ($fieldType === 'file') {
+                    if ($plan['action'] === 'upload' && isset($plan['file'])) {
+                        $result = $this->mediaStorageService->saveSeriesFile(
+                            $seriesId,
+                            $seriesId,
+                            $fieldKey,
+                            $plan['file']
+                        );
+                        $value = $result['relativePath'];
+                        $plans[$index]['value'] = $value;
+                        $newFiles[] = $value;
+                        if ($plan['oldPath'] !== null && $plan['oldPath'] !== $value) {
+                            $deleteAfterCommit[] = $plan['oldPath'];
+                        }
+                    } elseif ($plan['action'] === 'clear' && $plan['oldPath'] !== null) {
+                        $deleteAfterCommit[] = $plan['oldPath'];
+                        $value = null;
+                    }
+                }
+
+                $this->upsertSeriesValue($seriesId, $fieldId, $this->normalizeValue($value));
             }
+
             if ($wrapInTransaction) {
                 $this->connection->commit();
             }
@@ -1681,7 +2126,14 @@ final class SeriesAttributeService
             if ($wrapInTransaction) {
                 $this->connection->rollback();
             }
+            foreach ($newFiles as $path) {
+                $this->mediaStorageService->deleteFile($path);
+            }
             throw $exception;
+        }
+
+        foreach ($deleteAfterCommit as $path) {
+            $this->mediaStorageService->deleteFile($path);
         }
 
         return $this->getAttributes($seriesId);
@@ -1712,7 +2164,12 @@ final class SeriesAttributeService
             foreach ($definitions as $definition) {
                 $fieldId = (int) $definition['id'];
                 $fieldKey = $definition['fieldKey'];
-                $values[$fieldKey] = $fieldValues[$fieldId] ?? ($definition['defaultValue'] ?? null);
+                $rawValue = $fieldValues[$fieldId] ?? ($definition['defaultValue'] ?? null);
+                if (($definition['fieldType'] ?? 'text') === 'file') {
+                    $values[$fieldKey] = $this->mediaStorageService->buildMediaValue($rawValue);
+                } else {
+                    $values[$fieldKey] = $rawValue;
+                }
             }
 
             $payloads[$seriesId] = [
@@ -1793,7 +2250,8 @@ final class ProductService
 {
     public function __construct(
         private mysqli $connection,
-        private SeriesFieldService $seriesFieldService
+        private SeriesFieldService $seriesFieldService,
+        private MediaStorageService $mediaStorageService
     ) {
     }
 
@@ -1872,9 +2330,11 @@ final class ProductService
             ?? $this->seriesFieldService->fetchFieldsForSeriesIds($seriesIds, SERIES_FIELD_SCOPE_PRODUCT);
 
         $fieldKeyLookup = [];
+        $fieldTypeLookup = [];
         foreach ($fieldDefinitions as $seriesId => $fields) {
             foreach ($fields as $field) {
                 $fieldKeyLookup[$seriesId][$field['id']] = $field['fieldKey'];
+                $fieldTypeLookup[$seriesId][$field['id']] = $field['fieldType'] ?? 'text';
             }
         }
 
@@ -1887,11 +2347,17 @@ final class ProductService
                 }
                 $seriesId = $indexInfo['seriesId'];
                 $fieldLookup = $fieldKeyLookup[$seriesId] ?? [];
+                $fieldTypes = $fieldTypeLookup[$seriesId] ?? [];
                 $normalized = [];
                 foreach ($values as $fieldId => $value) {
                     $fieldKey = $fieldLookup[$fieldId] ?? null;
                     if ($fieldKey !== null) {
-                        $normalized[$fieldKey] = $value;
+                        $fieldType = $fieldTypes[$fieldId] ?? 'text';
+                        if ($fieldType === 'file') {
+                            $normalized[$fieldKey] = $this->mediaStorageService->buildMediaValue($value);
+                        } else {
+                            $normalized[$fieldKey] = $value;
+                        }
                     }
                 }
                 $seriesIndex = $indexInfo['index'];
@@ -1915,7 +2381,7 @@ final class ProductService
      *
      * @return array<string, mixed>
      */
-    public function saveProduct(array $payload): array
+    public function saveProduct(array $payload, array $files = []): array
     {
         $productId = isset($payload['id']) ? (int) $payload['id'] : null;
         $seriesIdRaw = $payload['series_id'] ?? $payload['seriesId'] ?? null;
@@ -1943,28 +2409,33 @@ final class ProductService
         $this->seriesFieldService->assertSeriesExists($seriesId);
         $fieldMap = $this->seriesFieldService->getSeriesFieldMap($seriesId, SERIES_FIELD_SCOPE_PRODUCT);
 
-        foreach ($fieldMap as $field) {
-            $fieldKey = $field['fieldKey'];
-            $isRequired = $field['isRequired'];
-            $value = $customValues[$fieldKey] ?? null;
-            if ($isRequired && ($value === null || trim((string) $value) === '')) {
-                throw new CatalogApiException(
-                    'VALIDATION_ERROR',
-                    'Custom field validation failed.',
-                    400,
-                    ['custom_field_values' => sprintf('%s is required.', $field['label'])]
-                );
+        $existing = null;
+        $existingRawValues = [];
+        if ($productId !== null) {
+            $existing = $this->fetchProductById($productId);
+            if ($existing === null) {
+                throw new CatalogApiException('PRODUCT_NOT_FOUND', 'Product not found.', 404);
+            }
+            $rawMap = $this->fetchProductCustomValuesMap([$productId]);
+            foreach ($fieldMap as $field) {
+                $existingRawValues[$field['fieldKey']] = $rawMap[$productId][$field['id']] ?? null;
             }
         }
+
+        $plans = $this->buildCustomValuePlans(
+            $fieldMap,
+            $customValues,
+            $files,
+            $existingRawValues,
+            $seriesId
+        );
+
+        $newFiles = [];
+        $deleteAfterCommit = [];
 
         $this->connection->begin_transaction();
         try {
             if ($productId !== null) {
-                $existing = $this->fetchProductById($productId);
-                if ($existing === null) {
-                    throw new CatalogApiException('PRODUCT_NOT_FOUND', 'Product not found.', 404);
-                }
-
                 $stmt = $this->connection->prepare(
                     'UPDATE product SET sku = ?, name = ?, description = ? WHERE id = ? AND series_id = ?'
                 );
@@ -1981,12 +2452,37 @@ final class ProductService
                 $stmt->close();
             }
 
-            $this->replaceProductCustomValues($productId, $customValues, $fieldMap);
+            foreach ($plans as $index => $plan) {
+                if ($plan['action'] === 'upload' && isset($plan['file'])) {
+                    $result = $this->mediaStorageService->saveSeriesFile(
+                        $seriesId,
+                        $productId,
+                        $plan['field']['fieldKey'],
+                        $plan['file']
+                    );
+                    $plans[$index]['value'] = $result['relativePath'];
+                    $newFiles[] = $result['relativePath'];
+                    if ($plan['oldPath'] !== null && $plan['oldPath'] !== $result['relativePath']) {
+                        $deleteAfterCommit[] = $plan['oldPath'];
+                    }
+                } elseif ($plan['action'] === 'clear' && $plan['oldPath'] !== null) {
+                    $deleteAfterCommit[] = $plan['oldPath'];
+                }
+            }
+
+            $this->persistProductCustomValuesFromPlans($productId, $plans);
 
             $this->connection->commit();
         } catch (Throwable $exception) {
             $this->connection->rollback();
+            foreach ($newFiles as $path) {
+                $this->mediaStorageService->deleteFile($path);
+            }
             throw $exception;
+        }
+
+        foreach ($deleteAfterCommit as $path) {
+            $this->mediaStorageService->deleteFile($path);
         }
 
         $product = $this->fetchProductById($productId);
@@ -1997,6 +2493,122 @@ final class ProductService
         return $product;
     }
 
+    /**
+     * @param array<int, array<string, mixed>> $fieldMap
+     * @param array<string, mixed> $customValues
+     * @param array<string, array<string, mixed>> $files
+     * @param array<string, mixed> $existingValues
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function buildCustomValuePlans(
+        array $fieldMap,
+        array $customValues,
+        array $files,
+        array $existingValues,
+        int $seriesId
+    ): array {
+        $plans = [];
+        foreach ($fieldMap as $field) {
+            $fieldKey = $field['fieldKey'];
+            $fieldType = $field['fieldType'];
+            $existingValue = $existingValues[$fieldKey] ?? null;
+            $incomingProvided = array_key_exists($fieldKey, $customValues);
+            $incomingValue = $incomingProvided ? $customValues[$fieldKey] : null;
+            $fileUpload = $files[$fieldKey] ?? null;
+
+            $plan = [
+                'field' => $field,
+                'value' => $existingValue,
+                'action' => 'keep',
+                'file' => $fileUpload,
+                'oldPath' => ($fieldType === 'file' && $existingValue !== null && $existingValue !== '')
+                    ? (string) $existingValue
+                    : null,
+            ];
+
+            if ($fieldType === 'file') {
+                if (is_array($fileUpload)) {
+                    $plan['action'] = 'upload';
+                } elseif ($incomingProvided && ($incomingValue === '' || $incomingValue === null)) {
+                    $plan['action'] = 'clear';
+                    $plan['value'] = null;
+                }
+            } else {
+                if ($incomingProvided) {
+                    $normalized = $this->normalizeFieldValue($incomingValue);
+                    if ($fieldType === 'number' && $normalized !== null && !is_numeric($normalized)) {
+                        throw new CatalogApiException(
+                            'VALIDATION_ERROR',
+                            sprintf('Field %s must be numeric.', $fieldKey),
+                            400,
+                            ['custom_field_values' => sprintf('%s must be numeric.', $field['label'])]
+                        );
+                    }
+                    $plan['value'] = $normalized;
+                }
+            }
+
+            $isRequired = $field['isRequired'];
+            $hasIncomingFile = $fieldType === 'file' && $plan['action'] === 'upload';
+            $finalValue = $plan['value'];
+            if ($plan['action'] === 'clear') {
+                $finalValue = null;
+            }
+            if ($isRequired && !$hasIncomingFile && ($finalValue === null || trim((string) $finalValue) === '')) {
+                throw new CatalogApiException(
+                    'VALIDATION_ERROR',
+                    'Custom field validation failed.',
+                    400,
+                    ['custom_field_values' => sprintf('%s is required.', $field['label'])]
+                );
+            }
+
+            $plans[] = $plan;
+        }
+
+        return $plans;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $plans
+     */
+    private function persistProductCustomValuesFromPlans(int $productId, array $plans): void
+    {
+        $stmt = $this->connection->prepare(
+            'DELETE FROM product_custom_field_value WHERE product_id = ?'
+        );
+        $stmt->bind_param('i', $productId);
+        $stmt->execute();
+        $stmt->close();
+
+        foreach ($plans as $plan) {
+            $fieldId = $plan['field']['id'];
+            $value = $plan['value'];
+            if ($value === null || trim((string) $value) === '') {
+                continue;
+            }
+
+            $stmt = $this->connection->prepare(
+                'INSERT INTO product_custom_field_value (product_id, series_custom_field_id, value)
+                 VALUES (?, ?, ?)'
+            );
+            $stmt->bind_param('iis', $productId, $fieldId, $value);
+            $stmt->execute();
+            $stmt->close();
+        }
+    }
+
+    private function normalizeFieldValue(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        $string = trim((string) $value);
+
+        return $string === '' ? null : $string;
+    }
+
     public function deleteProduct(int $productId): void
     {
         $product = $this->fetchProductById($productId);
@@ -2004,10 +2616,25 @@ final class ProductService
             throw new CatalogApiException('PRODUCT_NOT_FOUND', 'Product not found.', 404);
         }
 
+        $seriesId = (int) $product['seriesId'];
+        $fieldMap = $this->seriesFieldService->getSeriesFieldMap($seriesId, SERIES_FIELD_SCOPE_PRODUCT);
+        $valueMap = $this->fetchProductCustomValuesMap([$productId]);
+        $pathsToDelete = [];
+        foreach ($valueMap[$productId] ?? [] as $fieldId => $value) {
+            $field = $fieldMap[$fieldId] ?? null;
+            if ($field !== null && ($field['fieldType'] ?? 'text') === 'file') {
+                $pathsToDelete[] = $value;
+            }
+        }
+
         $stmt = $this->connection->prepare('DELETE FROM product WHERE id = ? LIMIT 1');
         $stmt->bind_param('i', $productId);
         $stmt->execute();
         $stmt->close();
+
+        foreach ($pathsToDelete as $path) {
+            $this->mediaStorageService->deleteFile($path);
+        }
     }
 
     /**
@@ -2017,8 +2644,10 @@ final class ProductService
     private function fetchProductsForSeries(int $seriesId, array $fields): array
     {
         $fieldKeyById = [];
+        $fieldTypeById = [];
         foreach ($fields as $field) {
             $fieldKeyById[$field['id']] = $field['fieldKey'];
+            $fieldTypeById[$field['id']] = $field['fieldType'] ?? 'text';
         }
 
         $stmt = $this->connection->prepare(
@@ -2055,47 +2684,19 @@ final class ProductService
             $normalized = [];
             foreach ($customValues as $fieldId => $value) {
                 $fieldKey = $fieldKeyById[$fieldId] ?? null;
+                $fieldType = $fieldTypeById[$fieldId] ?? 'text';
                 if ($fieldKey !== null) {
-                    $normalized[$fieldKey] = $value;
+                    if ($fieldType === 'file') {
+                        $normalized[$fieldKey] = $this->mediaStorageService->buildMediaValue($value);
+                    } else {
+                        $normalized[$fieldKey] = $value;
+                    }
                 }
             }
             $products[$productId]['customValues'] = $normalized;
         }
 
         return array_values($products);
-    }
-
-    /**
-     * @param array<string, mixed> $fieldMap
-     */
-    private function replaceProductCustomValues(
-        int $productId,
-        array $customValues,
-        array $fieldMap
-    ): void {
-        $stmt = $this->connection->prepare(
-            'DELETE FROM product_custom_field_value WHERE product_id = ?'
-        );
-        $stmt->bind_param('i', $productId);
-        $stmt->execute();
-        $stmt->close();
-
-        foreach ($fieldMap as $field) {
-            $fieldId = $field['id'];
-            $fieldKey = $field['fieldKey'];
-            $value = $customValues[$fieldKey] ?? null;
-            if ($value === null || trim((string) $value) === '') {
-                continue;
-            }
-
-            $stmt = $this->connection->prepare(
-                'INSERT INTO product_custom_field_value (product_id, series_custom_field_id, value)
-                 VALUES (?, ?, ?)'
-            );
-            $stmt->bind_param('iis', $productId, $fieldId, $value);
-            $stmt->execute();
-            $stmt->close();
-        }
     }
 
     /**
@@ -2124,8 +2725,14 @@ final class ProductService
         $rawValues = $customValueMap[$productId] ?? [];
         $normalized = [];
         foreach ($rawValues as $fieldId => $value) {
-            $fieldKey = $fieldMap[$fieldId]['fieldKey'] ?? null;
-            if ($fieldKey !== null) {
+            $field = $fieldMap[$fieldId] ?? null;
+            if ($field === null) {
+                continue;
+            }
+            $fieldKey = $field['fieldKey'];
+            if ($field['fieldType'] === 'file') {
+                $normalized[$fieldKey] = $this->mediaStorageService->buildMediaValue($value);
+            } else {
                 $normalized[$fieldKey] = $value;
             }
         }
@@ -4379,6 +4986,7 @@ final class CatalogApplication
         private mysqli $connection,
         private HttpResponder $responder,
         private HttpRequestReader $requestReader,
+        private MediaStorageService $mediaStorageService,
         private Seeder $seeder,
         private HierarchyService $hierarchyService,
         private SeriesFieldService $seriesFieldService,
@@ -4402,11 +5010,12 @@ final class CatalogApplication
         $connection = $factory->createConnection();
         $responder = new HttpResponder();
         $requestReader = new HttpRequestReader();
+        $mediaStorageService = new MediaStorageService($connection);
         $seeder = new Seeder($connection);
         $hierarchyService = new HierarchyService($connection);
         $seriesFieldService = new SeriesFieldService($connection);
-        $seriesAttributeService = new SeriesAttributeService($connection, $seriesFieldService);
-        $productService = new ProductService($connection, $seriesFieldService);
+        $seriesAttributeService = new SeriesAttributeService($connection, $seriesFieldService, $mediaStorageService);
+        $productService = new ProductService($connection, $seriesFieldService, $mediaStorageService);
         $csvService = new CatalogCsvService($connection, $hierarchyService, $seriesFieldService);
         $truncateService = new CatalogTruncateService($connection);
         $publicCatalogService = new PublicCatalogService(
@@ -4427,6 +5036,7 @@ final class CatalogApplication
             $connection,
             $responder,
             $requestReader,
+            $mediaStorageService,
             $seeder,
             $hierarchyService,
             $seriesFieldService,
@@ -4765,8 +5375,9 @@ final class CatalogApplication
                 return $this->seriesFieldService->saveField($payload);
             case 'v1.saveSeriesAttributes':
                 $this->requestReader->requireMethod('POST', $method);
-                $payload = $this->requestReader->readJsonBody();
-                return $this->seriesAttributeService->saveAttributes($payload);
+                $payload = $this->requestReader->readJsonBodyOrMultipart();
+                $files = $this->requestReader->getUploadedFiles('files');
+                return $this->seriesAttributeService->saveAttributes($payload, $files);
             case 'v1.deleteSeriesField':
                 $this->requestReader->requireMethod('POST', $method);
                 $payload = $this->requestReader->readJsonBody();
@@ -4796,8 +5407,9 @@ final class CatalogApplication
                 return $result['products'];
             case 'v1.saveProduct':
                 $this->requestReader->requireMethod('POST', $method);
-                $payload = $this->requestReader->readJsonBody();
-                return $this->productService->saveProduct($payload);
+                $payload = $this->requestReader->readJsonBodyOrMultipart();
+                $files = $this->requestReader->getUploadedFiles('files');
+                return $this->productService->saveProduct($payload, $files);
             case 'v1.deleteProduct':
                 $this->requestReader->requireMethod('POST', $method);
                 $payload = $this->requestReader->readJsonBody();
@@ -4843,6 +5455,14 @@ final class CatalogApplication
                     throw new CatalogApiException('CSV_NOT_FOUND', 'CSV id is required.', 404);
                 }
                 $this->csvService->streamFile($fileId, $this->responder);
+                return self::RESPONSE_STREAMED;
+            case 'v1.downloadMedia':
+                $this->requestReader->requireMethod('GET', $method);
+                $mediaId = isset($_GET['id']) ? (string) $_GET['id'] : '';
+                if ($mediaId === '') {
+                    throw new CatalogApiException('MEDIA_NOT_FOUND', 'Media id is required.', 404);
+                }
+                $this->mediaStorageService->streamMedia($mediaId, $this->responder);
                 return self::RESPONSE_STREAMED;
             case 'v1.deleteCsv':
                 $this->requestReader->requireMethod('POST', $method);

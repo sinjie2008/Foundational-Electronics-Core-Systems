@@ -331,20 +331,56 @@ table th {
 
 .metadata-field-row {
     display: flex;
-    align-items: center;
-    margin-bottom: 8px;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 10px;
 }
 
 .metadata-field-row label {
-    display: inline-flex;
     align-items: center;
-    margin-right: 12px;
+    margin: 4px 0 0 0;
     font-size: 14px;
     color: #243b53;
 }
 
 .metadata-field-row input {
     flex: 1;
+}
+
+.file-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+}
+
+.file-controls input[type="file"] {
+    max-width: 360px;
+}
+
+.file-clear {
+    margin: 0;
+}
+
+.metadata-current-value,
+.product-current-value {
+    font-size: 13px;
+    margin: 0;
+}
+
+.media-preview {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: flex-start;
+}
+
+.media-preview img {
+    width: 60px;
+    height: 60px;
+    object-fit: cover;
+    border: 1px solid #d9e2ec;
+    border-radius: 4px;
 }
 
 .panel-products {
@@ -541,6 +577,13 @@ table th {
 #product-list-table_wrapper .dataTables_scroll {
     overflow: auto !important;
     width: 100% !important;
+}
+
+#series-fields-table,
+#series-metadata-fields-table {
+    display: block;
+    overflow-x: auto !important;
+    width: 100%;
 }
 
 #product-list-table_wrapper .dtfc-fixed-left {

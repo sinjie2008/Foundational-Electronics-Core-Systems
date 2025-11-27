@@ -4,8 +4,9 @@ Catalog & Spec Search API
 Conventions
 -----------
 - Base path: `/api` under `public/`.
-- Format: JSON only; `Content-Type: application/json; charset=utf-8`.
+- Format: JSON for standard requests; `multipart/form-data` supported when uploading files (include `metadata` JSON part for text/number values alongside `files[fieldKey]` parts).
 - Versioning: path-based (`/api/v1/...`) when introduced; current endpoints are unversioned but should be aliased to `/api/v1`.
+- Routing note: current implementation uses `catalog.php?action=v1.someAction`; RESTful paths above describe the intended aliases and shapes.
 - Errors: structured as `{ "error": { "code": "string", "message": "string", "correlationId": "uuid" } }`.
 - Success envelope: `{ "data": <payload>, "correlationId": "uuid" }` for consistency with front-end DataTables consumption.
 - Auth: none yet (assumes trusted environment); add token/header later if required.
@@ -34,6 +35,44 @@ Resources
   - Purpose: keyword search across products/categories.
   - Query params: `q` (string, required).
   - Response `200`: `data: { items: ProductSummary[], total: int }`.
+
+- `GET /api/catalog/series/{seriesId}/fields`
+  - Purpose: list custom fields for a series by scope.
+  - Query params: `scope` (`product_attribute` | `series_metadata`, optional, default `product_attribute`).
+  - Response `200`: `data: SeriesCustomFieldDefinition[]`.
+
+- `POST /api/catalog/series/{seriesId}/fields`
+  - Purpose: create/update a series custom field definition.
+  - Body (JSON): `{ "id"?: int, "fieldKey": "string", "label": "string", "fieldType": "text|number|file", "fieldScope": "product_attribute|series_metadata", "defaultValue"?: string, "sortOrder": int, "isRequired": bool, "publicPortalHidden"?: bool, "backendPortalHidden"?: bool }`.
+  - Response `200`: `data: SeriesCustomFieldDefinition`.
+
+- `DELETE /api/catalog/fields/{fieldId}`
+  - Purpose: delete a series custom field definition (product attributes or series metadata).
+  - Response `200`: `{ "data": { "deleted": true } }`.
+
+- `GET /api/catalog/series/{seriesId}/metadata`
+  - Purpose: fetch series metadata definitions and values.
+  - Response `200`: `data: { seriesId, definitions: SeriesCustomFieldDefinition[], values: Record<fieldKey, string|MediaValue> }`.
+
+- `POST /api/catalog/series/{seriesId}/metadata`
+  - Purpose: save metadata values for a series (supports text/number/file types).
+  - Body (JSON) for text/number-only: `{ "values": Record<string, string|null> }`.
+  - Body (multipart) when files present: `metadata` (JSON as above) + `files[fieldKey]` (file upload). Only one file per field; sending a new file replaces the old one; omitting the field keeps the current value; sending empty/null clears it.
+  - Response `200`: same shape as GET (definitions + values).
+
+- `GET /api/catalog/series/{seriesId}/products`
+  - Purpose: list products for a series including custom field values.
+  - Response `200`: `data: ProductWithCustom[]`.
+
+- `POST /api/catalog/series/{seriesId}/products`
+  - Purpose: create or update a product and its custom field values.
+  - Body (JSON) for text/number-only: `{ "id"?: int, "sku": "string", "name": "string", "description"?: "string", "customValues": Record<string, string|null> }`.
+  - Body (multipart) when files present: `metadata` (JSON as above) + `files[fieldKey]` for file-type custom fields.
+  - Response `200`: `data: ProductWithCustom`.
+
+- `DELETE /api/catalog/products/{productId}`
+  - Purpose: delete a product (and its custom field values).
+  - Response `200`: `{ "data": { "deleted": true } }`.
 
 - `POST /api/catalog/truncate`
   - Purpose: truncate catalog data with audit logging.
@@ -68,6 +107,11 @@ Resources
   - Purpose: download a previously exported/imported CSV.
   - Response: file stream.
 
+- `GET /api/catalog/media?id={token}`
+  - Purpose: stream a stored media file linked to a custom field value.
+  - Query params: `id` (token/path reference returned in field values).
+  - Response: file stream with `Content-Disposition` preserving the original filename. Errors: `404` if missing, `400 validation_error` if malformed token.
+
 ### Spec Search
 - `GET /api/spec-search/root-categories`
   - Response `200`: `data: { categories: CategorySummary[] }`.
@@ -88,6 +132,9 @@ Data Shapes
 - `CategoryNode`: `{ id, parentId, name, type, displayOrder, productCount, categoryCount, products: ProductSummary[], children: CategoryNode[] }`.
 - `CategorySummary`: `{ id, name, type }`.
 - `ProductSummary`: `{ id, sku, name, description, status, categoryId, series, category, seriesId }`.
+- `ProductWithCustom`: `ProductSummary` plus `customValues: Record<fieldKey, string|MediaValue>`.
+- `SeriesCustomFieldDefinition`: `{ id, fieldKey, label, fieldType, fieldScope, defaultValue, sortOrder, isRequired, publicPortalHidden, backendPortalHidden }`.
+- `MediaValue`: `{ filename, url, sizeBytes, storedAt }` (returned for file-type fields).
 - `Facet`: `{ name, label, type, options: { value, count }[] }`.
 
 Status Codes
@@ -129,5 +176,5 @@ Success Envelope Example
 
 Testing Notes
 -------------
-- Contract tests should assert envelopes, status codes, pagination defaults, and error codes.
-- Integration tests should seed MySQL with fixture data and hit endpoints via HTTP to confirm shapes expected by DataTables.
+- Contract tests should assert envelopes, status codes, pagination defaults, and error codes; verify file-field responses return `MediaValue` objects with signed download URLs.
+- Integration tests should seed MySQL with fixture data and hit endpoints via HTTP to confirm shapes expected by DataTables; cover series field CRUD, product/metadata saves via JSON and multipart, file upload type/size enforcement, and media download streaming the original filename.

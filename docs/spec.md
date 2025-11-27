@@ -13,7 +13,7 @@ Goals
 - **Server**: PHP (OO), manual autoload/require with a small bootstrap; thin public controllers that delegate to services.
 - **UI**: Bootstrap 5 for layout, DataTables for tabular interactions; jQuery used via ES6 class wrappers for DOM/events.
 - **Styling**: Global Meyer reset (v2) loaded before Bootstrap to normalize spacing; sidebar brand is text-only (no icon), collapse control uses icon-only trigger; sidebar/grid rows use zero gutters with body padding removed (main content handles its own spacing) to prevent white rails; sidebar is sticky from top to bottom (100vh) on desktop with mobile slide-over behavior.
-- **Data**: MySQL for catalog and search data; local storage for CSV imports and LaTeX build/PDF outputs.
+- **Data**: MySQL for catalog and search data; local storage for CSV imports, LaTeX build/PDF outputs, and media uploads under `storage/media/...`.
 - **Error handling**: Centralized exception type for API errors; structured JSON `{ error: { code, message, correlationId } }`.
 - **Logging**: Service-boundary logging with correlation IDs; no secrets/PII.
 - **Configuration**: Centralized in `config/app.php` and `config/db.php`; avoid magic values (tokens, paths, limits).
@@ -24,10 +24,14 @@ Goals
 - `category`: `id`, `parent_id`, `name`, `type` (series/root/leaf), `display_order`.
 - `product`: `id`, `category_id`, `sku`, `name`, `description`, `status` (draft/active/archived), `created_at`, `updated_at`.
 - `product_attribute`: `id`, `product_id`, `attr_key`, `attr_value`.
+- `series_custom_field`: `id`, `series_id`, `field_key`, `label`, `field_type` (`text` | `number` | `file`), `field_scope` (`series_metadata` | `product_attribute`), `default_value`, `sort_order`, `is_required`, `is_public_portal_hidden`, `is_backend_portal_hidden`.
+- `product_custom_field_value`: `id`, `product_id`, `series_custom_field_id`, `value` (text; file fields store media token/path).
+- `series_custom_field_value`: `id`, `series_id`, `series_custom_field_id`, `value` (text; file fields store media token/path).
 - `series_field_definition`: `id`, `scope` (series_metadata/product_attribute), `name`, `display_label`, `data_type`, `required`.
 - `truncate_audit` (JSONL file): `timestamp`, `correlation_id`, `reason`, `user`, `token`.
 - `csv import artifacts`: stored under `storage/csv/*` with import timestamps.
 - `latex outputs`: build inputs in `storage/latex-build/`, PDFs in `storage/latex-pdfs/`.
+- `media files`: stored under `storage/media/<category>/<series>/<field-key>/<entity-id>/<original-filename>`; single file per field; original filename preserved with replace/clear semantics.
 
 3. Key Processes
 ----------------
@@ -37,6 +41,7 @@ Goals
 - CSV import for products and series metadata with validation and audit trail.
 - CSV import/export/truncate history management in a dedicated CSV page (`catalog-csv.html`) with download/restore/delete actions.
 - LaTeX PDF generation for catalog/series outputs.
+- Custom field management: series custom field definitions support selectable types (text, number, file) for product attributes and series metadata; file uploads are validated (image/pdf/glb) and stored under `storage/media/...` using category/series folders; replacing or clearing updates storage and persisted value. Each field now tracks `Public Portal Hidden` and `Backend Portal Hidden` flags (stored as booleans) alongside `Required` to control downstream portal visibility while keeping catalog editor visibility unchanged.
 - Catalog truncate with confirmation token and audit logging.
 - Sidebar navigation panel linking Catalog UI, Spec Search, and LaTeX templating pages; AdminLTE-like persistent left rail on desktop with slide-over toggle on mobile.
 
@@ -115,6 +120,26 @@ onCatalogLoad():
       loadSeriesContext(match.id)
   if pendingProductFilter and product DataTable exists:
     applyDataTableSearch("#product-list-table", pendingProductFilter)
+```
+
+**Custom Field Save (text/number/file)**
+```
+saveCustomFieldValue(entityType, entityId, fieldDef, input):
+  if fieldDef.field_type == 'number':
+    assert is_numeric(input.value)
+    normalized = trim(input.value) // stored as text but validated numeric
+  else if fieldDef.field_type == 'file':
+    assert input.file exists
+    assert mime in ['image/*', 'application/pdf', 'model/gltf-binary']
+    assert input.file.size <= MEDIA_MAX_BYTES
+    path = buildPath(category, series, fieldDef.field_key, entityId, input.file.original_name)
+    deleteExistingFile(fieldDef, entityId)
+    moveUploadedFile(input.file.tmp_path, path)
+    normalized = relativePath(path)
+  else:
+    normalized = trim(input.value)
+  persistValue(entityType, entityId, fieldDef.id, normalized)
+  return normalized
 ```
 
 5. System Context Diagram (Mermaid)
@@ -228,6 +253,8 @@ erDiagram
     string display_label
     string data_type
     bool required
+    bool is_public_portal_hidden
+    bool is_backend_portal_hidden
   }
   SERIES_FIELD_VALUE {
     int id
@@ -314,10 +341,10 @@ stateDiagram-v2
 
 Testing Approach
 ----------------
-- **Unit**: service methods (validation, tree assembly, CSV parsing), utility functions.
-- **Integration**: endpoint calls hitting MySQL with seeded data; verify JSON shapes expected by DataTables.
-- **Contract**: error envelope shape `{ error: { code, message, correlationId } }` and success envelopes consumed by UI.
-- **Optional E2E**: load catalog UI, ensure DataTables renders and paginates via real APIs.
+- **Unit**: service methods (validation, tree assembly, CSV parsing), utility functions, custom-field validators (number/file type checks, required enforcement), media path builder.
+- **Integration**: endpoint calls hitting MySQL with seeded data; verify JSON shapes expected by DataTables; save product/series metadata with text/number/file fields via JSON and multipart forms; download media returns original filename and correct MIME.
+- **Contract**: error envelope shape `{ error: { code, message, correlationId } }` and success envelopes consumed by UI; file-field responses include `{ filename, url, sizeBytes, storedAt }` where applicable.
+- **Optional E2E**: load catalog UI, ensure DataTables renders and paginates via real APIs; create field definitions of each type and save values including file upload, then view/download link.
 - **Manual**: spec-search Edit deep link redirects to catalog UI, pre-selects the target series, and fills `hierarchy-search` with the product SKU/item code.
 - **Manual (CSV page)**: catalog-csv.html loads CSV history/ truncate audit tables, runs export/import/restore/delete flows, and surfaces correlation IDs in status messages.
 
@@ -326,6 +353,8 @@ Non-Functional & Constraints
 - Keep bootstrap/jQuery/DataTables assets under `public/assets/`; bundle/copy via PowerShell.
 - Avoid global jQuery usage; define ES6 classes per page (e.g., `class CatalogTable` that binds events and DataTables init).
 - Local storage writable under `storage/*`; do not serve private CSV files publicly.
+- Media uploads: limit to image/*, PDF, GLB; default max size 10 MB; preserve original filenames; store under `storage/media/<category>/<series>/<field-key>/<entity-id>/`; single file per field with replace/clear semantics; expose download via tokenized route.
+- Field type validation: number fields accept decimals but are stored as text; required fields enforced on save; file fields validated via multipart requests when present, otherwise JSON-only saves remain supported.
 - Ensure LaTeX binary path is configurable via env/`config/app.php` (default `pdflatex`).
 - Sidebar navigation uses Bootstrap 5 vertical nav with AdminLTE-inspired left rail; sticky on desktop, slide-over on mobile, active state must reflect current page without breaking existing layouts. Navigation order: Spec Search, Catalog UI, CSV Import/Export, LaTeX Templating.
 

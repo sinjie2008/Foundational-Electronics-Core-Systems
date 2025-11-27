@@ -37,8 +37,11 @@ class CatalogUI {
         seriesFieldId: '#series-field-id',
         seriesFieldKey: '#series-field-key',
         seriesFieldLabel: '#series-field-label',
+        seriesFieldType: '#series-field-type',
         seriesFieldSortOrder: '#series-field-sort-order',
         seriesFieldRequired: '#series-field-required',
+        seriesFieldPublicHidden: '#series-field-public-hidden',
+        seriesFieldBackendHidden: '#series-field-backend-hidden',
         seriesFieldSubmit: '#series-field-submit',
         seriesFieldClearButton: '#series-field-clear-button',
         seriesMetadataFieldsTable: '#series-metadata-fields-table',
@@ -46,8 +49,11 @@ class CatalogUI {
         seriesMetadataFieldId: '#series-metadata-field-id',
         seriesMetadataFieldKey: '#series-metadata-field-key',
         seriesMetadataFieldLabel: '#series-metadata-field-label',
+        seriesMetadataFieldType: '#series-metadata-field-type',
         seriesMetadataFieldSortOrder: '#series-metadata-field-sort-order',
         seriesMetadataFieldRequired: '#series-metadata-field-required',
+        seriesMetadataFieldPublicHidden: '#series-metadata-field-public-hidden',
+        seriesMetadataFieldBackendHidden: '#series-metadata-field-backend-hidden',
         seriesMetadataFieldSubmit: '#series-metadata-field-submit',
         seriesMetadataFieldClearButton: '#series-metadata-field-clear-button',
         seriesMetadataForm: '#series-metadata-form',
@@ -307,6 +313,26 @@ class CatalogUI {
     const toInt = (value, fallback = 0) => {
         const parsed = parseInt(value, 10);
         return Number.isNaN(parsed) ? fallback : parsed;
+    };
+
+    const upsertField = (fields, savedField) => {
+        const list = Array.isArray(fields) ? [...fields] : [];
+        const idx = list.findIndex(
+            (item) => Number(item.id) === Number(savedField.id)
+        );
+        if (idx >= 0) {
+            list[idx] = { ...list[idx], ...savedField };
+        } else {
+            list.push(savedField);
+        }
+        list.sort((a, b) => {
+            const orderDiff = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+            if (orderDiff !== 0) {
+                return orderDiff;
+            }
+            return (a.id ?? 0) - (b.id ?? 0);
+        });
+        return list;
     };
 
     const formatDateTime = (timestamp) => {
@@ -800,6 +826,35 @@ class CatalogUI {
             scope === FIELD_SCOPE.SERIES ? getMetadataFields() : getProductFields();
         return list.find((field) => Number(field.id) === Number(fieldId)) || null;
     };
+    const formatMediaValue = (value) => {
+        if (!value) {
+            return '';
+        }
+        if (typeof value === 'string') {
+            return escapeHtml(value);
+        }
+        const filename = escapeHtml(value.filename || 'file');
+        const url = escapeHtml(value.url || '');
+        if (!url) {
+            return filename;
+        }
+        const lower = url.toLowerCase();
+        const isImage =
+            lower.endsWith('.png') ||
+            lower.endsWith('.jpg') ||
+            lower.endsWith('.jpeg') ||
+            lower.endsWith('.gif') ||
+            lower.endsWith('.webp') ||
+            lower.endsWith('.bmp') ||
+            lower.endsWith('.svg');
+        if (isImage) {
+            return `<div class="media-preview">
+                <img src="${url}" alt="${filename} preview" loading="lazy">
+                <a href="${url}" target="_blank" rel="noopener">${filename}</a>
+            </div>`;
+        }
+        return `<a href="${url}" target="_blank" rel="noopener">${filename}</a>`;
+    };
 
     const renderSeriesFieldsTable = () => {
         const fields = getProductFields();
@@ -807,8 +862,11 @@ class CatalogUI {
             { title: 'ID', data: 'id', width: '60px' },
             { title: 'Key', data: 'fieldKey' },
             { title: 'Label', data: 'label' },
+            { title: 'Type', data: 'type', width: '90px' },
+            { title: 'Public Hidden', data: 'publicHidden', width: '140px' },
+            { title: 'Backend Hidden', data: 'backendHidden', width: '150px' },
             { title: 'Required', data: 'required', width: '90px' },
-            { title: 'Sort', data: 'sortOrder', width: '70px' },
+            { title: 'Sort', data: 'sortOrder', width: '80px' },
             {
                 title: 'Actions',
                 data: 'actions',
@@ -831,6 +889,9 @@ class CatalogUI {
             id: Number(field.id),
             fieldKey: escapeHtml(field.fieldKey),
             label: escapeHtml(field.label),
+            type: escapeHtml(field.fieldType || 'text'),
+            publicHidden: field.publicPortalHidden ? 'Yes' : 'No',
+            backendHidden: field.backendPortalHidden ? 'Yes' : 'No',
             required: field.isRequired ? 'Yes' : 'No',
             sortOrder: field.sortOrder ?? 0,
             actions: `<div class="datatable-actions">
@@ -839,7 +900,7 @@ class CatalogUI {
             </div>`,
         }));
         syncDataTable('seriesFieldsTable', columns, rows, {
-            order: [[4, 'asc']],
+            order: [[7, 'asc']],
             pageLength: 5,
             emptyMessage: 'No product attribute fields defined for this series.',
         });
@@ -852,8 +913,11 @@ class CatalogUI {
             { title: 'ID', data: 'id', width: '60px' },
             { title: 'Key', data: 'fieldKey' },
             { title: 'Label', data: 'label' },
+            { title: 'Type', data: 'type', width: '90px' },
+            { title: 'Public Hidden', data: 'publicHidden', width: '140px' },
+            { title: 'Backend Hidden', data: 'backendHidden', width: '150px' },
             { title: 'Required', data: 'required', width: '90px' },
-            { title: 'Sort', data: 'sortOrder', width: '70px' },
+            { title: 'Sort', data: 'sortOrder', width: '80px' },
             {
                 title: 'Actions',
                 data: 'actions',
@@ -876,6 +940,9 @@ class CatalogUI {
             id: Number(field.id),
             fieldKey: escapeHtml(field.fieldKey),
             label: escapeHtml(field.label),
+            type: escapeHtml(field.fieldType || 'text'),
+            publicHidden: field.publicPortalHidden ? 'Yes' : 'No',
+            backendHidden: field.backendPortalHidden ? 'Yes' : 'No',
             required: field.isRequired ? 'Yes' : 'No',
             sortOrder: field.sortOrder ?? 0,
             actions: `<div class="datatable-actions">
@@ -884,7 +951,7 @@ class CatalogUI {
             </div>`,
         }));
         syncDataTable('seriesMetadataFieldsTable', columns, rows, {
-            order: [[4, 'asc']],
+            order: [[7, 'asc']],
             pageLength: 5,
             emptyMessage: 'No series metadata fields defined.',
         });
@@ -903,11 +970,30 @@ class CatalogUI {
         const inputs = fields
             .map((field) => {
                 const required = field.isRequired ? ' *' : '';
+                const key = field.fieldKey;
+                const currentValue = values[key];
+                const type = field.fieldType || 'text';
+                if (type === 'file') {
+                    const link = formatMediaValue(currentValue);
+                    return `<div class="metadata-field-row">
+                        <label>${escapeHtml(field.label)} (${escapeHtml(key)})${required}:</label>
+                        <div class="file-controls">
+                            <input type="file" data-metadata-file="${escapeHtml(key)}" accept="image/*,.pdf,.glb">
+                            <label class="inline-checkbox file-clear"><input type="checkbox" data-metadata-clear="${escapeHtml(
+                                key
+                            )}"> Clear existing file</label>
+                            <div class="text-muted small">Allowed: images, PDF, GLB. Max 10 MB.</div>
+                            <div class="metadata-current-value">${link || 'No file uploaded.'}</div>
+                        </div>
+                    </div>`;
+                }
+                const inputType = type === 'number' ? 'number' : 'text';
+                const value = currentValue ?? '';
                 return `<div class="metadata-field-row">
-                    <label>${escapeHtml(field.label)} (${escapeHtml(field.fieldKey)})${required}: </label>
-                    <input type="text" data-metadata-key="${field.fieldKey}" value="${escapeHtml(
-                    values[field.fieldKey] ?? ''
-                )}">
+                    <label>${escapeHtml(field.label)} (${escapeHtml(key)})${required}:</label>
+                    <input type="${inputType}" data-metadata-key="${escapeHtml(key)}" value="${escapeHtml(
+                        value
+                    )}">
                 </div>`;
             })
             .join('');
@@ -925,11 +1011,28 @@ class CatalogUI {
         const controls = fields
             .map((field) => {
                 const required = field.isRequired ? ' *' : '';
+                const key = field.fieldKey;
+                const type = field.fieldType || 'text';
+                const currentValue = values[key];
+                if (type === 'file') {
+                    const link = formatMediaValue(currentValue);
+                    return `<div>
+                        <label>${escapeHtml(field.label)} (${escapeHtml(key)})${required}:</label>
+                        <div class="file-controls">
+                            <input type="file" data-field-file="${escapeHtml(key)}" accept="image/*,.pdf,.glb">
+                            <label class="inline-checkbox file-clear"><input type="checkbox" data-field-clear="${escapeHtml(
+                                key
+                            )}"> Clear existing file</label>
+                            <div class="text-muted small">Allowed: images, PDF, GLB. Max 10 MB.</div>
+                            <div class="product-current-value">${link || 'No file uploaded.'}</div>
+                        </div>
+                    </div>`;
+                }
+                const inputType = type === 'number' ? 'number' : 'text';
+                const value = currentValue ?? '';
                 return `<div>
-                    <label>${escapeHtml(field.label)} (${escapeHtml(field.fieldKey)})${required}: </label>
-                    <input type="text" data-field-key="${field.fieldKey}" value="${escapeHtml(
-                    values[field.fieldKey] ?? ''
-                )}">
+                    <label>${escapeHtml(field.label)} (${escapeHtml(key)})${required}: </label>
+                    <input type="${inputType}" data-field-key="${escapeHtml(key)}" value="${escapeHtml(value)}">
                 </div>`;
             })
             .join('');
@@ -971,8 +1074,12 @@ class CatalogUI {
         const rows = products.map((product) => {
             const customValues = {};
             fields.forEach((field) => {
-                const value = product.customValues?.[field.fieldKey] ?? '';
-                customValues[field.fieldKey] = escapeHtml(value);
+                const raw = product.customValues?.[field.fieldKey];
+                if (field.fieldType === 'file') {
+                    customValues[field.fieldKey] = formatMediaValue(raw);
+                } else {
+                    customValues[field.fieldKey] = escapeHtml(raw ?? '');
+                }
             });
             return {
                 id: Number(product.id),
@@ -1009,12 +1116,20 @@ class CatalogUI {
     const resetSeriesFieldForm = () => {
         $el('seriesFieldForm')[0].reset();
         $el('seriesFieldId').val('');
+        $el('seriesFieldType').val('text');
+        $el('seriesFieldPublicHidden').prop('checked', false);
+        $el('seriesFieldBackendHidden').prop('checked', false);
+        $el('seriesFieldRequired').prop('checked', false);
         $el('seriesFieldSubmit').text('Save Field');
     };
 
     const resetSeriesMetadataFieldForm = () => {
         $el('seriesMetadataFieldForm')[0].reset();
         $el('seriesMetadataFieldId').val('');
+        $el('seriesMetadataFieldPublicHidden').prop('checked', false);
+        $el('seriesMetadataFieldBackendHidden').prop('checked', false);
+        $el('seriesMetadataFieldRequired').prop('checked', false);
+        $el('seriesMetadataFieldType').val('text');
         $el('seriesMetadataFieldSubmit').text('Save Metadata Field');
     };
 
@@ -1039,7 +1154,10 @@ class CatalogUI {
         $el('seriesFieldId').val(field.id);
         $el('seriesFieldKey').val(field.fieldKey);
         $el('seriesFieldLabel').val(field.label);
+        $el('seriesFieldType').val(field.fieldType || 'text');
         $el('seriesFieldSortOrder').val(field.sortOrder ?? 0);
+        $el('seriesFieldPublicHidden').prop('checked', !!field.publicPortalHidden);
+        $el('seriesFieldBackendHidden').prop('checked', !!field.backendPortalHidden);
         $el('seriesFieldRequired').prop('checked', !!field.isRequired);
         $el('seriesFieldSubmit').text('Update Field');
     };
@@ -1048,7 +1166,10 @@ class CatalogUI {
         $el('seriesMetadataFieldId').val(field.id);
         $el('seriesMetadataFieldKey').val(field.fieldKey);
         $el('seriesMetadataFieldLabel').val(field.label);
+        $el('seriesMetadataFieldType').val(field.fieldType || 'text');
         $el('seriesMetadataFieldSortOrder').val(field.sortOrder ?? 0);
+        $el('seriesMetadataFieldPublicHidden').prop('checked', !!field.publicPortalHidden);
+        $el('seriesMetadataFieldBackendHidden').prop('checked', !!field.backendPortalHidden);
         $el('seriesMetadataFieldRequired').prop('checked', !!field.isRequired);
         $el('seriesMetadataFieldSubmit').text('Update Metadata Field');
     };
@@ -1460,8 +1581,11 @@ class CatalogUI {
                 id: toInt($el('seriesFieldId').val(), null),
                 fieldKey: $el('seriesFieldKey').val(),
                 label: $el('seriesFieldLabel').val(),
+                fieldType: $el('seriesFieldType').val(),
                 fieldScope: FIELD_SCOPE.PRODUCT,
                 sortOrder: toInt($el('seriesFieldSortOrder').val()),
+                publicPortalHidden: $el('seriesFieldPublicHidden').is(':checked'),
+                backendPortalHidden: $el('seriesFieldBackendHidden').is(':checked'),
                 isRequired: $el('seriesFieldRequired').is(':checked'),
             };
             if (!payload.id) {
@@ -1473,9 +1597,12 @@ class CatalogUI {
                     handleErrorResponse(response);
                     return;
                 }
+                const savedField = response.data || payload;
+                state.seriesFields = upsertField(state.seriesFields, savedField);
+                renderSeriesFieldsTable();
+                renderProductFormFields();
                 setStatus('Series field saved.', false);
                 resetSeriesFieldForm();
-                await loadSeriesContext(state.selectedNodeId);
             } catch (error) {
                 console.error(error);
                 setStatusWithError('Failed to save series field.', error);
@@ -1497,8 +1624,11 @@ class CatalogUI {
                 id: toInt($el('seriesMetadataFieldId').val(), null),
                 fieldKey: $el('seriesMetadataFieldKey').val(),
                 label: $el('seriesMetadataFieldLabel').val(),
+                fieldType: $el('seriesMetadataFieldType').val(),
                 fieldScope: FIELD_SCOPE.SERIES,
                 sortOrder: toInt($el('seriesMetadataFieldSortOrder').val()),
+                publicPortalHidden: $el('seriesMetadataFieldPublicHidden').is(':checked'),
+                backendPortalHidden: $el('seriesMetadataFieldBackendHidden').is(':checked'),
                 isRequired: $el('seriesMetadataFieldRequired').is(':checked'),
             };
             if (!payload.id) {
@@ -1510,9 +1640,22 @@ class CatalogUI {
                     handleErrorResponse(response);
                     return;
                 }
+                const savedField = response.data || payload;
+                state.seriesMetadataFields = upsertField(
+                    state.seriesMetadataFields,
+                    savedField
+                );
+                state.seriesMetadataValues = {
+                    ...state.seriesMetadataValues,
+                    [savedField.fieldKey]:
+                        state.seriesMetadataValues?.[savedField.fieldKey] ??
+                        savedField.defaultValue ??
+                        '',
+                };
+                renderSeriesMetadataFieldsTable();
+                renderSeriesMetadataValues();
                 setStatus('Metadata field saved.', false);
                 resetSeriesMetadataFieldForm();
-                await loadSeriesContext(state.selectedNodeId);
             } catch (error) {
                 console.error(error);
                 setStatusWithError('Failed to save metadata field.', error);
@@ -1531,17 +1674,42 @@ class CatalogUI {
                 return;
             }
             const values = {};
-            $el('seriesMetadataValues')
-                .find('input[data-metadata-key]')
-                .each((_, input) => {
-                    const $input = $(input);
-                    values[$input.data('metadata-key')] = $input.val();
-                });
+            const fields = getMetadataFields();
+            const formData = new FormData();
+            let hasFile = false;
+
+            fields.forEach((field) => {
+                const key = field.fieldKey;
+                if (field.fieldType === 'file') {
+                    const input = $el('seriesMetadataValues').find(`input[data-metadata-file="${key}"]`)[0];
+                    const clearInput = $el('seriesMetadataValues').find(`input[data-metadata-clear="${key}"]`)[0];
+                    const hasSelection = input?.files && input.files.length > 0;
+                    if (hasSelection) {
+                        formData.append(`files[${key}]`, input.files[0]);
+                        hasFile = true;
+                    } else if (clearInput && clearInput.checked) {
+                        values[key] = '';
+                    }
+                } else {
+                    const input = $el('seriesMetadataValues').find(`input[data-metadata-key="${key}"]`)[0];
+                    if (input) {
+                        values[key] = input.value;
+                    }
+                }
+            });
+
+            const metadataPayload = {
+                seriesId: state.selectedNodeId,
+                values,
+            };
             try {
-                const response = await postJson('v1.saveSeriesAttributes', {
-                    seriesId: state.selectedNodeId,
-                    values,
-                });
+                let response;
+                if (hasFile) {
+                    formData.append('metadata', JSON.stringify(metadataPayload));
+                    response = await postMultipart('v1.saveSeriesAttributes', formData);
+                } else {
+                    response = await postJson('v1.saveSeriesAttributes', metadataPayload);
+                }
                 if (!response.success) {
                     handleErrorResponse(response);
                     return;
@@ -1567,12 +1735,30 @@ class CatalogUI {
                 return;
             }
             const customValues = {};
-            $el('productCustomFields')
-                .find('input[data-field-key]')
-                .each((_, input) => {
-                    const $input = $(input);
-                    customValues[$input.data('field-key')] = $input.val();
-                });
+            const fields = getProductFields();
+            const formData = new FormData();
+            let hasFile = false;
+
+            fields.forEach((field) => {
+                const key = field.fieldKey;
+                if (field.fieldType === 'file') {
+                    const input = $el('productCustomFields').find(`input[data-field-file="${key}"]`)[0];
+                    const clearInput = $el('productCustomFields').find(`input[data-field-clear="${key}"]`)[0];
+                    const hasSelection = input?.files && input.files.length > 0;
+                    if (hasSelection) {
+                        formData.append(`files[${key}]`, input.files[0]);
+                        hasFile = true;
+                    } else if (clearInput && clearInput.checked) {
+                        customValues[key] = '';
+                    }
+                } else {
+                    const input = $el('productCustomFields').find(`input[data-field-key="${key}"]`)[0];
+                    if (input) {
+                        customValues[key] = input.value;
+                    }
+                }
+            });
+
             const payload = {
                 id: toInt($el('productId').val(), null),
                 seriesId: state.selectedNodeId,
@@ -1585,7 +1771,13 @@ class CatalogUI {
                 delete payload.id;
             }
             try {
-                const response = await postJson('v1.saveProduct', payload);
+                let response;
+                if (hasFile) {
+                    formData.append('metadata', JSON.stringify(payload));
+                    response = await postMultipart('v1.saveProduct', formData);
+                } else {
+                    response = await postJson('v1.saveProduct', payload);
+                }
                 if (!response.success) {
                     handleErrorResponse(response);
                     return;
