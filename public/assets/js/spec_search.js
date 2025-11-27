@@ -96,52 +96,66 @@ class SpecSearchPage {
     }
 
     /**
+     * Wrap async work with the global loading overlay when available.
+     */
+    withLoading(promiseFactory) {
+        if (window.LoadingOverlay && typeof window.LoadingOverlay.wrapPromise === 'function') {
+            return window.LoadingOverlay.wrapPromise(promiseFactory);
+        }
+        return promiseFactory();
+    }
+
+    /**
      * Fetch JSON with basic error handling.
      */
     async fetchJson(url, options = {}) {
-        const response = await fetch(url, {
-            headers: { 'Content-Type': 'application/json' },
-            ...options,
-        });
+        const runner = async () => {
+            const response = await fetch(url, {
+                headers: { 'Content-Type': 'application/json' },
+                ...options,
+            });
 
-        const text = await response.text();
-        let payload = {};
-        try {
-            payload = text ? JSON.parse(text) : {};
-        } catch (parseError) {
-            payload = {};
-        }
+            const text = await response.text();
+            let payload = {};
+            try {
+                payload = text ? JSON.parse(text) : {};
+            } catch (parseError) {
+                payload = {};
+            }
 
-        const correlationId = AppError.extractCorrelationId(payload, response);
+            const correlationId = AppError.extractCorrelationId(payload, response);
 
-        if (!response.ok) {
-            const message =
-                payload?.error?.message ??
-                payload?.message ??
-                `Request failed: ${response.status}`;
+            if (!response.ok) {
+                const message =
+                    payload?.error?.message ??
+                    payload?.message ??
+                    `Request failed: ${response.status}`;
+                AppError.logDev({
+                    level: 'error',
+                    endpoint: url,
+                    status: response.status,
+                    errorCode: payload?.error?.code ?? 'request_failed',
+                    correlationId,
+                    message,
+                });
+                const error = new Error(AppError.buildUserMessage(message, correlationId));
+                error.correlationId = correlationId;
+                error.errorCode = payload?.error?.code ?? 'request_failed';
+                throw error;
+            }
+
             AppError.logDev({
-                level: 'error',
+                level: 'info',
                 endpoint: url,
                 status: response.status,
-                errorCode: payload?.error?.code ?? 'request_failed',
                 correlationId,
-                message,
+                message: 'ok',
             });
-            const error = new Error(AppError.buildUserMessage(message, correlationId));
-            error.correlationId = correlationId;
-            error.errorCode = payload?.error?.code ?? 'request_failed';
-            throw error;
-        }
 
-        AppError.logDev({
-            level: 'info',
-            endpoint: url,
-            status: response.status,
-            correlationId,
-            message: 'ok',
-        });
+            return payload;
+        };
 
-        return payload;
+        return this.withLoading(runner);
     }
 
     /**

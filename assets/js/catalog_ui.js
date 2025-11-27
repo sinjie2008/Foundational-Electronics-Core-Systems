@@ -502,9 +502,12 @@ class CatalogUI {
         }
     };
 
-    const loadHierarchy = async () => {
+    const loadHierarchy = async (options = {}) => {
+        const { clearStatus = true } = options;
         try {
-            setStatus('');
+            if (clearStatus) {
+                setStatus('');
+            }
             const response = await toPromise($.getJSON('api/catalog/hierarchy.php'));
             if (!response.success) {
                 handleErrorResponse(response);
@@ -1298,7 +1301,7 @@ class CatalogUI {
                 }
                 setStatus('Node created.', false);
                 $el('nodeCreateForm')[0].reset();
-                await loadHierarchy();
+                await loadHierarchy({ clearStatus: false });
             } catch (error) {
                 console.error(error);
                 setStatus('Failed to create node.', true);
@@ -1311,10 +1314,18 @@ class CatalogUI {
                 setStatus('Select a node to update.', true);
                 return;
             }
+            const selectedNode = state.nodeIndex.get(state.selectedNodeId);
+            const displayOrderInput = toInt(
+                $el('updateNodeDisplayOrder').val(),
+                selectedNode?.displayOrder ?? 0
+            );
             const payload = {
                 id: state.selectedNodeId,
+                // Preserve parent linkage (series updates fail validation without parentId).
+                parentId: selectedNode?.parentId ?? null,
                 name: $el('updateNodeName').val(),
-                displayOrder: toInt($el('updateNodeDisplayOrder').val()),
+                // Keep existing order when the input is blank to avoid zeroing the value.
+                displayOrder: displayOrderInput,
                 type: $el('updateNodeTypeValue').val(),
             };
             try {
@@ -1324,7 +1335,7 @@ class CatalogUI {
                     return;
                 }
                 setStatus('Node updated.', false);
-                await loadHierarchy();
+                await loadHierarchy({ clearStatus: false });
             } catch (error) {
                 console.error(error);
                 setStatus('Failed to update node.', true);
@@ -1348,7 +1359,7 @@ class CatalogUI {
                 }
                 setStatus('Node deleted.', false);
                 state.selectedNodeId = null;
-                await loadHierarchy();
+                await loadHierarchy({ clearStatus: false });
             } catch (error) {
                 console.error(error);
                 setStatus('Failed to delete node.', true);
@@ -1614,7 +1625,7 @@ class CatalogUI {
                 const message = `CSV import completed (${data.importedProducts ?? 0} products, ${data.createdSeries ?? 0} new series, ${data.createdCategories ?? 0} new categories).`;
                 setStatus(message, false);
                 fileInput.value = '';
-                await loadHierarchy();
+                await loadHierarchy({ clearStatus: false });
                 await loadCsvHistory();
             } catch (error) {
                 console.error(error);
@@ -1645,7 +1656,7 @@ class CatalogUI {
                 const data = response.data || {};
                 const message = `CSV restore completed (${data.importedProducts ?? 0} products, ${data.createdSeries ?? 0} new series, ${data.createdCategories ?? 0} new categories).`;
                 setStatus(message, false);
-                await loadHierarchy();
+                await loadHierarchy({ clearStatus: false });
                 await loadCsvHistory();
             } catch (error) {
                 console.error(error);
@@ -1728,7 +1739,7 @@ class CatalogUI {
                 closeTruncateModal();
                 state.selectedNodeId = null;
                 resetSeriesUI();
-                await loadHierarchy();
+                await loadHierarchy({ clearStatus: false });
                 await loadCsvHistory();
             } catch (error) {
                 console.error(error);

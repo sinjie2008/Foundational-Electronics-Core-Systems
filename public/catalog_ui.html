@@ -60,7 +60,7 @@
                     </button>
                 </div>
 
-                <div id="status-message"></div>
+                <div id="status-message-catalog" class="status-message is-empty" role="status" aria-live="polite"></div>
                 <div class="section section-inline row g-0 no-bootstrap-gap">
             <div class="panel panel-hierarchy">
                 <h2>Hierarchy</h2>
@@ -113,6 +113,7 @@
             <div class="section section-inline row g-0 no-bootstrap-gap">
                 <div class="panel panel-series-fields">
                     <h3>Series Custom Fields</h3>
+                    <div id="status-message-series-fields" class="status-message is-empty" role="status" aria-live="polite"></div>
                     <table id="series-fields-table"
                         class="table table-striped table-hover align-middle datatable w-100">
                         <thead></thead>
@@ -149,6 +150,7 @@
                 </div>
                 <div class="panel panel-series-metadata">
                     <h3>Series Metadata</h3>
+                    <div id="status-message-series-metadata" class="status-message is-empty" role="status" aria-live="polite"></div>
                     <table id="series-metadata-fields-table"
                         class="table table-striped table-hover align-middle datatable w-100">
                         <thead></thead>
@@ -195,6 +197,7 @@
             <div class="section section-inline row g-0 no-bootstrap-gap">
                 <div class="panel panel-products">
                     <h3>Products</h3>
+                    <div id="status-message-products" class="status-message is-empty" role="status" aria-live="polite"></div>
                     <div class="products-list-block">
                         <div class="product-table-scroll">
                             <table id="product-list-table"
@@ -232,6 +235,7 @@
     <script src="https://cdn.datatables.net/1.13.8/js/dataTables.bootstrap5.min.js"></script>
     <script src="https://cdn.datatables.net/fixedcolumns/4.3.0/js/dataTables.fixedColumns.min.js"></script>
     <script src="assets/js/sidebar-nav.js"></script>
+    <script src="assets/js/app_loading.js"></script>
     <script src="assets/js/app_error.js"></script>
     <script src="assets/js/catalog_ui.js"></script>
 </body>

@@ -11,6 +11,14 @@
         building: false
     };
 
+    /** Wrap async work with the global loading overlay when available. */
+    function withLoading(promiseFactory) {
+        if (window.LoadingOverlay && typeof window.LoadingOverlay.wrapPromise === 'function') {
+            return window.LoadingOverlay.wrapPromise(promiseFactory);
+        }
+        return promiseFactory();
+    }
+
     document.addEventListener('DOMContentLoaded', init);
 
     /** Initializes DataTables, live preview defaults, and event handlers. */
@@ -448,65 +456,67 @@
 
     /** Issues an AJAX request against catalog.php with JSON handling. */
     async function apiRequest(action, options) {
-        const opts = options || {};
-        const method = opts.method || 'GET';
-        const headers = { Accept: 'application/json' };
-        const params = new URLSearchParams({ action: action });
-        if (opts.query) {
-            Object.keys(opts.query).forEach(function (key) {
-                if (opts.query[key] !== undefined && opts.query[key] !== null) {
-                    params.set(key, String(opts.query[key]));
-                }
-            });
-        }
-        const fetchOptions = { method: method, headers: headers };
-        if (opts.body) {
-            headers['Content-Type'] = 'application/json';
-            fetchOptions.body = JSON.stringify(opts.body);
-        }
-        const response = await fetch('catalog.php?' + params.toString(), fetchOptions);
-        const text = await response.text();
-        let payload = {};
-        try {
-            payload = text ? JSON.parse(text) : {};
-        } catch (parseError) {
-            payload = {};
-        }
+        return withLoading(async () => {
+            const opts = options || {};
+            const method = opts.method || 'GET';
+            const headers = { Accept: 'application/json' };
+            const params = new URLSearchParams({ action: action });
+            if (opts.query) {
+                Object.keys(opts.query).forEach(function (key) {
+                    if (opts.query[key] !== undefined && opts.query[key] !== null) {
+                        params.set(key, String(opts.query[key]));
+                    }
+                });
+            }
+            const fetchOptions = { method: method, headers: headers };
+            if (opts.body) {
+                headers['Content-Type'] = 'application/json';
+                fetchOptions.body = JSON.stringify(opts.body);
+            }
+            const response = await fetch('catalog.php?' + params.toString(), fetchOptions);
+            const text = await response.text();
+            let payload = {};
+            try {
+                payload = text ? JSON.parse(text) : {};
+            } catch (parseError) {
+                payload = {};
+            }
 
-        const correlationId = AppError.extractCorrelationId(payload, response);
+            const correlationId = AppError.extractCorrelationId(payload, response);
 
-        if (!response.ok || !payload.success) {
-            const message =
-                payload?.message ||
-                payload?.error?.message ||
-                'Request failed.';
-            const errorCode =
-                payload?.errorCode ||
-                payload?.error?.code ||
-                'UNKNOWN_ERROR';
+            if (!response.ok || !payload.success) {
+                const message =
+                    payload?.message ||
+                    payload?.error?.message ||
+                    'Request failed.';
+                const errorCode =
+                    payload?.errorCode ||
+                    payload?.error?.code ||
+                    'UNKNOWN_ERROR';
+                AppError.logDev({
+                    level: 'error',
+                    endpoint: action,
+                    status: response.status,
+                    errorCode: errorCode,
+                    correlationId,
+                    message,
+                });
+                const error = new Error(AppError.buildUserMessage(message, correlationId));
+                error.details = payload.details || payload.error?.details || {};
+                error.errorCode = errorCode;
+                error.correlationId = correlationId;
+                throw error;
+            }
+
             AppError.logDev({
-                level: 'error',
+                level: 'info',
                 endpoint: action,
                 status: response.status,
-                errorCode: errorCode,
                 correlationId,
-                message,
+                message: 'ok',
             });
-            const error = new Error(AppError.buildUserMessage(message, correlationId));
-            error.details = payload.details || payload.error?.details || {};
-            error.errorCode = errorCode;
-            error.correlationId = correlationId;
-            throw error;
-        }
 
-        AppError.logDev({
-            level: 'info',
-            endpoint: action,
-            status: response.status,
-            correlationId,
-            message: 'ok',
+            return payload.data || null;
         });
-
-        return payload.data || null;
     }
 })();

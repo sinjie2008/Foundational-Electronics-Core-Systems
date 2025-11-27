@@ -31,6 +31,13 @@ Resources
   - Query params: none.
   - Response `200`: `data: { categories: CategoryNode[] }` where each node has `id`, `name`, `type`, `displayOrder`, `products[]`, `children[]`.
 
+- `POST /api/catalog/nodes`
+  - Purpose: create or update a category/series node in the hierarchy.
+  - Body: `{ "id"?: int, "name": "string", "type": "category|series", "parentId": int|null, "displayOrder"?: int }`.
+  - Notes: `parentId` is required for `series` on both create and update; parent must exist and be a `category`; parent cannot equal the node id; converting a populated series to a category returns conflict. UI resubmits the stored parent on update (no parent switching yet).
+  - Response `200`: `data: { id, name, type, parentId, displayOrder }`.
+  - Errors: `400 validation_error` for missing name/type/parentId or self-parent, `404` when node/parent not found, `409` when converting a series with products.
+
 - `GET /api/catalog/search`
   - Purpose: keyword search across products/categories.
   - Query params: `q` (string, required).
@@ -176,5 +183,8 @@ Success Envelope Example
 
 Testing Notes
 -------------
+- UI-only change: DataTables pagination styling updated; no endpoint shapes or status codes are affected.
+- UI-only change: DataTables pagination focus ring removed to prevent blink/second-click behavior; no API impact.
 - Contract tests should assert envelopes, status codes, pagination defaults, and error codes; verify file-field responses return `MediaValue` objects with signed download URLs.
 - Integration tests should seed MySQL with fixture data and hit endpoints via HTTP to confirm shapes expected by DataTables; cover series field CRUD, product/metadata saves via JSON and multipart, file upload type/size enforcement, and media download streaming the original filename.
+- Manual client check: catalog UI displays status banners scoped to the section being updated (Product Catalog Manager vs Series Custom Fields vs Series Metadata vs Products) without leaking messages to other sections.

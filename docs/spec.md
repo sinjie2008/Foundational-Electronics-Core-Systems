@@ -36,12 +36,16 @@ Goals
 3. Key Processes
 ----------------
 - Catalog hierarchy fetch for UI tree (categories with nested products).
+- Catalog hierarchy CRUD preserves parent/child integrity: series nodes must always carry a `parentId` on create/update, parent must be a category, and the UI resubmits the stored parent on edit to avoid orphaned series validation errors.
+- Display order edits keep sibling ordering: UI always sends `displayOrder` with updates (falling back to the current value if the input is blank) so backend ordering persists after node edits.
 - Faceted/spec search (root categories, product categories, products, facets).
 - Spec-search edit handoff to Catalog UI via query params (category/series/product) to pre-fill the series tree and search field.
 - CSV import for products and series metadata with validation and audit trail.
 - CSV import/export/truncate history management in a dedicated CSV page (`catalog-csv.html`) with download/restore/delete actions.
 - LaTeX PDF generation for catalog/series outputs.
 - Custom field management: series custom field definitions support selectable types (text, number, file) for product attributes and series metadata; file uploads are validated (image/pdf/glb) and stored under `storage/media/...` using category/series folders; replacing or clearing updates storage and persisted value. Each field now tracks `Public Portal Hidden` and `Backend Portal Hidden` flags (stored as booleans) alongside `Required` to control downstream portal visibility while keeping catalog editor visibility unchanged.
+- Global loading affordance: when any UI data load or save is in-flight, render a top progress bar and a light white/grey overlay across the entire app shell, block pointer/keyboard interactions (including scroll), and clear both once all tracked requests finish.
+- Catalog UI status feedback is scoped per section: hierarchy/product catalog manager actions surface messages in a localized banner, while series custom fields, series metadata, and products each render their own inline status message container to avoid cross-section confusion.
 - Catalog truncate with confirmation token and audit logging.
 - Sidebar navigation panel linking Catalog UI, Spec Search, and LaTeX templating pages; AdminLTE-like persistent left rail on desktop with slide-over toggle on mobile.
 
@@ -140,6 +144,29 @@ saveCustomFieldValue(entityType, entityId, fieldDef, input):
     normalized = trim(input.value)
   persistValue(entityType, entityId, fieldDef.id, normalized)
   return normalized
+```
+
+**Global Loading Overlay + Progress Bar**
+```
+loadingState = { activeCount: 0, timer: null }
+
+beginLoading():
+  loadingState.activeCount += 1
+  showOverlay() // apply white-grey veil and disable pointer/scroll
+  startProgressBar() // animate from 15% to 90% with CSS/JS timer
+
+endLoading():
+  loadingState.activeCount = max(0, loadingState.activeCount - 1)
+  if loadingState.activeCount == 0:
+    completeProgressBar() // snap to 100%, short delay
+    hideOverlay() // remove veil and re-enable interactions
+
+wrapRequest(promiseFactory):
+  beginLoading()
+  try:
+    return await promiseFactory()
+  finally:
+    endLoading()
 ```
 
 5. System Context Diagram (Mermaid)
@@ -347,6 +374,7 @@ Testing Approach
 - **Optional E2E**: load catalog UI, ensure DataTables renders and paginates via real APIs; create field definitions of each type and save values including file upload, then view/download link.
 - **Manual**: spec-search Edit deep link redirects to catalog UI, pre-selects the target series, and fills `hierarchy-search` with the product SKU/item code.
 - **Manual (CSV page)**: catalog-csv.html loads CSV history/ truncate audit tables, runs export/import/restore/delete flows, and surfaces correlation IDs in status messages.
+- **Manual (Catalog UI status banners)**: actions in Product Catalog Manager, Series Custom Fields, Series Metadata, and Products only update the status banner within the same section; no other section should change or display a message.
 
 Non-Functional & Constraints
 ----------------------------
@@ -355,6 +383,9 @@ Non-Functional & Constraints
 - Local storage writable under `storage/*`; do not serve private CSV files publicly.
 - Media uploads: limit to image/*, PDF, GLB; default max size 10 MB; preserve original filenames; store under `storage/media/<category>/<series>/<field-key>/<entity-id>/`; single file per field with replace/clear semantics; expose download via tokenized route.
 - Field type validation: number fields accept decimals but are stored as text; required fields enforced on save; file fields validated via multipart requests when present, otherwise JSON-only saves remain supported.
+- DataTables pagination buttons retain native sizing/borders (no custom padding, margin, radius, or border overrides) to match Bootstrap pagination affordances.
+- DataTables pagination focus ring/box-shadow removed so page clicks do not blink or require a second click; hover/current styles remain for feedback.
+- Global loading overlay is neutral (#f8f9fa overlay with slight opacity) with a high-z-index top progress bar; overlay captures pointer events to block clicks/inputs and applies `overflow: hidden` on body to freeze scroll until all tracked requests complete.
 - Ensure LaTeX binary path is configurable via env/`config/app.php` (default `pdflatex`).
 - Sidebar navigation uses Bootstrap 5 vertical nav with AdminLTE-inspired left rail; sticky on desktop, slide-over on mobile, active state must reflect current page without breaking existing layouts. Navigation order: Spec Search, Catalog UI, CSV Import/Export, LaTeX Templating.
 

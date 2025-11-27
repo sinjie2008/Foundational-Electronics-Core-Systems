@@ -102,26 +102,37 @@ class CatalogCsvPage {
             return date.toLocaleString();
         };
 
+        // Wrap a promise factory with the global loading overlay when present.
+        const withLoading = (factory) => {
+            if (window.LoadingOverlay && typeof window.LoadingOverlay.wrapPromise === 'function') {
+                return window.LoadingOverlay.wrapPromise(factory);
+            }
+            return factory();
+        };
+
         // Wrap jQuery AJAX in a promise with correlation-aware logging.
         const toPromise = (jqXHR, action = 'ajax') =>
-            new Promise((resolve, reject) => {
-                jqXHR
-                    .done((data, textStatus, xhr) => {
-                        const correlationId = AppError.extractCorrelationId(data, xhr);
-                        AppError.logDev({
-                            level: 'info',
-                            endpoint: action,
-                            status: xhr?.status,
-                            correlationId,
-                            message: 'ok',
-                        });
-                        resolve(data);
+            withLoading(
+                () =>
+                    new Promise((resolve, reject) => {
+                        jqXHR
+                            .done((data, textStatus, xhr) => {
+                                const correlationId = AppError.extractCorrelationId(data, xhr);
+                                AppError.logDev({
+                                    level: 'info',
+                                    endpoint: action,
+                                    status: xhr?.status,
+                                    correlationId,
+                                    message: 'ok',
+                                });
+                                resolve(data);
+                            })
+                            .fail((xhr) => {
+                                const error = AppError.handleAjaxFailure(xhr, action, 'Request failed.');
+                                reject(error);
+                            });
                     })
-                    .fail((xhr) => {
-                        const error = AppError.handleAjaxFailure(xhr, action, 'Request failed.');
-                        reject(error);
-                    });
-            });
+            );
 
         // Convenience helpers for common request types.
         const requestJson = (params) => toPromise($.getJSON(apiBase, params), params?.action ?? 'ajax:get');

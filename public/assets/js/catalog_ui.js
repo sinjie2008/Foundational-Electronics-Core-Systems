@@ -14,7 +14,10 @@ class CatalogUI {
     const TRUNCATE_TOKEN = 'TRUNCATE';
 
     const selectors = {
-        status: '#status-message',
+        statusCatalog: '#status-message-catalog',
+        statusSeriesFields: '#status-message-series-fields',
+        statusSeriesMetadata: '#status-message-series-metadata',
+        statusProducts: '#status-message-products',
         hierarchyContainer: '#hierarchy-container',
         selectedNodeDetails: '#selected-node-details',
         seriesManagement: '#series-management',
@@ -86,6 +89,14 @@ class CatalogUI {
         truncateModalError: '#truncate-modal-error',
         truncateAuditTable: '#truncate-audit-table',
         hierarchySearch: '#hierarchy-search',
+    };
+
+    // Map logical sections to their scoped status banners.
+    const STATUS_TARGETS = {
+        catalog: 'statusCatalog',
+        seriesFields: 'statusSeriesFields',
+        seriesMetadata: 'statusSeriesMetadata',
+        products: 'statusProducts',
     };
 
     const domCache = new Map();
@@ -385,25 +396,36 @@ class CatalogUI {
         return candidate;
     };
 
+    // Wrap a promise factory with the global loading overlay when present.
+    const withLoading = (factory) => {
+        if (window.LoadingOverlay && typeof window.LoadingOverlay.wrapPromise === 'function') {
+            return window.LoadingOverlay.wrapPromise(factory);
+        }
+        return factory();
+    };
+
     const toPromise = (jqXHR, action = 'ajax') =>
-        new Promise((resolve, reject) => {
-            jqXHR
-                .done((data, textStatus, xhr) => {
-                    const correlationId = AppError.extractCorrelationId(data, xhr);
-                    AppError.logDev({
-                        level: 'info',
-                        endpoint: action,
-                        status: xhr?.status,
-                        correlationId,
-                        message: 'ok',
-                    });
-                    resolve(data);
+        withLoading(
+            () =>
+                new Promise((resolve, reject) => {
+                    jqXHR
+                        .done((data, textStatus, xhr) => {
+                            const correlationId = AppError.extractCorrelationId(data, xhr);
+                            AppError.logDev({
+                                level: 'info',
+                                endpoint: action,
+                                status: xhr?.status,
+                                correlationId,
+                                message: 'ok',
+                            });
+                            resolve(data);
+                        })
+                        .fail((xhr) => {
+                            const error = AppError.handleAjaxFailure(xhr, action, 'Request failed.');
+                            reject(error);
+                        });
                 })
-                .fail((xhr) => {
-                    const error = AppError.handleAjaxFailure(xhr, action, 'Request failed.');
-                    reject(error);
-                });
-        });
+        );
 
     const requestJson = (params) => toPromise($.getJSON(apiBase, params), params?.action ?? 'ajax:get');
 
@@ -432,26 +454,69 @@ class CatalogUI {
             action
         );
 
-    const setStatus = (message = '', isError = false) => {
-        const $status = $el('status');
-        $status.removeClass('status-info status-error');
-        if (!message) {
+    /**
+     * Render a status message inside the requested section banner.
+     * Signatures:
+     *   setStatus('catalog', 'message', true/false) // preferred
+     *   setStatus('catalog', 'message') // success
+     *   setStatus('message', true/false) // legacy global -> catalog
+     */
+    const setStatus = (targetOrMessage, message = '', isError = false) => {
+        let targetKey = 'catalog';
+        let resolvedMessage = '';
+        let resolvedIsError = false;
+
+        if (arguments.length === 1) {
+            // Legacy: setStatus('message')
+            resolvedMessage = targetOrMessage;
+        } else if (arguments.length === 2) {
+            if (STATUS_TARGETS[targetOrMessage]) {
+                // setStatus('catalog', 'message')
+                targetKey = targetOrMessage;
+                resolvedMessage = message;
+            } else {
+                // Legacy: setStatus('message', isError)
+                resolvedMessage = targetOrMessage;
+                resolvedIsError = message === true;
+            }
+        } else {
+            // setStatus('catalog', 'message', true/false)
+            targetKey = STATUS_TARGETS[targetOrMessage] ? targetOrMessage : 'catalog';
+            resolvedMessage = message;
+            resolvedIsError = isError === true;
+        }
+
+        const selectorKey = STATUS_TARGETS[targetKey] || STATUS_TARGETS.catalog;
+        const $status = $el(selectorKey);
+        if (!$status.length) {
+            return;
+        }
+        $status.removeClass('status-info status-error').addClass('is-empty');
+        if (!resolvedMessage) {
             $status.text('');
             return;
         }
         $status
-            .text(`${isError ? 'Error' : 'Info'}: ${message}`)
-            .addClass(isError ? 'status-error' : 'status-info');
+            .text(`${resolvedIsError ? 'Error' : 'Info'}: ${resolvedMessage}`)
+            .addClass(resolvedIsError ? 'status-error' : 'status-info')
+            .removeClass('is-empty');
     };
 
-    const setStatusWithError = (message, error) => {
-        const correlationId = error?.correlationId ?? null;
-        setStatus(AppError.buildUserMessage(message, correlationId), true);
+    /**
+     * Convenience helper to display errors with correlation IDs when available.
+     */
+    const setStatusWithError = (targetKey, message, error) => {
+        const correlationId = AppError.extractCorrelationId(error);
+        const userMessage = AppError.buildUserMessage(message, correlationId);
+        setStatus(targetKey, userMessage, true);
     };
 
-    const handleErrorResponse = (response, fallback = 'Request failed.') => {
+    /**
+     * Handle API error envelopes and surface them in the scoped banner for the active section.
+     */
+    const handleErrorResponse = (response, targetKey = 'catalog', fallback = 'Request failed.') => {
         if (!response) {
-            setStatus(AppError.buildUserMessage('Unexpected error occurred.', null), true);
+            setStatusWithError(targetKey, 'Unexpected error occurred.', null);
             return;
         }
         const correlationId = AppError.extractCorrelationId(response);
@@ -467,7 +532,8 @@ class CatalogUI {
                 message = `${message} (${parts.join('; ')})`;
             }
         }
-        setStatus(AppError.buildUserMessage(message, correlationId), true);
+        const userMessage = AppError.buildUserMessage(message, correlationId);
+        setStatus(targetKey, userMessage, true);
     };
 
     const applyCsvLockState = () => {
@@ -652,12 +718,15 @@ class CatalogUI {
         }
     };
 
-    const loadHierarchy = async () => {
+    const loadHierarchy = async (options = {}) => {
+        const { clearStatus = true } = options;
         try {
-            setStatus('');
+            if (clearStatus) {
+                setStatus('catalog', '');
+            }
             const response = await toPromise($.getJSON('api/catalog/hierarchy.php'));
             if (!response.success) {
-                handleErrorResponse(response);
+                handleErrorResponse(response, 'catalog');
                 return;
             }
             const payload = response.data || [];
@@ -671,7 +740,7 @@ class CatalogUI {
             updateSelectedNodePanel();
         } catch (error) {
             console.error(error);
-            setStatusWithError('Unable to load hierarchy.', error);
+            setStatusWithError('catalog', 'Unable to load hierarchy.', error);
         }
     };
 
@@ -784,19 +853,19 @@ class CatalogUI {
             }
 
             if (!productFields.success) {
-                handleErrorResponse(productFields);
+                handleErrorResponse(productFields, 'seriesFields');
                 return;
             }
             if (!metadataFields.success) {
-                handleErrorResponse(metadataFields);
+                handleErrorResponse(metadataFields, 'seriesMetadata');
                 return;
             }
             if (!metadataValues.success) {
-                handleErrorResponse(metadataValues);
+                handleErrorResponse(metadataValues, 'seriesMetadata');
                 return;
             }
             if (!products.success) {
-                handleErrorResponse(products);
+                handleErrorResponse(products, 'products');
                 return;
             }
 
@@ -815,7 +884,7 @@ class CatalogUI {
             renderProductFormFields();
         } catch (error) {
             console.error(error);
-            setStatusWithError('Unable to load series context.', error);
+            setStatusWithError('seriesFields', 'Unable to load series context.', error);
         }
     };
     const getProductFields = () => state.seriesFields || [];
@@ -1148,7 +1217,7 @@ class CatalogUI {
 
     const populateSeriesFieldForm = (field, scope) => {
         if (scope !== FIELD_SCOPE.PRODUCT) {
-            setStatus('Select a product attribute field to edit.', true);
+            setStatus('seriesFields', 'Select a product attribute field to edit.', true);
             return;
         }
         $el('seriesFieldId').val(field.id);
@@ -1192,14 +1261,14 @@ class CatalogUI {
                 seriesId,
             });
             if (!response.success) {
-                handleErrorResponse(response);
+                handleErrorResponse(response, 'products');
                 return;
             }
             state.products = Array.isArray(response.data) ? response.data : [];
             renderProductList();
         } catch (error) {
             console.error(error);
-            setStatusWithError('Unable to load products.', error);
+            setStatusWithError('products', 'Unable to load products.', error);
         }
     };
     const renderCsvHistory = (files) => {
@@ -1315,7 +1384,7 @@ class CatalogUI {
         try {
             const response = await requestJson({ action: 'v1.listCsvHistory' });
             if (!response.success) {
-                handleErrorResponse(response);
+                handleErrorResponse(response, 'catalog');
                 return;
             }
             const payload = response.data || {};
@@ -1325,7 +1394,7 @@ class CatalogUI {
             applyCsvLockState();
         } catch (error) {
             console.error(error);
-            setStatusWithError('Unable to load CSV history.', error);
+            setStatusWithError('catalog', 'Unable to load CSV history.', error);
         }
     };
 
@@ -1378,7 +1447,7 @@ class CatalogUI {
         if (action === 'edit') {
             const field = findFieldById(fieldId, scope);
             if (!field) {
-                setStatus('Field not found.', true);
+                setStatus('seriesFields', 'Field not found.', true);
                 return;
             }
             if (scope === FIELD_SCOPE.SERIES) {
@@ -1395,14 +1464,14 @@ class CatalogUI {
             try {
                 const response = await postJson('v1.deleteSeriesField', { id: fieldId });
                 if (!response.success) {
-                    handleErrorResponse(response);
+                    handleErrorResponse(response, 'seriesFields');
                     return;
                 }
-                setStatus('Series field deleted.', false);
+                setStatus('seriesFields', 'Series field deleted.', false);
                 loadSeriesContext(state.selectedNodeId);
             } catch (error) {
                 console.error(error);
-                setStatusWithError('Failed to delete series field.', error);
+                setStatusWithError('seriesFields', 'Failed to delete series field.', error);
             }
         }
     };
@@ -1416,7 +1485,7 @@ class CatalogUI {
         }
         const product = state.products.find((item) => item.id === productId);
         if (!product) {
-            setStatus('Product not found.', true);
+            setStatus('products', 'Product not found.', true);
             return;
         }
         if (action === 'edit') {
@@ -1430,15 +1499,15 @@ class CatalogUI {
             try {
                 const response = await postJson('v1.deleteProduct', { id: productId });
                 if (!response.success) {
-                    handleErrorResponse(response);
+                    handleErrorResponse(response, 'products');
                     return;
                 }
-                setStatus('Product deleted.', false);
+                setStatus('products', 'Product deleted.', false);
                 resetProductForm();
                 await loadProductsOnly(state.selectedNodeId);
             } catch (error) {
                 console.error(error);
-                setStatusWithError('Failed to delete product.', error);
+                setStatusWithError('products', 'Failed to delete product.', error);
             }
         }
     };
@@ -1486,41 +1555,49 @@ class CatalogUI {
             try {
                 const response = await postJson('v1.saveNode', payload);
                 if (!response.success) {
-                    handleErrorResponse(response);
+                    handleErrorResponse(response, 'catalog');
                     return;
                 }
-                setStatus('Node created.', false);
+                setStatus('catalog', 'Node created.', false);
                 $el('nodeCreateForm')[0].reset();
-                await loadHierarchy();
+                await loadHierarchy({ clearStatus: false });
             } catch (error) {
                 console.error(error);
-                setStatusWithError('Failed to create node.', error);
+                setStatusWithError('catalog', 'Failed to create node.', error);
             }
         });
 
         $el('nodeUpdateForm').on('submit', async (event) => {
             event.preventDefault();
             if (!state.selectedNodeId) {
-                setStatus('Select a node to update.', true);
+                setStatus('catalog', 'Select a node to update.', true);
                 return;
             }
+            const selectedNode = state.nodeIndex.get(state.selectedNodeId);
+            const displayOrderInput = toInt(
+                $el('updateNodeDisplayOrder').val(),
+                selectedNode?.displayOrder ?? 0
+            );
             const payload = {
                 id: state.selectedNodeId,
+                // Preserve parent linkage (series updates fail validation without parentId).
+                parentId: selectedNode?.parentId ?? null,
                 name: $el('updateNodeName').val(),
-                displayOrder: toInt($el('updateNodeDisplayOrder').val()),
+                // Keep existing order when the input is blank to avoid zeroing the value.
+                displayOrder: displayOrderInput,
                 type: $el('updateNodeTypeValue').val(),
             };
             try {
                 const response = await postJson('v1.saveNode', payload);
                 if (!response.success) {
-                    handleErrorResponse(response);
+                    handleErrorResponse(response, 'catalog');
                     return;
                 }
-                setStatus('Node updated.', false);
-                await loadHierarchy();
+                setStatus('catalog', 'Node updated.', false);
+                await loadHierarchy({ clearStatus: false });
             } catch (error) {
                 console.error(error);
-                setStatusWithError('Failed to update node.', error);
+                setStatusWithError('catalog', 'Failed to update node.', error);
             }
         });
 
@@ -1536,15 +1613,15 @@ class CatalogUI {
                     id: state.selectedNodeId,
                 });
                 if (!response.success) {
-                    handleErrorResponse(response);
+                    handleErrorResponse(response, 'catalog');
                     return;
                 }
-                setStatus('Node deleted.', false);
+                setStatus('catalog', 'Node deleted.', false);
                 state.selectedNodeId = null;
-                await loadHierarchy();
+                await loadHierarchy({ clearStatus: false });
             } catch (error) {
                 console.error(error);
-                setStatusWithError('Failed to delete node.', error);
+                setStatusWithError('catalog', 'Failed to delete node.', error);
             }
         });
 
@@ -1573,7 +1650,7 @@ class CatalogUI {
         $el('seriesFieldForm').on('submit', async (event) => {
             event.preventDefault();
             if (!state.selectedNodeId) {
-                setStatus('Select a series first.', true);
+                setStatus('seriesFields', 'Select a series first.', true);
                 return;
             }
             const payload = {
@@ -1594,18 +1671,18 @@ class CatalogUI {
             try {
                 const response = await postJson('v1.saveSeriesField', payload);
                 if (!response.success) {
-                    handleErrorResponse(response);
+                    handleErrorResponse(response, 'seriesFields');
                     return;
                 }
                 const savedField = response.data || payload;
                 state.seriesFields = upsertField(state.seriesFields, savedField);
                 renderSeriesFieldsTable();
                 renderProductFormFields();
-                setStatus('Series field saved.', false);
+                setStatus('seriesFields', 'Series field saved.', false);
                 resetSeriesFieldForm();
             } catch (error) {
                 console.error(error);
-                setStatusWithError('Failed to save series field.', error);
+                setStatusWithError('seriesFields', 'Failed to save series field.', error);
             }
         });
 
@@ -1616,7 +1693,7 @@ class CatalogUI {
         $el('seriesMetadataFieldForm').on('submit', async (event) => {
             event.preventDefault();
             if (!state.selectedNodeId) {
-                setStatus('Select a series first.', true);
+                setStatus('seriesMetadata', 'Select a series first.', true);
                 return;
             }
             const payload = {
@@ -1637,7 +1714,7 @@ class CatalogUI {
             try {
                 const response = await postJson('v1.saveSeriesField', payload);
                 if (!response.success) {
-                    handleErrorResponse(response);
+                    handleErrorResponse(response, 'seriesMetadata');
                     return;
                 }
                 const savedField = response.data || payload;
@@ -1654,11 +1731,11 @@ class CatalogUI {
                 };
                 renderSeriesMetadataFieldsTable();
                 renderSeriesMetadataValues();
-                setStatus('Metadata field saved.', false);
+                setStatus('seriesMetadata', 'Metadata field saved.', false);
                 resetSeriesMetadataFieldForm();
             } catch (error) {
                 console.error(error);
-                setStatusWithError('Failed to save metadata field.', error);
+                setStatusWithError('seriesMetadata', 'Failed to save metadata field.', error);
             }
         });
 
@@ -1670,7 +1747,7 @@ class CatalogUI {
         $el('seriesMetadataForm').on('submit', async (event) => {
             event.preventDefault();
             if (!state.selectedNodeId) {
-                setStatus('Select a series first.', true);
+                setStatus('seriesMetadata', 'Select a series first.', true);
                 return;
             }
             const values = {};
@@ -1711,14 +1788,14 @@ class CatalogUI {
                     response = await postJson('v1.saveSeriesAttributes', metadataPayload);
                 }
                 if (!response.success) {
-                    handleErrorResponse(response);
+                    handleErrorResponse(response, 'seriesMetadata');
                     return;
                 }
-                setStatus('Metadata saved.', false);
+                setStatus('seriesMetadata', 'Metadata saved.', false);
                 await loadSeriesContext(state.selectedNodeId);
             } catch (error) {
                 console.error(error);
-                setStatusWithError('Failed to save metadata.', error);
+                setStatusWithError('seriesMetadata', 'Failed to save metadata.', error);
             }
         });
 
@@ -1731,7 +1808,7 @@ class CatalogUI {
         $el('productForm').on('submit', async (event) => {
             event.preventDefault();
             if (!state.selectedNodeId) {
-                setStatus('Select a series first.', true);
+                setStatus('products', 'Select a series first.', true);
                 return;
             }
             const customValues = {};
@@ -1779,15 +1856,15 @@ class CatalogUI {
                     response = await postJson('v1.saveProduct', payload);
                 }
                 if (!response.success) {
-                    handleErrorResponse(response);
+                    handleErrorResponse(response, 'products');
                     return;
                 }
-                setStatus('Product saved.', false);
+                setStatus('products', 'Product saved.', false);
                 resetProductForm();
                 await loadProductsOnly(state.selectedNodeId);
             } catch (error) {
                 console.error(error);
-                setStatusWithError('Failed to save product.', error);
+                setStatusWithError('products', 'Failed to save product.', error);
             }
         });
 
@@ -1807,15 +1884,15 @@ class CatalogUI {
                     id: state.selectedProductId,
                 });
                 if (!response.success) {
-                    handleErrorResponse(response);
+                    handleErrorResponse(response, 'products');
                     return;
                 }
-                setStatus('Product deleted.', false);
+                setStatus('products', 'Product deleted.', false);
                 resetProductForm();
                 await loadProductsOnly(state.selectedNodeId);
             } catch (error) {
                 console.error(error);
-                setStatusWithError('Failed to delete product.', error);
+                setStatusWithError('products', 'Failed to delete product.', error);
             }
         });
 
@@ -1824,7 +1901,7 @@ class CatalogUI {
     const bindCsvEvents = () => {
         $el('csvExportButton').on('click', async () => {
             if (state.truncate.submitting || state.truncate.serverLock) {
-                setStatus('Catalog truncate in progress. Try again after it completes.', true);
+                setStatus('catalog', 'Catalog truncate in progress. Try again after it completes.', true);
                 return;
             }
             const $button = $el('csvExportButton');
@@ -1832,18 +1909,18 @@ class CatalogUI {
             try {
                 const response = await postJson('v1.exportCsv', {});
                 if (!response.success) {
-                    handleErrorResponse(response);
+                    handleErrorResponse(response, 'catalog');
                     return;
                 }
                 const file = response.data || {};
-                setStatus('Catalog CSV exported.', false);
+                setStatus('catalog', 'Catalog CSV exported.', false);
                 await loadCsvHistory();
                 if (file.id) {
                     triggerCsvDownload(file.id);
                 }
             } catch (error) {
                 console.error(error);
-                setStatusWithError('Failed to export catalog CSV.', error);
+                setStatusWithError('catalog', 'Failed to export catalog CSV.', error);
             } finally {
                 $button.prop('disabled', false);
             }
@@ -1852,12 +1929,12 @@ class CatalogUI {
         $el('csvImportForm').on('submit', async (event) => {
             event.preventDefault();
             if (state.truncate.submitting || state.truncate.serverLock) {
-                setStatus('Catalog truncate in progress. CSV import disabled until it completes.', true);
+                setStatus('catalog', 'Catalog truncate in progress. CSV import disabled until it completes.', true);
                 return;
             }
             const fileInput = $el('csvImportFile')[0];
             if (!fileInput.files || !fileInput.files.length) {
-                setStatus('Select a CSV file to import.', true);
+                setStatus('catalog', 'Select a CSV file to import.', true);
                 return;
             }
             const formData = new FormData();
@@ -1867,18 +1944,18 @@ class CatalogUI {
             try {
                 const response = await postMultipart('v1.importCsv', formData);
                 if (!response.success) {
-                    handleErrorResponse(response);
+                    handleErrorResponse(response, 'catalog');
                     return;
                 }
                 const data = response.data || {};
                 const message = `CSV import completed (${data.importedProducts ?? 0} products, ${data.createdSeries ?? 0} new series, ${data.createdCategories ?? 0} new categories).`;
-                setStatus(message, false);
+                setStatus('catalog', message, false);
                 fileInput.value = '';
-                await loadHierarchy();
+                await loadHierarchy({ clearStatus: false });
                 await loadCsvHistory();
             } catch (error) {
                 console.error(error);
-                setStatusWithError('Failed to import CSV.', error);
+                setStatusWithError('catalog', 'Failed to import CSV.', error);
             } finally {
                 $submit.prop('disabled', false);
             }
@@ -1899,17 +1976,17 @@ class CatalogUI {
             try {
                 const response = await postJson('v1.restoreCsv', { id: fileId });
                 if (!response.success) {
-                    handleErrorResponse(response);
+                    handleErrorResponse(response, 'catalog');
                     return;
                 }
                 const data = response.data || {};
                 const message = `CSV restore completed (${data.importedProducts ?? 0} products, ${data.createdSeries ?? 0} new series, ${data.createdCategories ?? 0} new categories).`;
-                setStatus(message, false);
-                await loadHierarchy();
+                setStatus('catalog', message, false);
+                await loadHierarchy({ clearStatus: false });
                 await loadCsvHistory();
             } catch (error) {
                 console.error(error);
-                setStatusWithError('Failed to restore CSV file.', error);
+                setStatusWithError('catalog', 'Failed to restore CSV file.', error);
             } finally {
                 $button.prop('disabled', false);
             }
@@ -1926,21 +2003,21 @@ class CatalogUI {
             try {
                 const response = await postJson('v1.deleteCsv', { id: fileId });
                 if (!response.success) {
-                    handleErrorResponse(response);
+                    handleErrorResponse(response, 'catalog');
                     return;
                 }
-                setStatus('CSV file deleted.', false);
+                setStatus('catalog', 'CSV file deleted.', false);
                 await loadCsvHistory();
             } catch (error) {
                 console.error(error);
-                setStatusWithError('Failed to delete CSV file.', error);
+                setStatusWithError('catalog', 'Failed to delete CSV file.', error);
             }
         });
     };
     const bindTruncateEvents = () => {
         $el('truncateButton').on('click', () => {
             if (state.truncate.submitting || state.truncate.serverLock) {
-                setStatus('Catalog truncate already in progress. Please wait for it to finish.', true);
+                setStatus('catalog', 'Catalog truncate already in progress. Please wait for it to finish.', true);
                 return;
             }
             openTruncateModal();
@@ -1979,22 +2056,22 @@ class CatalogUI {
             try {
                 const response = await postJson('v1.truncateCatalog', payload);
                 if (!response.success) {
-                    handleErrorResponse(response);
+                    handleErrorResponse(response, 'catalog');
                     $el('truncateModalError').text(response.message || 'Truncate failed.');
                     return;
                 }
                 const auditId = response.data?.auditId || payload.correlationId;
-                setStatus(`Catalog truncated (audit ${auditId}).`, false);
+                setStatus('catalog', `Catalog truncated (audit ${auditId}).`, false);
                 closeTruncateModal();
                 state.selectedNodeId = null;
                 resetSeriesUI();
-                await loadHierarchy();
+                await loadHierarchy({ clearStatus: false });
                 await loadCsvHistory();
             } catch (error) {
                 console.error(error);
                 const message = AppError.buildUserMessage('Unable to truncate catalog.', error?.correlationId);
                 $el('truncateModalError').text(message);
-                setStatusWithError('Unable to truncate catalog.', error);
+                setStatusWithError('catalog', 'Unable to truncate catalog.', error);
             } finally {
                 state.truncate.submitting = false;
                 applyCsvLockState();
