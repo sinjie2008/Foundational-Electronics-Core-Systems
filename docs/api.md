@@ -8,7 +8,7 @@ Conventions
 - Versioning: path-based (`/api/v1/...`) when introduced; current endpoints are unversioned but should be aliased to `/api/v1`.
 - Routing note: current implementation uses `catalog.php?action=v1.someAction`; RESTful paths above describe the intended aliases and shapes.
 - Errors: structured as `{ "error": { "code": "string", "message": "string", "correlationId": "uuid" } }`.
-- Success envelope: `{ "data": <payload>, "correlationId": "uuid" }` for consistency with front-end DataTables consumption.
+- Success envelope: `{ "success": true, "data": <payload>, "correlationId": "uuid" }` for consistency with front-end DataTables consumption.
 - Auth: none yet (assumes trusted environment); add token/header later if required.
 - Correlation ID: inbound `X-Correlation-ID` is honored; if absent, the server generates one and returns it in the envelope. Logs always include the correlation ID.
 - Logging: each request logs at start/end with route/status; errors log `errorCode`, `message`, sanitized `context`, and correlation ID. No PII/secrets in logs. `logging.enabled=false` disables log writes but responses still include correlation IDs.
@@ -121,6 +121,70 @@ Resources
   - Query params: `id` (token/path reference returned in field values).
   - Response: file stream with `Content-Disposition` preserving the original filename. Errors: `404` if missing, `400 validation_error` if malformed token.
 
+### LaTeX
+- `GET /api/latex/templates`
+  - Purpose: list global LaTeX templates (`is_global = true`).
+  - Response `200`: `data: LatexTemplate[]`.
+
+- `POST /api/latex/templates`
+  - Purpose: create a global LaTeX template.
+  - Body: `{ "title": "string", "description"?: "string", "latex"?: "string" }`. Accepts JSON or form-encoded; `latex_content` or `latex_code` are also accepted aliases for `latex`, and `templateTitle`/`templateDescription` map to `title`/`description`.
+  - Notes: stores in `latex_templates` with `is_global = true`, `series_id = null`; LaTeX content is optional and may be empty.
+  - Response `201`: `data: LatexTemplate` (includes normalized `latex` and timestamps).
+
+- `PUT /api/latex/templates`
+  - Purpose: update a global LaTeX template.
+  - Body: `{ "id": int, "title": "string", "description"?: "string", "latex"?: "string" }`. Same alias/encoding rules as POST; LaTeX may be empty.
+  - Response `200`: `data: LatexTemplate`.
+
+- `DELETE /api/latex/templates?id={id}`
+  - Purpose: delete a global LaTeX template.
+  - Response `200`: `{ "data": { "deleted": true } }`.
+
+- `GET /api/latex/variables`
+  - Purpose: list global LaTeX variables (`is_global = true`).
+  - Response `200`: `data: LatexVariable[]`.
+
+- `POST /api/latex/variables`
+  - Purpose: create or update a global LaTeX variable.
+  - Body: `{ "id"?: int, "key": "string", "type": "text|textarea|file", "value": "string" }`.
+  - Notes: `textarea` is stored as `text`; `file` is stored as `image` with the provided value/path (upload plumbing TBD); keys must be non-empty.
+  - Response `200`: `data: LatexVariable`.
+
+- `DELETE /api/latex/variables?id={id}`
+  - Purpose: delete a global LaTeX variable.
+  - Response `200`: `{ "data": { "deleted": true } }`.
+
+- `GET /api/latex/series/context`
+  - Purpose: load a series-aware LaTeX context (series node + metadata/custom field definitions/values + available templates).
+  - Query params: `seriesId` (required).
+  - Response `200`: `data: SeriesLatexContext` (includes `templates` from `latex_templates` where `is_global = 1 OR series_id = seriesId`, with download URLs for any `lastPdfPath`; `substitutions` map resolves `{{field_key}}` tokens to stored values/defaults).
+
+- `GET /api/latex/series/templates`
+  - Purpose: list LaTeX templates available to a series (global + series-scoped).
+  - Query params: `seriesId` (required).
+  - Response `200`: `data: LatexTemplate[]`.
+
+- `POST /api/latex/series/templates`
+  - Purpose: create a series-scoped LaTeX template.
+  - Body: `{ "seriesId": int, "title": "string", "description"?: "string", "latex"?: "string" }`. Accepts JSON or form-encoded; LaTeX content may be empty.
+  - Response `201`: `data: LatexTemplate`.
+
+- `PUT /api/latex/series/templates`
+  - Purpose: update a series-scoped LaTeX template.
+  - Body: `{ "id": int, "seriesId": int, "title": "string", "description"?: "string", "latex"?: "string" }`.
+  - Response `200`: `data: LatexTemplate`.
+
+- `DELETE /api/latex/series/templates?id={id}&seriesId={seriesId}`
+  - Purpose: delete a series-scoped LaTeX template (global templates are untouched).
+  - Response `200`: `{ "data": { "deleted": true } }`.
+
+- `POST /api/latex/series/outputs`
+  - Purpose: compile LaTeX for a series, optionally persisting the output and PDF.
+  - Body: `{ "seriesId": int, "templateId": int, "latex"?: "string", "persistOutput"?: bool, "savePdf"?: bool, "updateTemplate"?: bool }`.
+  - Notes: Performs `{{field_key}}` substitution using series metadata values (file types resolve to download URL). `updateTemplate` only applies when the template is owned by the series; global templates are read-only. When `savePdf=true`, pdflatex renders to `/storage/latex-pdfs/series/{seriesId}/...`, updates `latex_templates.last_pdf_path/last_pdf_generated_at`, and stores `pdf_path` + `log_excerpt` in `latex_outputs`. Defaults: `persistOutput=true`, `savePdf=false`, `updateTemplate=false`.
+  - Response `200`: `data: LatexOutput` (includes `filledLatex`, `downloadUrl` when a PDF was built, and `lastPdfPath/lastPdfGeneratedAt` mirrors the template).
+
 ### Spec Search
 - `GET /api/spec-search/root-categories`
   - Response `200`: `data: { categories: CategorySummary[] }`.
@@ -145,6 +209,10 @@ Data Shapes
 - `SeriesCustomFieldDefinition`: `{ id, fieldKey, label, fieldType, fieldScope, defaultValue, sortOrder, isRequired, publicPortalHidden, backendPortalHidden }`.
 - `MediaValue`: `{ filename, url, sizeBytes, storedAt }` (returned for file-type fields).
 - `Facet`: `{ name, label, type, options: { value, count }[] }`.
+- `LatexTemplate`: `{ id, title, description, latex, isGlobal: bool, seriesId: int|null, lastPdfPath?: string, lastPdfGeneratedAt?: string, createdAt, updatedAt }`.
+- `LatexVariable`: `{ id, key, type: "text"|"image", value, isGlobal: bool, seriesId: int|null, createdAt, updatedAt }` (textarea input maps to `type: "text"`, file input maps to `type: "image"` with stored path/text).
+- `SeriesLatexContext`: `{ series: { id, name, parentId, type }, metadata: { definitions: SeriesCustomFieldDefinition[], values: Record<fieldKey, string|MediaValue> }, customFields: SeriesCustomFieldDefinition[], templates: LatexTemplate[], substitutions: Record<fieldKey, string> }`.
+- `LatexOutput`: `{ id?: int, templateId: int, seriesId: int|null, filledLatex: string, pdfPath?: string, downloadUrl?: string, logExcerpt?: string, compiledAt: string, lastPdfPath?: string, lastPdfGeneratedAt?: string }`.
 
 Status Codes
 ------------
@@ -190,3 +258,4 @@ Testing Notes
 - Contract tests should assert envelopes, status codes, pagination defaults, and error codes; verify file-field responses return `MediaValue` objects with signed download URLs.
 - Integration tests should seed MySQL with fixture data and hit endpoints via HTTP to confirm shapes expected by DataTables; cover series field CRUD, product/metadata saves via JSON and multipart, file upload type/size enforcement, and media download streaming the original filename.
 - Manual client check: catalog UI displays status banners scoped to the section being updated (Product Catalog Manager vs Series Custom Fields vs Series Metadata vs Products) without leaking messages to other sections.
+- Manual/API check: create/update/delete global LaTeX templates and variables via `/api/latex/templates` and `/api/latex/variables`, confirm persistence in MySQL (`latex_templates`/`latex_variables`) and correlation IDs in responses/logs.

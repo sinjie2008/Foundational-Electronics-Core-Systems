@@ -10,6 +10,7 @@ return [
         'csv' => __DIR__ . '/../storage/csv',
         'latex_build' => __DIR__ . '/../storage/latex-build',
         'latex_pdfs' => __DIR__ . '/../storage/latex-pdfs',
+        'media_url_prefix' => '/storage/media',
         'logs' => __DIR__ . '/../storage/logs',
     ],
     'truncate' => [

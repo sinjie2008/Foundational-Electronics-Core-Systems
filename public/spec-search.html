@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -17,6 +18,7 @@
     <script src="assets/js/app_error.js" defer></script>
     <script src="assets/js/spec_search.js" defer></script>
 </head>
+
 <body data-logging-enabled="true">
     <div class="container-fluid px-0 app-shell">
         <div class="row flex-lg-nowrap g-0">
@@ -27,7 +29,8 @@
                             <div class="title">Catalog Suite</div>
                             <div class="subtitle">AdminLTE-inspired</div>
                         </div>
-                        <button class="btn btn-sm sidebar-collapse-btn" type="button" data-sidebar-collapse="true" aria-label="Collapse sidebar">
+                        <button class="btn btn-sm sidebar-collapse-btn" type="button" data-sidebar-collapse="true"
+                            aria-label="Collapse sidebar">
                             <span class="btn-icon">&#9776;</span>
                         </button>
                     </div>
@@ -45,9 +48,9 @@
                             <span class="sidebar-indicator"></span>
                             <span class="nav-label">CSV Import/Export</span>
                         </a>
-                        <a class="nav-link" href="latex-templating.html">
+                        <a class="nav-link" href="global_latex_template.html">
                             <span class="sidebar-indicator"></span>
-                            <span class="nav-label">LaTeX Templating</span>
+                            <span class="nav-label">Global LaTeX Template</span>
                         </a>
                     </nav>
                 </div>
@@ -58,7 +61,8 @@
                         <h1 class="h3 mb-1">Product Search / Spec Search</h1>
                         <p class="text-secondary mb-0">Bootstrap 5 + DataTables with class-based jQuery bindings</p>
                     </div>
-                    <button class="btn btn-outline-primary d-lg-none app-nav-toggle" type="button" data-sidebar-toggle="true">
+                    <button class="btn btn-outline-primary d-lg-none app-nav-toggle" type="button"
+                        data-sidebar-toggle="true">
                         Open Navigation
                     </button>
                 </div>
@@ -66,54 +70,55 @@
                 <div id="status-message" class="small text-muted mb-3" role="status" aria-live="polite"></div>
 
                 <section class="section-block mb-3">
-            <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between">
-                <div>
-                    <div class="text-uppercase text-muted small mb-1">Root Selection</div>
-                    <div class="fw-semibold">Choose starting category</div>
-                </div>
-                <span class="badge bg-primary" id="root-count">0 roots</span>
-            </div>
-            <div id="root-category-options" class="d-flex flex-wrap gap-3 mt-3"></div>
-        </section>
+                    <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between">
+                        <div>
+                            <div class="text-uppercase text-muted small mb-1">Root Selection</div>
+                            <div class="fw-semibold">Choose starting category</div>
+                        </div>
+                        <span class="badge bg-primary" id="root-count">0 roots</span>
+                    </div>
+                    <div id="root-category-options" class="d-flex flex-wrap gap-3 mt-3"></div>
+                </section>
 
-        <section class="section-block mb-3">
-            <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between">
-                <div>
-                    <div class="text-uppercase text-muted small mb-1">Product Categories</div>
-                    <div class="fw-semibold">Pick one or more</div>
-                </div>
-                <span class="badge bg-secondary" id="category-count">0 selected</span>
-            </div>
-            <div id="product-categories" class="category-groups mt-3"></div>
-        </section>
+                <section class="section-block mb-3">
+                    <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between">
+                        <div>
+                            <div class="text-uppercase text-muted small mb-1">Product Categories</div>
+                            <div class="fw-semibold">Pick one or more</div>
+                        </div>
+                        <span class="badge bg-secondary" id="category-count">0 selected</span>
+                    </div>
+                    <div id="product-categories" class="category-groups mt-3"></div>
+                </section>
 
-        <section class="section-block mb-3">
-            <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between">
-                <div>
-                    <div class="text-uppercase text-muted small mb-1">Filters</div>
-                    <div class="fw-semibold">Series & custom fields</div>
-                </div>
-                <button class="btn btn-sm btn-outline-secondary" id="clear-filters" type="button">Clear</button>
-            </div>
-            <div id="selected-filters" class="mb-3 d-flex flex-wrap gap-2 mt-3"></div>
-            <div id="facet-container" class="facet-grid overflow-x-auto"></div>
-        </section>
+                <section class="section-block mb-3">
+                    <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between">
+                        <div>
+                            <div class="text-uppercase text-muted small mb-1">Filters</div>
+                            <div class="fw-semibold">Series & custom fields</div>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary" id="clear-filters" type="button">Clear</button>
+                    </div>
+                    <div id="selected-filters" class="mb-3 d-flex flex-wrap gap-2 mt-3"></div>
+                    <div id="facet-container" class="facet-grid overflow-x-auto"></div>
+                </section>
 
-        <section class="section-block">
-            <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between mb-2">
-                <div>
-                    <div class="text-uppercase text-muted small mb-1">Results</div>
-                    <div class="fw-semibold">Products</div>
-                </div>
-                <span class="badge bg-info text-dark" id="result-count">0 items</span>
-            </div>
-            <div class="table-responsive">
-                <table id="results-table" class="table table-striped table-hover w-100"></table>
-            </div>
-        </section>
+                <section class="section-block">
+                    <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between mb-2">
+                        <div>
+                            <div class="text-uppercase text-muted small mb-1">Results</div>
+                            <div class="fw-semibold">Products</div>
+                        </div>
+                        <span class="badge bg-info text-dark" id="result-count">0 items</span>
+                    </div>
+                    <div class="table-responsive">
+                        <table id="results-table" class="table table-striped table-hover w-100"></table>
+                    </div>
+                </section>
             </main>
         </div>
         <div class="sidebar-backdrop" aria-hidden="true"></div>
     </div>
 </body>
+
 </html>

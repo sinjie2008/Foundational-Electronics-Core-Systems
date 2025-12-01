@@ -117,4 +117,72 @@ final class CatalogService
 
         return $matches;
     }
+
+    /**
+     * Get detailed information for a specific series, including metadata and field definitions.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function getSeriesDetails(int $seriesId): ?array
+    {
+        // 1. Get Series Info
+        $stmt = $this->db->prepare("SELECT id, parent_id, name, type FROM category WHERE id = ? AND type = 'series'");
+        $stmt->bind_param('i', $seriesId);
+        $stmt->execute();
+        $series = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if (!$series) {
+            return null;
+        }
+
+        // 2. Get Metadata (Values for this series)
+        $metadata = [];
+        $stmt = $this->db->prepare("
+            SELECT f.field_key, f.label, v.value
+            FROM series_custom_field f
+            LEFT JOIN series_custom_field_value v ON f.id = v.series_custom_field_id AND v.series_id = ?
+            WHERE f.series_id = ? AND f.field_scope = 'series_metadata'
+        ");
+        $stmt->bind_param('ii', $seriesId, $seriesId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            $metadata[] = [
+                'key' => $row['field_key'],
+                'label' => $row['label'],
+                'value' => $row['value'] ?? ''
+            ];
+        }
+        $stmt->close();
+
+        // 3. Get Product Attribute Definitions (Custom Fields)
+        $customFields = [];
+        $stmt = $this->db->prepare("
+            SELECT field_key, label, field_type
+            FROM series_custom_field
+            WHERE series_id = ? AND field_scope = 'product_attribute'
+            ORDER BY sort_order ASC
+        ");
+        $stmt->bind_param('i', $seriesId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            $customFields[] = [
+                'key' => $row['field_key'],
+                'label' => $row['label'],
+                'type' => $row['field_type']
+            ];
+        }
+        $stmt->close();
+
+        return [
+            'id' => (int)$series['id'],
+            'name' => $series['name'],
+            'parentId' => $series['parent_id'],
+            'type' => $series['type'],
+            'metadata' => $metadata,
+            'customFields' => $customFields
+        ];
+    }
 }

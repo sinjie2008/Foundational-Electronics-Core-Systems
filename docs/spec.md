@@ -32,6 +32,9 @@ Goals
 - `csv import artifacts`: stored under `storage/csv/*` with import timestamps.
 - `latex outputs`: build inputs in `storage/latex-build/`, PDFs in `storage/latex-pdfs/`.
 - `media files`: stored under `storage/media/<category>/<series>/<field-key>/<entity-id>/<original-filename>`; single file per field; original filename preserved with replace/clear semantics.
+- `latex_templates` (global + series): `id`, `title`, `description`, `latex_code` (LONGTEXT), `is_global` (bool, default true), `series_id` (nullable), `last_pdf_path`, `last_pdf_generated_at`, `created_at`, `updated_at`.
+- `latex_variables` (global + series): `id`, `field_key`, `field_type` (`text` | `image`), `field_value`, `is_global` (bool, default true), `series_id` (nullable), `created_at`, `updated_at`.
+- `latex_outputs`: `id`, `template_id`, `series_id` (nullable for global), `filled_latex`, `pdf_path`, `log_excerpt`, `compiled_at`.
 
 3. Key Processes
 ----------------
@@ -49,6 +52,9 @@ Goals
 - Catalog UI status feedback is scoped per section: hierarchy/product catalog manager actions surface messages in a localized banner, while series custom fields, series metadata, and products each render their own inline status message container to avoid cross-section confusion.
 - Catalog truncate with confirmation token and audit logging.
 - Sidebar navigation panel linking Catalog UI, Spec Search, and LaTeX templating pages; AdminLTE-like persistent left rail on desktop with slide-over toggle on mobile.
+- Global LaTeX template + variable management: `global_latex_template.html` persists templates in `latex_templates` (`is_global = 1`, `latex_code`) and variables in `latex_variables` (`is_global = 1`, `field_key`, `field_type`, `field_value`); textarea entries map to `text` type, and file/image entries store text references until upload support is added. LaTeX content can be blank (stored as empty string) to allow placeholder templates; title remains required.
+- Global LaTeX template API accepts both JSON and form-encoded payloads and normalizes legacy field names (`latex`, `latex_content`, `latex_code`) plus `title`/`templateTitle`, so UI fields remain accurate even if clients send older keys.
+- Series LaTeX templating: `series_latex_template.html` loads live catalog data (series node, metadata definitions + values, product-attribute field definitions) and available LaTeX templates (`is_global = 1` or `series_id = {seriesId}`) instead of mocks; placeholders use `{{field_key}}` for substitution; outputs persist to `latex_outputs` with optional PDF builds under `storage/latex-pdfs/series/{seriesId}/...` and update `latex_templates.last_pdf_path/last_pdf_generated_at`.
 
 4. Pseudocode (Critical Paths)
 ------------------------------
@@ -181,6 +187,67 @@ onSpecSearchRequest(promiseFactory):
     hideInlineSpinner()
 ```
 
+**Global LaTeX Template Save/Load**
+```
+saveGlobalTemplate(payload):
+  assert payload.title not empty
+  assert payload.latex not empty
+  record = {
+    title: trim(payload.title),
+    description: trim(payload.description),
+    latex_code: payload.latex,
+    is_global: true,
+    series_id: null
+  }
+  if payload.id:
+    update latex_templates set record where id = payload.id and is_global = true
+  else:
+    insert record into latex_templates
+    payload.id = lastInsertId()
+  return select id, title, description, latex_code, created_at, updated_at from latex_templates where id = payload.id and is_global = true
+
+saveGlobalVariable(input):
+  type = input.type in ['text','textarea'] ? 'text' : 'image'
+  value = type == 'text' ? trim(input.value) : (input.value ?? '')
+  if input.id:
+    update latex_variables set field_key = input.key, field_type = type, field_value = value where id = input.id and is_global = true
+  else:
+    insert (field_key, field_type, field_value, is_global) values (input.key, type, value, true)
+  return listGlobalVariables()
+```
+
+**Series LaTeX Context + Output Build**
+```
+loadSeriesLatexContext(seriesId):
+  assert seriesId > 0
+  series = select id, parent_id, name, type from category where id = seriesId and type = 'series'
+  metadataDefs = select * from series_custom_field where series_id = seriesId and field_scope = 'series_metadata' order by sort_order
+  metadataValues = select field_id, value from series_custom_field_value where series_id = seriesId
+  metadata = map definitions to { key, label, type, value: metadataValues[id] ?? default_value ?? '' }
+  metadata = for file types, prepend media url prefix to stored path for a downloadable token/path
+  customDefs = select * from series_custom_field where series_id = seriesId and field_scope = 'product_attribute' order by sort_order
+  templates = select from latex_templates where is_global = 1 OR series_id = seriesId order by updated_at desc, id desc
+  return { series, metadataDefs, metadataValues: metadata, customDefs, templates }
+
+buildSeriesLatex(request):
+  assert request.seriesId > 0
+  assert request.templateId > 0
+  latex = request.latex ?? loadTemplate(request.templateId).latex
+  substitutions = build map from metadata values + customDefs default_value (empty string when missing)
+  filledLatex = replace all `{{field_key}}` tokens with substitutions[field_key] (or '')
+  if request.updateTemplate and template.series_id == request.seriesId:
+    update latex_templates set latex_code = latex, description/title if provided, updated_at = now where id = templateId
+  pdfPath = null
+  logExcerpt = ''
+  if request.savePdf:
+    pdf = LatexRenderer.renderSeries(seriesId, filledLatex)
+    pdfPath = pdf.relativePath // e.g., series/{seriesId}/template_{id}_timestamp.pdf under storage/latex-pdfs
+    logExcerpt = pdf.logExcerpt
+    update latex_templates set last_pdf_path = pdfPath, last_pdf_generated_at = now where id = templateId
+  insert into latex_outputs (template_id, series_id, filled_latex, pdf_path, log_excerpt) values (...)
+  return { filledLatex, pdfPath, downloadUrl(pdfPath), logExcerpt, compiledAt: now }
+```
+
 5. System Context Diagram (Mermaid)
 -----------------------------------
 ```mermaid
@@ -213,14 +280,18 @@ graph LR
   SpecUI[Spec Search UI] -->|AJAX| ApiControllers
   CatalogUI[Catalog UI] -->|AJAX| ApiControllers
   CsvUI[CSV Tools UI] -->|AJAX| ApiControllers
+  GlobalLatexUI[Global LaTeX UI] -->|AJAX| ApiControllers
+  SeriesLatexUI[Series LaTeX UI] -->|AJAX| ApiControllers
   ApiControllers[Public Controllers] --> CatalogSvc[Catalog Service]
   ApiControllers --> SearchSvc[SpecSearch Service]
+  ApiControllers --> LatexSvc[LaTeX Service]
   CatalogSvc --> CatRepo[Category Repository]
   CatalogSvc --> ProdRepo[Product Repository]
   CatalogSvc --> SeriesRepo[Series Field Repo]
   CatalogSvc --> CsvImporter[CSV Importer]
   CatalogSvc --> PdfMaker[LaTeX Renderer]
   SearchSvc --> SearchRepo[Search Repository]
+  LatexSvc --> LatexRepo[latex_templates + latex_variables]
   ApiControllers --> Logger[Logger w/ Correlation IDs]
 ```
 
@@ -253,6 +324,60 @@ sequenceDiagram
   API->>DB: Write/read catalog rows + audit JSONL
   API-->>Csv: 200/202 OK + correlationId
   Csv-->>U: Show status and refresh history tables
+```
+
+8a. Sequence Diagram - Global LaTeX Template Save (Mermaid)
+-----------------------------------------------------------
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant GLatex as Global LaTeX UI
+  participant API as /api/latex/templates|variables
+  participant SVC as Latex Service
+  participant DB as MySQL
+  U->>GLatex: Fill title/description/latex + variables
+  GLatex->>API: POST /api/latex/templates {title,description,latex}
+  API->>SVC: saveTemplate(is_global=true)
+  SVC->>DB: INSERT latex_templates (latex_code, is_global)
+  DB-->>SVC: new id
+  SVC-->>API: template DTO
+  API-->>GLatex: 201 { success, data:{id,...}, correlationId }
+  GLatex->>API: POST /api/latex/variables {key,type,value}
+  API->>SVC: saveVariable(map textarea->text, file->image)
+  SVC->>DB: UPSERT latex_variables (is_global=true)
+  DB-->>SVC: rows
+  SVC-->>API: list variables
+  API-->>GLatex: 200 { success, data:[...] }
+```
+
+8b. Sequence Diagram - Series LaTeX Build (Mermaid)
+---------------------------------------------------
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant SLatex as Series LaTeX UI
+  participant API as /api/latex/series/*
+  participant Ctx as Series Context
+  participant SVC as Latex Service
+  participant PDF as LaTeX Renderer
+  participant DB as MySQL
+  U->>SLatex: Open series_latex_template.html?series_id=9
+  SLatex->>API: GET /api/latex/series/context?seriesId=9
+  API->>Ctx: fetchSeriesContext(9)
+  Ctx->>DB: SELECT category + series_custom_field + values + templates
+  DB-->>Ctx: rows
+  Ctx-->>API: context payload (metadata, product fields, templates)
+  API-->>SLatex: 200 { data, correlationId }
+  U->>SLatex: Load template + click Save PDF
+  SLatex->>API: POST /api/latex/series/outputs { seriesId:9, templateId, latex, savePdf:true, updateTemplate:true }
+  API->>SVC: resolveSubstitutions(seriesId, latex)
+  API->>SVC: update template latex_code when series-owned
+  API->>PDF: render(filledLatex)
+  PDF-->>API: { relativePath, logExcerpt }
+  API->>SVC: insert latex_outputs + update template last_pdf_path/last_pdf_generated_at
+  SVC->>DB: INSERT/UPDATE latex tables
+  DB-->>SVC: ids + timestamps
+  API-->>SLatex: 200 { filledLatex, pdfPath, downloadUrl, logExcerpt, correlationId }
 ```
 
 9. ER Diagram (Mermaid)
