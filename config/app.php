@@ -23,6 +23,10 @@ return [
         'default_binary' => 'pdflatex',
         'pdf_url_prefix' => '/storage/latex-pdfs',
     ],
+    'typst' => [
+        'binary' => 'typst',
+        'pdf_url_prefix' => 'storage/typst-pdfs',
+    ],
     'logging' => [
         'enabled' => true,
         'path' => __DIR__ . '/../storage/logs/app.log',

@@ -1,561 +1,273 @@
-Catalog & Spec Search Refactor Specification
-=============================================
+# Repository Specification
 
-Goals
------
-- Reorganize the codebase into clear front-end and back-end boundaries while keeping PHP fully object-oriented (no Composer/PSR-4).
-- Adopt Bootstrap 5 and DataTables for UI tables; encapsulate jQuery usage inside ES6 classes to avoid global procedural code.
-- Preserve existing CSV/LaTeX flows but wrap them in service classes with explicit error handling and logging (with correlation IDs).
-- Move CSV import/export + truncate tooling into a dedicated CSV management page while keeping API behavior unchanged.
+## Architecture and Technology Choices
+- PHP 8 style procedural endpoints backed by small service classes (`app/*`) for catalog traversal, spec search facets/products, and document templating (LaTeX/Typst); chosen for rapid iteration with minimal framework overhead.
+- MySQL (via `mysqli`) as the source of truth for catalog hierarchies, products, custom fields, templates, and variables; simple SQL over ORM to keep performance predictable.
+- Static HTML/JS in `public` and `assets` for operator-facing tools; communicates with JSON APIs under `public/api`.
+- PDF generation uses external binaries (`pdflatex`, `bin/typst.exe` fallback to PATH) writing to `public/storage/*`; logging goes to `storage/logs/app.log` with correlation IDs.
+- Constraints: Windows-first PowerShell workflows; no Composer/runtime dependency manager present; file-based autoload via `app/bootstrap.php`.
 
-1. Architecture and Technology Choices
---------------------------------------
-- **Server**: PHP (OO), manual autoload/require with a small bootstrap; thin public controllers that delegate to services.
-- **UI**: Bootstrap 5 for layout, DataTables for tabular interactions; jQuery used via ES6 class wrappers for DOM/events.
-- **Styling**: Global Meyer reset (v2) loaded before Bootstrap to normalize spacing; sidebar brand is text-only (no icon), collapse control uses icon-only trigger; sidebar/grid rows use zero gutters with body padding removed (main content handles its own spacing) to prevent white rails; sidebar is sticky from top to bottom (100vh) on desktop with mobile slide-over behavior.
-- **Data**: MySQL for catalog and search data; local storage for CSV imports, LaTeX build/PDF outputs, and media uploads under `storage/media/...`.
-- **Error handling**: Centralized exception type for API errors; structured JSON `{ error: { code, message, correlationId } }`.
-- **Logging**: Service-boundary logging with correlation IDs; no secrets/PII.
-- **Configuration**: Centralized in `config/app.php` and `config/db.php`; avoid magic values (tokens, paths, limits).
-- **Testing**: Unit (services/validators), integration (DB + endpoints), contract (API response shape), optional E2E (critical flows).
-
-2. Data Model
--------------
-- `category`: `id`, `parent_id`, `name`, `type` (series/root/leaf), `display_order`.
-- `product`: `id`, `category_id`, `sku`, `name`, `description`, `status` (draft/active/archived), `created_at`, `updated_at`.
-- `product_attribute`: `id`, `product_id`, `attr_key`, `attr_value`.
-- `series_custom_field`: `id`, `series_id`, `field_key`, `label`, `field_type` (`text` | `number` | `file`), `field_scope` (`series_metadata` | `product_attribute`), `default_value`, `sort_order`, `is_required`, `is_public_portal_hidden`, `is_backend_portal_hidden`.
-- `product_custom_field_value`: `id`, `product_id`, `series_custom_field_id`, `value` (text; file fields store media token/path).
-- `series_custom_field_value`: `id`, `series_id`, `series_custom_field_id`, `value` (text; file fields store media token/path).
-- `series_field_definition`: `id`, `scope` (series_metadata/product_attribute), `name`, `display_label`, `data_type`, `required`.
-- `truncate_audit` (JSONL file): `timestamp`, `correlation_id`, `reason`, `user`, `token`.
-- `csv import artifacts`: stored under `storage/csv/*` with import timestamps.
-- `latex outputs`: build inputs in `storage/latex-build/`, PDFs in `storage/latex-pdfs/`.
-- `media files`: stored under `storage/media/<category>/<series>/<field-key>/<entity-id>/<original-filename>`; single file per field; original filename preserved with replace/clear semantics.
-- `latex_templates` (global + series): `id`, `title`, `description`, `latex_code` (LONGTEXT), `is_global` (bool, default true), `series_id` (nullable), `last_pdf_path`, `last_pdf_generated_at`, `created_at`, `updated_at`.
-- `latex_variables` (global + series): `id`, `field_key`, `field_type` (`text` | `image`), `field_value`, `is_global` (bool, default true), `series_id` (nullable), `created_at`, `updated_at`.
-- `latex_outputs`: `id`, `template_id`, `series_id` (nullable for global), `filled_latex`, `pdf_path`, `log_excerpt`, `compiled_at`.
-
-3. Key Processes
-----------------
-- Catalog hierarchy fetch for UI tree (categories with nested products).
-- Catalog hierarchy CRUD preserves parent/child integrity: series nodes must always carry a `parentId` on create/update, parent must be a category, and the UI resubmits the stored parent on edit to avoid orphaned series validation errors.
-- Display order edits keep sibling ordering: UI always sends `displayOrder` with updates (falling back to the current value if the input is blank) so backend ordering persists after node edits.
-- Faceted/spec search (root categories, product categories, products, facets).
-- Spec-search edit handoff to Catalog UI via query params (category/series/product) to pre-fill the series tree and search field.
-- CSV import for products and series metadata with validation and audit trail.
-- CSV import/export/truncate history management in a dedicated CSV page (`catalog-csv.html`) with download/restore/delete actions.
-- LaTeX PDF generation for catalog/series outputs.
-- Custom field management: series custom field definitions support selectable types (text, number, file) for product attributes and series metadata; file uploads are validated (image/pdf/glb) and stored under `storage/media/...` using category/series folders; replacing or clearing updates storage and persisted value. Each field now tracks `Public Portal Hidden` and `Backend Portal Hidden` flags (stored as booleans) alongside `Required` to control downstream portal visibility while keeping catalog editor visibility unchanged.
-- Product table resiliency: when series custom fields are added or deleted, the product DataTable must be rebuilt after clearing any previously rendered rows so the updated column set (base + dynamic custom fields + actions) matches the header and avoids DataTables “incorrect column count” warnings during reinitialization.
-- Global loading affordance: Catalog UI, CSV, and LaTeX pages display a top progress bar plus a light white/grey overlay that blocks pointer/keyboard interactions (including scroll) until tracked requests finish; the Spec Search page stays fully interactive with no overlay or progress bar.
-- Catalog UI status feedback is scoped per section: hierarchy/product catalog manager actions surface messages in a localized banner, while series custom fields, series metadata, and products each render their own inline status message container to avoid cross-section confusion.
-- Catalog truncate with confirmation token and audit logging.
-- Sidebar navigation panel linking Catalog UI, Spec Search, and LaTeX templating pages; AdminLTE-like persistent left rail on desktop with slide-over toggle on mobile.
-- Global LaTeX template + variable management: `global_latex_template.html` persists templates in `latex_templates` (`is_global = 1`, `latex_code`) and variables in `latex_variables` (`is_global = 1`, `field_key`, `field_type`, `field_value`); textarea entries map to `text` type, and file/image entries store text references until upload support is added. LaTeX content can be blank (stored as empty string) to allow placeholder templates; title remains required.
-- Global LaTeX template API accepts both JSON and form-encoded payloads and normalizes legacy field names (`latex`, `latex_content`, `latex_code`) plus `title`/`templateTitle`, so UI fields remain accurate even if clients send older keys.
-- Series LaTeX templating: `series_latex_template.html` loads live catalog data (series node, metadata definitions + values, product-attribute field definitions) and available LaTeX templates (`is_global = 1` or `series_id = {seriesId}`) instead of mocks; placeholders use `{{field_key}}` for substitution; outputs persist to `latex_outputs` with optional PDF builds under `storage/latex-pdfs/series/{seriesId}/...` and update `latex_templates.last_pdf_path/last_pdf_generated_at`.
-
-4. Pseudocode (Critical Paths)
-------------------------------
-**API Request Handling**
-```
-onRequest(request):
-  correlationId = generateId()
-  try:
-    route = matchRoute(request.path)
-    result = route.handler(request, correlationId)
-    return json(200, result, correlationId)
-  catch CatalogApiException ex:
-    logError(ex, correlationId)
-    return json(ex.status, { error: { code: ex.code, message: ex.message, correlationId } })
-  catch Throwable ex:
-    logError(ex, correlationId)
-    return json(500, { error: { code: "internal_error", message: "Unexpected error", correlationId } })
-```
-
-**CSV Import Flow**
-```
-importProducts(csvPath, user, reason):
-  assertToken(request.token, CATALOG_TRUNCATE_CONFIRM_TOKEN)
-  rows = csvReader(csvPath)
-  validated = []
-  for row in rows:
-    validated.append(validateRow(row))
-  db.begin()
-    upsertProducts(validated)
-    logAudit("import", user, reason, correlationId)
-  db.commit()
-  return { imported: count(validated) }
-```
-
-**Sidebar Navigation Panel**
-```
-initSidebarNav(currentPage):
-  navItems = [
-    { id: "spec", label: "Spec Search", href: "spec-search.html" },
-    { id: "catalog", label: "Catalog UI", href: "catalog_ui.html" },
-    { id: "csv", label: "CSV Import/Export", href: "catalog-csv.html" },
-    { id: "latex", label: "LaTeX Templating", href: "latex-templating.html" }
-  ]
-  render AdminLTE-like left rail with Bootstrap 5 classes
-  mark item as active when href matches currentPage
-  if viewport < md:
-    slide sidebar in/out via toggle button and backdrop
-  else:
-    keep sidebar sticky while main content scrolls
-    collapse class shrinks rail to 80px (icons only) and main content expands without extra gutter
-```
-
-**Spec Search Edit → Catalog Prefill**
-```
-onSpecSearchEditClick(record):
-  url = buildUrl("catalog_ui.html", {
-    category: record.category,
-    series: record.series,
-    product: record.sku
-  })
-  redirect(url)
-
-onCatalogLoad():
-  params = parseQuery()
-  if params.product:
-    setInputValue("#hierarchy-search", params.product)
-    triggerSearch(params.product)
-    setPendingProductFilter(params.product) // forward to DataTables search once products load
-  if params.series:
-    match = findSeriesNodeByName(params.series, parentName=params.category)
-    if match:
-      expandAncestors(match.id)
-      selectNode(match.id)
-      loadSeriesContext(match.id)
-  if pendingProductFilter and product DataTable exists:
-    applyDataTableSearch("#product-list-table", pendingProductFilter)
-```
-
-**Custom Field Save (text/number/file)**
-```
-saveCustomFieldValue(entityType, entityId, fieldDef, input):
-  if fieldDef.field_type == 'number':
-    assert is_numeric(input.value)
-    normalized = trim(input.value) // stored as text but validated numeric
-  else if fieldDef.field_type == 'file':
-    assert input.file exists
-    assert mime in ['image/*', 'application/pdf', 'model/gltf-binary']
-    assert input.file.size <= MEDIA_MAX_BYTES
-    path = buildPath(category, series, fieldDef.field_key, entityId, input.file.original_name)
-    deleteExistingFile(fieldDef, entityId)
-    moveUploadedFile(input.file.tmp_path, path)
-    normalized = relativePath(path)
-  else:
-    normalized = trim(input.value)
-  persistValue(entityType, entityId, fieldDef.id, normalized)
-  return normalized
-```
-
-**Global Loading Overlay + Progress Bar (Catalog/CSV/LaTeX pages)**
-```
-loadingState = { activeCount: 0, timer: null }
-
-beginLoading():
-  loadingState.activeCount += 1
-  showOverlay() // apply white-grey veil and disable pointer/scroll
-  startProgressBar() // animate from 15% to 90% with CSS/JS timer
-
-endLoading():
-  loadingState.activeCount = max(0, loadingState.activeCount - 1)
-  if loadingState.activeCount == 0:
-    completeProgressBar() // snap to 100%, short delay
-    hideOverlay() // remove veil and re-enable interactions
-
-wrapRequest(promiseFactory):
-  beginLoading()
-  try:
-    return await promiseFactory()
-  finally:
-    endLoading()
-```
-
-**Spec Search Loading (no overlay)**
-```
-onSpecSearchRequest(promiseFactory):
-  // keep UI interactive; no overlay/progress bar
-  showInlineSpinner()
-  try:
-    return await promiseFactory()
-  finally:
-    hideInlineSpinner()
-```
-
-**Global LaTeX Template Save/Load**
-```
-saveGlobalTemplate(payload):
-  assert payload.title not empty
-  assert payload.latex not empty
-  record = {
-    title: trim(payload.title),
-    description: trim(payload.description),
-    latex_code: payload.latex,
-    is_global: true,
-    series_id: null
-  }
-  if payload.id:
-    update latex_templates set record where id = payload.id and is_global = true
-  else:
-    insert record into latex_templates
-    payload.id = lastInsertId()
-  return select id, title, description, latex_code, created_at, updated_at from latex_templates where id = payload.id and is_global = true
-
-saveGlobalVariable(input):
-  type = input.type in ['text','textarea'] ? 'text' : 'image'
-  value = type == 'text' ? trim(input.value) : (input.value ?? '')
-  if input.id:
-    update latex_variables set field_key = input.key, field_type = type, field_value = value where id = input.id and is_global = true
-  else:
-    insert (field_key, field_type, field_value, is_global) values (input.key, type, value, true)
-  return listGlobalVariables()
-```
-
-**Series LaTeX Context + Output Build**
-```
-loadSeriesLatexContext(seriesId):
-  assert seriesId > 0
-  series = select id, parent_id, name, type from category where id = seriesId and type = 'series'
-  metadataDefs = select * from series_custom_field where series_id = seriesId and field_scope = 'series_metadata' order by sort_order
-  metadataValues = select field_id, value from series_custom_field_value where series_id = seriesId
-  metadata = map definitions to { key, label, type, value: metadataValues[id] ?? default_value ?? '' }
-  metadata = for file types, prepend media url prefix to stored path for a downloadable token/path
-  customDefs = select * from series_custom_field where series_id = seriesId and field_scope = 'product_attribute' order by sort_order
-  templates = select from latex_templates where is_global = 1 OR series_id = seriesId order by updated_at desc, id desc
-  return { series, metadataDefs, metadataValues: metadata, customDefs, templates }
-
-buildSeriesLatex(request):
-  assert request.seriesId > 0
-  assert request.templateId > 0
-  latex = request.latex ?? loadTemplate(request.templateId).latex
-  substitutions = build map from metadata values + customDefs default_value (empty string when missing)
-  filledLatex = replace all `{{field_key}}` tokens with substitutions[field_key] (or '')
-  if request.updateTemplate and template.series_id == request.seriesId:
-    update latex_templates set latex_code = latex, description/title if provided, updated_at = now where id = templateId
-  pdfPath = null
-  logExcerpt = ''
-  if request.savePdf:
-    pdf = LatexRenderer.renderSeries(seriesId, filledLatex)
-    pdfPath = pdf.relativePath // e.g., series/{seriesId}/template_{id}_timestamp.pdf under storage/latex-pdfs
-    logExcerpt = pdf.logExcerpt
-    update latex_templates set last_pdf_path = pdfPath, last_pdf_generated_at = now where id = templateId
-  insert into latex_outputs (template_id, series_id, filled_latex, pdf_path, log_excerpt) values (...)
-  return { filledLatex, pdfPath, downloadUrl(pdfPath), logExcerpt, compiledAt: now }
-```
-
-5. System Context Diagram (Mermaid)
------------------------------------
-```mermaid
-graph TD
-  User[Browser (Bootstrap 5 + DataTables + jQuery ES6 classes)] -->|HTTPS| WebApp[PHP Web App]
-  WebApp -->|AJAX JSON| CatalogAPI[Catalog API]
-  WebApp -->|AJAX JSON| SpecSearchAPI[Spec-Search API]
-  CatalogAPI --> DB[(MySQL)]
-  SpecSearchAPI --> DB
-  CatalogAPI --> Files[(Storage: csv, latex-build, latex-pdfs)]
-  CatalogAPI --> PDFGen[LaTeX Engine]
-```
-
-6. Container/Deployment Overview (Mermaid)
-------------------------------------------
-```mermaid
-graph TB
-  Browser[Browser] --> WebServer[Web Server + PHP runtime]
-  WebServer --> Public[public/ (controllers + static assets)]
-  Public --> AppLayer[app/ domain services]
-  AppLayer --> Config[config/]
-  AppLayer --> DB[(MySQL)]
-  AppLayer --> Storage[(storage/ csv, latex-build, latex-pdfs)]
-```
-
-7. Module Relationship Diagram (Backend / Frontend) (Mermaid)
--------------------------------------------------------------
+## System Context
 ```mermaid
 graph LR
-  SpecUI[Spec Search UI] -->|AJAX| ApiControllers
-  CatalogUI[Catalog UI] -->|AJAX| ApiControllers
-  CsvUI[CSV Tools UI] -->|AJAX| ApiControllers
-  GlobalLatexUI[Global LaTeX UI] -->|AJAX| ApiControllers
-  SeriesLatexUI[Series LaTeX UI] -->|AJAX| ApiControllers
-  ApiControllers[Public Controllers] --> CatalogSvc[Catalog Service]
-  ApiControllers --> SearchSvc[SpecSearch Service]
-  ApiControllers --> LatexSvc[LaTeX Service]
-  CatalogSvc --> CatRepo[Category Repository]
-  CatalogSvc --> ProdRepo[Product Repository]
-  CatalogSvc --> SeriesRepo[Series Field Repo]
-  CatalogSvc --> CsvImporter[CSV Importer]
-  CatalogSvc --> PdfMaker[LaTeX Renderer]
-  SearchSvc --> SearchRepo[Search Repository]
-  LatexSvc --> LatexRepo[latex_templates + latex_variables]
-  ApiControllers --> Logger[Logger w/ Correlation IDs]
+    Operator[Operator UI<br/>catalog/spec/templating pages]
+    API[PHP API Layer<br/>public/api/*]
+    DB[(MySQL)]
+    Binaries[PDF Binaries<br/>pdflatex & typst.exe]
+    Storage[(Storage<br/>storage/, public/storage/)]
+    Operator -->|HTTP/JSON| API
+    API -->|SQL| DB
+    API -->|spawn| Binaries
+    API -->|write/read| Storage
+    Binaries -->|emit PDFs| Storage
 ```
 
-8. Sequence Diagram (Mermaid)
------------------------------
+## Container / Deployment Overview
 ```mermaid
-sequenceDiagram
-  participant U as User
-  participant Spec as Spec Search UI
-  participant Catalog as Catalog UI
-  participant Csv as CSV Tools UI
-  participant API as Catalog API
-  participant DB as MySQL
-  U->>Spec: View spec-search results table
-  Spec->>Spec: Render Edit buttons with category/series/product payload
-  U->>Spec: Click Edit
-  Spec-->>Catalog: Redirect catalog_ui.html?category=...&series=...&product=...
-  Catalog->>Catalog: Parse query params; prefill hierarchy-search with product
-  Catalog->>API: GET /api/catalog/hierarchy
-  API->>DB: SELECT categories + series + products
-  DB-->>API: rows
-  API-->>Catalog: 200 OK + hierarchy JSON
-  Catalog->>Catalog: Auto-select matching series node; load products for that series
-  Catalog-->>U: Series node selected and search prefilled
-  U->>Csv: Open catalog-csv.html
-  Csv->>API: GET /api/catalog/csv/history
-  API-->>Csv: 200 OK + files + audits + lock state
-  U->>Csv: Trigger export/import/restore/delete
-  Csv->>API: POST /api/catalog/csv/export|restore|import
-  API->>DB: Write/read catalog rows + audit JSONL
-  API-->>Csv: 200/202 OK + correlationId
-  Csv-->>U: Show status and refresh history tables
+graph TD
+    subgraph Host (Windows/Laragon)
+        nginx[Web Server] --> phpFpm[PHP Runtime]
+        phpFpm --> apiLayer[public/api endpoints]
+        apiLayer --> services[App Services]
+        services --> mysql[MySQL]
+        services --> pdfBin[pdflatex/typst.exe]
+        services --> storage[(storage & public/storage)]
+    end
 ```
 
-8a. Sequence Diagram - Global LaTeX Template Save (Mermaid)
------------------------------------------------------------
+## Module Relationship (Backend / Frontend)
 ```mermaid
-sequenceDiagram
-  participant U as User
-  participant GLatex as Global LaTeX UI
-  participant API as /api/latex/templates|variables
-  participant SVC as Latex Service
-  participant DB as MySQL
-  U->>GLatex: Fill title/description/latex + variables
-  GLatex->>API: POST /api/latex/templates {title,description,latex}
-  API->>SVC: saveTemplate(is_global=true)
-  SVC->>DB: INSERT latex_templates (latex_code, is_global)
-  DB-->>SVC: new id
-  SVC-->>API: template DTO
-  API-->>GLatex: 201 { success, data:{id,...}, correlationId }
-  GLatex->>API: POST /api/latex/variables {key,type,value}
-  API->>SVC: saveVariable(map textarea->text, file->image)
-  SVC->>DB: UPSERT latex_variables (is_global=true)
-  DB-->>SVC: rows
-  SVC-->>API: list variables
-  API-->>GLatex: 200 { success, data:[...] }
+graph LR
+    subgraph Frontend
+        catalogUI[catalog_ui.html/js]
+        specSearchUI[spec-search.html/js]
+        templatingUI[latex/typst html/js]
+    end
+    subgraph Backend
+        support[Support: Config/Db/Logger/Request/Response]
+        catalogSvc[CatalogService]
+        specSvc[SpecSearchService]
+        latexSvc[LatexService]
+        typstSvc[TypstService]
+    end
+    catalogUI -->|XHR JSON| catalogSvc
+    specSearchUI -->|XHR JSON| specSvc
+    templatingUI -->|XHR JSON| latexSvc
+    templatingUI -->|XHR JSON| typstSvc
+    catalogSvc --> support
+    specSvc --> support
+    latexSvc --> catalogSvc
+    typstSvc --> catalogSvc
 ```
 
-8b. Sequence Diagram - Series LaTeX Build (Mermaid)
----------------------------------------------------
-```mermaid
-sequenceDiagram
-  participant U as User
-  participant SLatex as Series LaTeX UI
-  participant API as /api/latex/series/*
-  participant Ctx as Series Context
-  participant SVC as Latex Service
-  participant PDF as LaTeX Renderer
-  participant DB as MySQL
-  U->>SLatex: Open series_latex_template.html?series_id=9
-  SLatex->>API: GET /api/latex/series/context?seriesId=9
-  API->>Ctx: fetchSeriesContext(9)
-  Ctx->>DB: SELECT category + series_custom_field + values + templates
-  DB-->>Ctx: rows
-  Ctx-->>API: context payload (metadata, product fields, templates)
-  API-->>SLatex: 200 { data, correlationId }
-  U->>SLatex: Load template + click Save PDF
-  SLatex->>API: POST /api/latex/series/outputs { seriesId:9, templateId, latex, savePdf:true, updateTemplate:true }
-  API->>SVC: resolveSubstitutions(seriesId, latex)
-  API->>SVC: update template latex_code when series-owned
-  API->>PDF: render(filledLatex)
-  PDF-->>API: { relativePath, logExcerpt }
-  API->>SVC: insert latex_outputs + update template last_pdf_path/last_pdf_generated_at
-  SVC->>DB: INSERT/UPDATE latex tables
-  DB-->>SVC: ids + timestamps
-  API-->>SLatex: 200 { filledLatex, pdfPath, downloadUrl, logExcerpt, correlationId }
-```
+## Data Model
+- Core tables: `category` (tree of categories/series), `product` (linked to series), `series_custom_field` (field metadata, scope series/product attributes), `product_custom_field_value`, `latex_templates`/`latex_variables`, `typst_templates`/`typst_variables`.
+- Files: generated PDFs in `public/storage/latex-pdfs` and `public/storage/typst-pdfs`; CSV imports in `storage/csv`.
 
-9. ER Diagram (Mermaid)
------------------------
+### ER Diagram
 ```mermaid
 erDiagram
-  CATEGORY ||--o{ CATEGORY : parent
-  CATEGORY ||--o{ PRODUCT : contains
-  PRODUCT ||--o{ PRODUCT_ATTRIBUTE : has
-  PRODUCT ||--o{ SERIES_FIELD_VALUE : uses
-  SERIES_FIELD_DEFINITION ||--o{ SERIES_FIELD_VALUE : defines
-  CATEGORY {
-    int id
-    int parent_id
-    string name
-    string type
-    int display_order
-  }
-  PRODUCT {
-    int id
-    int category_id
-    string sku
-    string name
-    string description
-    string status
-  }
-  PRODUCT_ATTRIBUTE {
-    int id
-    int product_id
-    string attr_key
-    string attr_value
-  }
-  SERIES_FIELD_DEFINITION {
-    int id
-    string scope
-    string name
-    string display_label
-    string data_type
-    bool required
-    bool is_public_portal_hidden
-    bool is_backend_portal_hidden
-  }
-  SERIES_FIELD_VALUE {
-    int id
-    int product_id
-    int series_field_definition_id
-    string value
-  }
+    category ||--o{ category : parent
+    category ||--o{ product : series_id
+    category ||--o{ series_custom_field : series_id
+    series_custom_field ||--o{ product_custom_field_value : series_custom_field_id
+    product ||--o{ product_custom_field_value : product_id
+    category {
+        int id
+        int parent_id
+        string name
+        string type
+    }
+    product {
+        int id
+        int series_id
+        string sku
+        string name
+    }
+    series_custom_field {
+        int id
+        int series_id
+        string field_key
+        string label
+        string field_type
+        string field_scope
+    }
+    product_custom_field_value {
+        int id
+        int product_id
+        int series_custom_field_id
+        string value
+    }
+    latex_templates {
+        int id
+        string title
+        text latex_code
+        bool is_global
+        int series_id
+    }
+    latex_variables {
+        int id
+        string field_key
+        string field_type
+        string field_value
+        bool is_global
+        int series_id
+    }
+    typst_templates {
+        int id
+        string title
+        text typst_content
+        bool is_global
+        int series_id
+    }
+    typst_variables {
+        int id
+        string field_key
+        string field_type
+        string field_value
+        bool is_global
+        int series_id
+    }
 ```
 
-10. Class Diagram (Mermaid)
----------------------------
+## Key Processes
+- Catalog hierarchy/search: build tree from `category`, attach products; search by name/SKU.
+- Spec search: root/product category discovery, facet construction from custom fields, filtered product list.
+- Template compilation: fetch series metadata + products, substitute into LaTeX/Typst, compile via external binary, expose PDF URL; Typst data header sanitizes associative keys to Typst-safe identifiers (non-alphanumeric replaced with `_`, leading digits prefixed) and deduplicates collisions to prevent invalid variable names.
+- Operator navigation: a shared sidebar on each operator UI exposes Spec Search, Catalog UI, CSV tools, Global Typst Template, and Series Typst Template to avoid broken links (deprecated Global LaTeX link removed).
+
+### Operator UI Navigation Map
 ```mermaid
-classDiagram
-  class CatalogController {
-    +handleHierarchy(Request): Response
-    +handleSearch(Request): Response
-    +handleTruncate(Request): Response
-  }
-  class SpecSearchController {
-    +handleFacets(Request): Response
-    +handleProducts(Request): Response
-    +handleCategories(Request): Response
-  }
-  class CatalogService {
-    +getHierarchy(): array
-    +search(query): array
-    +truncate(reason, token, user): void
-    +importCsv(path, user, reason): ImportResult
-  }
-  class SpecSearchService {
-    +getRootCategories(): array
-    +getProductCategories(rootId): array
-    +getProducts(filter): array
-    +getFacets(filter): array
-  }
-  class CategoryRepository {
-    +fetchTree(): array
-  }
-  class ProductRepository {
-    +search(filter): array
-    +listByCategory(categoryId): array
-  }
-  class CsvImporter {
-    +import(path): ImportResult
-  }
-  class LatexRenderer {
-    +renderSeries(seriesId): PdfResult
-  }
-  CatalogController --> CatalogService
-  SpecSearchController --> SpecSearchService
-  CatalogService --> CategoryRepository
-  CatalogService --> ProductRepository
-  CatalogService --> CsvImporter
-  CatalogService --> LatexRenderer
-  SpecSearchService --> ProductRepository
+graph TD
+    Sidebar[Shared Sidebar] --> SpecSearch[spec-search.html<br/>Spec Search]
+    Sidebar --> CatalogUI[catalog_ui.html<br/>Catalog UI]
+    Sidebar --> CatalogCSV[catalog-csv.html<br/>CSV Tools]
+    Sidebar --> GlobalTypst[global_typst_template.html<br/>Global Typst]
+    Sidebar --> SeriesTypst[series_typst_template.html<br/>Series Typst]
 ```
 
-11. Flowchart (Mermaid) - CSV Import
-------------------------------------
-```mermaid
-flowchart TD
-  A[Upload CSV] --> B[Validate token & inputs]
-  B -->|fail| E[Return 400 with error + correlationId]
-  B -->|pass| C[Parse CSV rows]
-  C --> D[Validate rows]
-  D -->|fail| E
-  D -->|pass| F[Begin transaction]
-  F --> G[Upsert products/attributes]
-  G --> H[Commit]
-  H --> I[Write audit log JSONL]
-  I --> J[Return success]
-```
-
-12. State Diagram (Mermaid) - Product
--------------------------------------
-```mermaid
-stateDiagram-v2
-  [*] --> Draft
-  Draft --> Active: Approved
-  Draft --> Archived: Rejected
-  Active --> Archived: Deprecated
-  Archived --> Draft: Restore
-```
-
-Testing Approach
-----------------
-- **Unit**: service methods (validation, tree assembly, CSV parsing), utility functions, custom-field validators (number/file type checks, required enforcement), media path builder.
-- **Integration**: endpoint calls hitting MySQL with seeded data; verify JSON shapes expected by DataTables; save product/series metadata with text/number/file fields via JSON and multipart forms; download media returns original filename and correct MIME.
-- **Contract**: error envelope shape `{ error: { code, message, correlationId } }` and success envelopes consumed by UI; file-field responses include `{ filename, url, sizeBytes, storedAt }` where applicable.
-- **Optional E2E**: load catalog UI, ensure DataTables renders and paginates via real APIs; create field definitions of each type and save values including file upload, then view/download link.
-- **Manual**: spec-search Edit deep link redirects to catalog UI, pre-selects the target series, and fills `hierarchy-search` with the product SKU/item code.
-- **Manual (Spec search overlay removal)**: spec-search page requests keep the overlay/progress bar hidden and allow scrolling/inputs while data loads; inline spinner displays instead.
-- **Manual (CSV page)**: catalog-csv.html loads CSV history/ truncate audit tables, runs export/import/restore/delete flows, and surfaces correlation IDs in status messages.
-- **Manual (Catalog UI status banners)**: actions in Product Catalog Manager, Series Custom Fields, Series Metadata, and Products only update the status banner within the same section; no other section should change or display a message.
-
-Non-Functional & Constraints
-----------------------------
-- Keep bootstrap/jQuery/DataTables assets under `public/assets/`; bundle/copy via PowerShell.
-- Avoid global jQuery usage; define ES6 classes per page (e.g., `class CatalogTable` that binds events and DataTables init).
-- Local storage writable under `storage/*`; do not serve private CSV files publicly.
-- Media uploads: limit to image/*, PDF, GLB; default max size 10 MB; preserve original filenames; store under `storage/media/<category>/<series>/<field-key>/<entity-id>/`; single file per field with replace/clear semantics; expose download via tokenized route.
-- Field type validation: number fields accept decimals but are stored as text; required fields enforced on save; file fields validated via multipart requests when present, otherwise JSON-only saves remain supported.
-- DataTables pagination buttons retain native sizing/borders (no custom padding, margin, radius, or border overrides) to match Bootstrap pagination affordances.
-- DataTables pagination focus ring/box-shadow removed so page clicks do not blink or require a second click; hover/current styles remain for feedback.
-- Global loading overlay is neutral (#f8f9fa overlay with slight opacity) with a high-z-index top progress bar; overlay captures pointer events to block clicks/inputs and applies `overflow: hidden` on body to freeze scroll until all tracked requests complete. Spec Search does not use this overlay/progress bar and keeps scrolling and pointer/keyboard interaction available during requests.
-- Ensure LaTeX binary path is configurable via env/`config/app.php` (default `pdflatex`).
-- Sidebar navigation uses Bootstrap 5 vertical nav with AdminLTE-inspired left rail; sticky on desktop, slide-over on mobile, active state must reflect current page without breaking existing layouts. Navigation order: Spec Search, Catalog UI, CSV Import/Export, LaTeX Templating.
-
-Error Logging Plan (Backend & Frontend)
----------------------------------------
-- **Correlation IDs**: Generate per request in a bootstrap hook; accept inbound `X-Correlation-ID` if present; attach to all responses and pass into services/repositories and LaTeX/CSV workers. Frontend echoes correlation ID in UI error to assist support.
-- **Backend logging target**: JSONL file `storage/logs/app.log` (ensure directory exists/writable). Fields: `ts`, `level`, `corr`, `route`, `action`, `status`, `errorCode`, `msg`, `durationMs`, `context` (sanitized). Rotate daily or by size; no PII or secrets.
-- **Levels & usage**: `info` for request start/end at controller boundary; `warn` for recoverable validation issues; `error` for exceptions. Include input hashes/sizes instead of payloads; include SQL timings where available (no raw SQL with secrets).
-- **Frontend handling**: Central `handleApiError` utility used by DataTables AJAX and custom calls; shows toast/banner with friendly copy and correlation ID. Dev console logs structured entry `{ level, endpoint, status, errorCode, correlationId, message }`; production console logging disabled unless feature-flagged.
-- **Audit linkage**: Truncate/import flows log to both main log and existing audit JSONL with correlation ID. CSV/LaTeX paths are referenced, not dumped.
-- **Config**: Log path, rotation policy, level thresholds, timezone set in `config/app.php` (with defaults); disable `display_errors` in production while preserving logs. Include `logging.enabled` flag—when false, logger becomes a no-op (correlation IDs still generated and returned) to allow silent modes or perf troubleshooting.
-- **Testing**: Unit-test logger writes valid JSON with required fields; unit-test error handler envelopes; integration tests verify correlation ID propagation and that representative endpoints emit log lines on both success/failure paths.
-
-Error Handling Sequence (Mermaid)
----------------------------------
+### Sequence (Typst Compile)
 ```mermaid
 sequenceDiagram
-  participant FE as Frontend (DataTables/ES6)
-  participant API as PHP Controllers
-  participant SVC as Services
-  participant LOG as Logger
-  FE->>API: AJAX request (optional X-Correlation-ID)
-  API->>API: Ensure correlationId (generate if missing)
-  API->>LOG: info start {route, corr}
-  API->>SVC: call service with corr
-  SVC-->>API: result or CatalogApiException
-  alt success
-    API->>LOG: info end {status:200,duration}
-    API-->>FE: 200 {data, correlationId}
-  else error
-    API->>LOG: error {status, code, message, stack}
-    API-->>FE: status {error:{code,message,correlationId}}
-  end
-  FE->>FE: handleApiError or render data; show toast with correlationId on failure
+    participant UI as UI
+    participant API as /api/typst/compile.php
+    participant TypstSvc as TypstService
+    participant Catalog as CatalogService
+    participant DB as MySQL
+    participant Bin as typst.exe
+    UI->>API: POST typst code + optional seriesId
+    API->>TypstSvc: compileTypst(code, seriesId)
+    TypstSvc->>Catalog: getSeriesDetails(seriesId)
+    Catalog->>DB: SELECT series/products/custom_fields
+    DB-->>Catalog: data
+    Catalog-->>TypstSvc: hydrated series data
+    TypstSvc->>Bin: typst compile temp.typ -> pdf
+    Bin-->>TypstSvc: PDF path
+    TypstSvc->>Storage: move pdf to public/storage/typst-pdfs
+    API-->>UI: { success, url }
 ```
+
+### Flowchart (Spec Search Filtering)
+```mermaid
+flowchart TD
+    A[Receive categoryIds + filters] --> B{categoryIds empty?}
+    B -- Yes --> C[Return []]
+    B -- No --> D[Fetch products + series]
+    D --> E{Series filter present?}
+    E -- Yes --> F[Apply IN clause on series names]
+    E -- No --> G[Skip]
+    F --> H
+    G --> H
+    H{Attribute filters?} -->|Yes| I[Add EXISTS per field_key/value]
+    H -->|No| J[Use base query]
+    I --> K[Limit 500, execute]
+    J --> K
+    K --> L[Hydrate custom field values]
+    L --> M[Return product list]
+```
+
+### State Diagram (Template Lifecycle)
+```mermaid
+stateDiagram-v2
+    [*] --> Draft
+    Draft --> Saved : POST template
+    Saved --> Updated : PUT template
+    Updated --> Compiled : Compile request
+    Compiled --> Saved : Edit without delete
+    Saved --> Deleted : DELETE template
+    Compiled --> Deleted
+```
+
+### Class Diagram (Key Backend Classes)
+```mermaid
+classDiagram
+    class CatalogService {
+        -mysqli db
+        +getHierarchy()
+        +search(query)
+        +getSeriesDetails(seriesId)
+    }
+    class SpecSearchService {
+        -mysqli db
+        +getRootCategories()
+        +getProductCategories(rootId)
+        +getFacets(categoryIds)
+        +getProducts(categoryIds, filters)
+    }
+    class LatexService {
+        -mysqli db
+        -string pdfUrlPrefix
+        +listGlobalTemplates()
+        +compileLatex(latex, seriesId)
+        +listGlobalVariables()
+    }
+    class TypstService {
+        -mysqli db
+        -string pdfUrlPrefix
+        +listGlobalTemplates()
+        +compileTypst(code, seriesId?)
+        +listGlobalVariables()
+    }
+    class Support {
+        +Config::get()
+        +Db::connection()
+        +Logger
+        +Request
+        +Response
+    }
+    CatalogService --> Support
+    SpecSearchService --> Support
+    LatexService --> CatalogService
+    TypstService --> CatalogService
+```
+
+### Pseudocode (Critical Paths)
+```text
+Catalog.search(query):
+  if query empty -> return []
+  search categories name LIKE %query%
+  search products name/SKU LIKE %query%
+  map ids/parents/type into flat list
+
+SpecSearch.getProducts(categoryIds, filters):
+  build base JOIN query for products under series in categoryIds
+  apply series name IN filter when provided
+  for each attribute filter: add EXISTS against product_custom_field_value + series_custom_field
+  LIMIT 500, run query, collect product ids
+  hydrate attributes for those ids and merge into product rows
+
+TypstService.compileTypst(code, seriesId?):
+  header = generateDataHeader(seriesId)
+    - inject globals, series metadata, and products
+    - sanitize Typst keys (strip invalid chars, prefix leading digits, dedupe clashes)
+  write header + code to temp .typ file
+  call typst.exe compile input output
+  on success move PDF to public/storage/typst-pdfs, return URL/path; else throw RuntimeException
+```
+
+## Key Processes (continued) and Constraints
+- CSV lifecycle: imports stored under `storage/csv`, catalog truncation locked via `config/app.php` token/lock key.
+- Logging: `App\Support\Logger` writes JSON lines to `storage/logs/app.log` with correlation ID per request.
+- Security baseline: validate/escape SQL inputs, forbid logging secrets/PII, generated PDFs publicly accessible under `public/storage`.
+- Editor UX: Typst/LaTeX template editors wrap `textarea#latexSource` with a line-numbered view (monospace, synchronized scroll) to simplify debugging and support copy/paste without losing positioning.
+- Saved Typst templates: table-level “PDF Download” triggers a fresh compile when no stored `downloadUrl` exists, then opens the generated PDF URL.

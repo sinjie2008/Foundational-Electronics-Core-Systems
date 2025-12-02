@@ -71,3 +71,42 @@ body {
     border-radius: 0.35rem;
     padding: 0.75rem;
 }
+
+.line-numbered-editor {
+    position: relative;
+    width: 100%;
+}
+
+.line-numbered-editor textarea {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    padding-left: 3.5rem;
+    white-space: pre;
+    overflow: auto;
+}
+
+.line-numbered-editor .line-numbers {
+    position: absolute;
+    top: 0.25rem;
+    bottom: 0.25rem;
+    left: 0.35rem;
+    width: 2.75rem;
+    background: #f6f7f9;
+    border-right: 1px solid #dee2e6;
+    color: #6c757d;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    text-align: right;
+    padding: 0.35rem 0.5rem;
+    user-select: none;
+    pointer-events: none;
+    overflow: hidden;
+    border-top-left-radius: 0.35rem;
+    border-bottom-left-radius: 0.35rem;
+}
+
+.line-numbered-editor .line-numbers div {
+    height: 1.5em;
+}

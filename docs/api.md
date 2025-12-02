@@ -1,261 +1,63 @@
-Catalog & Spec Search API
-=========================
+# API Reference
 
-Conventions
------------
-- Base path: `/api` under `public/`.
-- Format: JSON for standard requests; `multipart/form-data` supported when uploading files (include `metadata` JSON part for text/number values alongside `files[fieldKey]` parts).
-- Versioning: path-based (`/api/v1/...`) when introduced; current endpoints are unversioned but should be aliased to `/api/v1`.
-- Routing note: current implementation uses `catalog.php?action=v1.someAction`; RESTful paths above describe the intended aliases and shapes.
-- Errors: structured as `{ "error": { "code": "string", "message": "string", "correlationId": "uuid" } }`.
-- Success envelope: `{ "success": true, "data": <payload>, "correlationId": "uuid" }` for consistency with front-end DataTables consumption.
-- Auth: none yet (assumes trusted environment); add token/header later if required.
-- Correlation ID: inbound `X-Correlation-ID` is honored; if absent, the server generates one and returns it in the envelope. Logs always include the correlation ID.
-- Logging: each request logs at start/end with route/status; errors log `errorCode`, `message`, sanitized `context`, and correlation ID. No PII/secrets in logs. `logging.enabled=false` disables log writes but responses still include correlation IDs.
-- UI note: Spec Search consumes these endpoints without the global overlay/progress bar; request/response contracts stay unchanged.
+## Conventions and Envelope
+- Base path: `/api` (server root is `public/api`). JSON only; UTF-8.
+- Success shape: `{ "success": true, "data": <payload>, "correlationId": "<cid>" }`
+- Error shape: `{ "error": { "code": "string", "message": "string", "correlationId": "<cid>" } }`
+- Correlation ID: clients may send `X-Correlation-ID`; responses always return one.
+- Status codes: `200 OK`, `201 Created`, `400 Bad Request`, `404 Not Found`, `405 Method Not Allowed`, `500 Internal Error`.
 
-Error Codes (current)
----------------------
-- `validation_error` (400): request payload/params invalid.
-- `invalid_token` (400): truncate/import token mismatch.
-- `forbidden` (403): reserved for future auth.
-- `not_found` (404): resource missing (future use).
-- `internal_error` (500): unhandled exception or infrastructure issue.
+## Catalog
+- `GET /api/catalog/hierarchy.php` — return nested category → series → products tree.
+- `GET /api/catalog/search.php?query=term` — flat matches across categories/series/products.
+- `POST /api/catalog/csv-import.php` — upload/import catalog CSV; writes audit trail under `storage/csv`.
+- `GET /api/catalog/csv-download.php?id=timestamp` — download stored CSV by identifier.
+- `POST /api/catalog/csv-restore.php` — restore catalog from prior CSV.
+- `GET /api/catalog/csv-history.php` — list CSV import history.
+- `POST /api/catalog/truncate.php` — truncate catalog tables (guarded by token/lock in `config/app.php`).
+- `GET /api/catalog/pdf.php?series_id=ID&template_id=ID` — generate LaTeX PDF for a series.
 
-Resources
----------
-
-### Catalog
-- CSV endpoints are consumed by the dedicated CSV tools page (`catalog-csv.html`) separate from the primary catalog UI.
-- `GET /api/catalog/hierarchy`
-  - Purpose: return category tree with products for UI tree/table hybrid.
-  - Query params: none.
-  - Response `200`: `data: { categories: CategoryNode[] }` where each node has `id`, `name`, `type`, `displayOrder`, `products[]`, `children[]`.
-
-- `POST /api/catalog/nodes`
-  - Purpose: create or update a category/series node in the hierarchy.
-  - Body: `{ "id"?: int, "name": "string", "type": "category|series", "parentId": int|null, "displayOrder"?: int }`.
-  - Notes: `parentId` is required for `series` on both create and update; parent must exist and be a `category`; parent cannot equal the node id; converting a populated series to a category returns conflict. UI resubmits the stored parent on update (no parent switching yet).
-  - Response `200`: `data: { id, name, type, parentId, displayOrder }`.
-  - Errors: `400 validation_error` for missing name/type/parentId or self-parent, `404` when node/parent not found, `409` when converting a series with products.
-
-- `GET /api/catalog/search`
-  - Purpose: keyword search across products/categories.
-  - Query params: `q` (string, required).
-  - Response `200`: `data: { items: ProductSummary[], total: int }`.
-
-- `GET /api/catalog/series/{seriesId}/fields`
-  - Purpose: list custom fields for a series by scope.
-  - Query params: `scope` (`product_attribute` | `series_metadata`, optional, default `product_attribute`).
-  - Response `200`: `data: SeriesCustomFieldDefinition[]`.
-
-- `POST /api/catalog/series/{seriesId}/fields`
-  - Purpose: create/update a series custom field definition.
-  - Body (JSON): `{ "id"?: int, "fieldKey": "string", "label": "string", "fieldType": "text|number|file", "fieldScope": "product_attribute|series_metadata", "defaultValue"?: string, "sortOrder": int, "isRequired": bool, "publicPortalHidden"?: bool, "backendPortalHidden"?: bool }`.
-  - Response `200`: `data: SeriesCustomFieldDefinition`.
-
-- `DELETE /api/catalog/fields/{fieldId}`
-  - Purpose: delete a series custom field definition (product attributes or series metadata).
-  - Response `200`: `{ "data": { "deleted": true } }`.
-
-- `GET /api/catalog/series/{seriesId}/metadata`
-  - Purpose: fetch series metadata definitions and values.
-  - Response `200`: `data: { seriesId, definitions: SeriesCustomFieldDefinition[], values: Record<fieldKey, string|MediaValue> }`.
-
-- `POST /api/catalog/series/{seriesId}/metadata`
-  - Purpose: save metadata values for a series (supports text/number/file types).
-  - Body (JSON) for text/number-only: `{ "values": Record<string, string|null> }`.
-  - Body (multipart) when files present: `metadata` (JSON as above) + `files[fieldKey]` (file upload). Only one file per field; sending a new file replaces the old one; omitting the field keeps the current value; sending empty/null clears it.
-  - Response `200`: same shape as GET (definitions + values).
-
-- `GET /api/catalog/series/{seriesId}/products`
-  - Purpose: list products for a series including custom field values.
-  - Response `200`: `data: ProductWithCustom[]`.
-  - Notes: values for deleted field definitions are omitted; when the client changes the product-attribute field set (add/delete/rename), it must clear any existing product table rows before reinitializing DataTables so the header/column set matches the new schema and avoids “incorrect column count” warnings.
-
-- `POST /api/catalog/series/{seriesId}/products`
-  - Purpose: create or update a product and its custom field values.
-  - Body (JSON) for text/number-only: `{ "id"?: int, "sku": "string", "name": "string", "description"?: "string", "customValues": Record<string, string|null> }`.
-  - Body (multipart) when files present: `metadata` (JSON as above) + `files[fieldKey]` for file-type custom fields.
-  - Response `200`: `data: ProductWithCustom`.
-
-- `DELETE /api/catalog/products/{productId}`
-  - Purpose: delete a product (and its custom field values).
-  - Response `200`: `{ "data": { "deleted": true } }`.
-
-- `POST /api/catalog/truncate`
-  - Purpose: truncate catalog data with audit logging.
-  - Body: `{ "reason": "string", "token": "string" }` (`token` must match configured confirmation token).
-  - Response `200`: `data: { auditId, deleted: {...}, timestamp }`.
-  - Errors: `400 invalid_token`, `403 forbidden`, `500 internal_error`.
-
-- `POST /api/catalog/import`
-  - Purpose: import products/series data from uploaded CSV (path or file upload depending on hosting).
-  - Body: multipart form-data with `file` field (CSV).
-  - Response `202`: `data: { imported: int, fileId: string }`.
-  - Errors: `400 validation_error`, `500 internal_error`.
-
-- `GET /api/catalog/pdf`
-  - Purpose: build LaTeX template and return PDF path.
-  - Query params: `id` (template id).
-  - Response `200`: `data: { pdfPath, downloadUrl, updatedAt, stdout, stderr, exitCode, log, correlationId }`.
-
-- `GET /api/catalog/csv/history`
-  - Purpose: list CSV exports/imports and truncate audits.
-  - Response `200`: `data: { files: CsvFile[], audits: AuditEntry[], truncateInProgress: bool }`.
-
-- `POST /api/catalog/csv/export`
-  - Purpose: export catalog to CSV.
-  - Response `200`: `data: { fileId, path }`.
-
-- `POST /api/catalog/csv/restore`
-  - Body: `{ "id": "string" }`.
-  - Response `200`: `data: { restored: true, id }`.
-
-- `GET /api/catalog/csv/download?id={fileId}`
-  - Purpose: download a previously exported/imported CSV.
-  - Response: file stream.
-
-- `GET /api/catalog/media?id={token}`
-  - Purpose: stream a stored media file linked to a custom field value.
-  - Query params: `id` (token/path reference returned in field values).
-  - Response: file stream with `Content-Disposition` preserving the original filename. Errors: `404` if missing, `400 validation_error` if malformed token.
-
-### LaTeX
-- `GET /api/latex/templates`
-  - Purpose: list global LaTeX templates (`is_global = true`).
-  - Response `200`: `data: LatexTemplate[]`.
-
-- `POST /api/latex/templates`
-  - Purpose: create a global LaTeX template.
-  - Body: `{ "title": "string", "description"?: "string", "latex"?: "string" }`. Accepts JSON or form-encoded; `latex_content` or `latex_code` are also accepted aliases for `latex`, and `templateTitle`/`templateDescription` map to `title`/`description`.
-  - Notes: stores in `latex_templates` with `is_global = true`, `series_id = null`; LaTeX content is optional and may be empty.
-  - Response `201`: `data: LatexTemplate` (includes normalized `latex` and timestamps).
-
-- `PUT /api/latex/templates`
-  - Purpose: update a global LaTeX template.
-  - Body: `{ "id": int, "title": "string", "description"?: "string", "latex"?: "string" }`. Same alias/encoding rules as POST; LaTeX may be empty.
-  - Response `200`: `data: LatexTemplate`.
-
-- `DELETE /api/latex/templates?id={id}`
-  - Purpose: delete a global LaTeX template.
-  - Response `200`: `{ "data": { "deleted": true } }`.
-
-- `GET /api/latex/variables`
-  - Purpose: list global LaTeX variables (`is_global = true`).
-  - Response `200`: `data: LatexVariable[]`.
-
-- `POST /api/latex/variables`
-  - Purpose: create or update a global LaTeX variable.
-  - Body: `{ "id"?: int, "key": "string", "type": "text|textarea|file", "value": "string" }`.
-  - Notes: `textarea` is stored as `text`; `file` is stored as `image` with the provided value/path (upload plumbing TBD); keys must be non-empty.
-  - Response `200`: `data: LatexVariable`.
-
-- `DELETE /api/latex/variables?id={id}`
-  - Purpose: delete a global LaTeX variable.
-  - Response `200`: `{ "data": { "deleted": true } }`.
-
-- `GET /api/latex/series/context`
-  - Purpose: load a series-aware LaTeX context (series node + metadata/custom field definitions/values + available templates).
-  - Query params: `seriesId` (required).
-  - Response `200`: `data: SeriesLatexContext` (includes `templates` from `latex_templates` where `is_global = 1 OR series_id = seriesId`, with download URLs for any `lastPdfPath`; `substitutions` map resolves `{{field_key}}` tokens to stored values/defaults).
-
-- `GET /api/latex/series/templates`
-  - Purpose: list LaTeX templates available to a series (global + series-scoped).
-  - Query params: `seriesId` (required).
-  - Response `200`: `data: LatexTemplate[]`.
-
-- `POST /api/latex/series/templates`
-  - Purpose: create a series-scoped LaTeX template.
-  - Body: `{ "seriesId": int, "title": "string", "description"?: "string", "latex"?: "string" }`. Accepts JSON or form-encoded; LaTeX content may be empty.
-  - Response `201`: `data: LatexTemplate`.
-
-- `PUT /api/latex/series/templates`
-  - Purpose: update a series-scoped LaTeX template.
-  - Body: `{ "id": int, "seriesId": int, "title": "string", "description"?: "string", "latex"?: "string" }`.
-  - Response `200`: `data: LatexTemplate`.
-
-- `DELETE /api/latex/series/templates?id={id}&seriesId={seriesId}`
-  - Purpose: delete a series-scoped LaTeX template (global templates are untouched).
-  - Response `200`: `{ "data": { "deleted": true } }`.
-
-- `POST /api/latex/series/outputs`
-  - Purpose: compile LaTeX for a series, optionally persisting the output and PDF.
-  - Body: `{ "seriesId": int, "templateId": int, "latex"?: "string", "persistOutput"?: bool, "savePdf"?: bool, "updateTemplate"?: bool }`.
-  - Notes: Performs `{{field_key}}` substitution using series metadata values (file types resolve to download URL). `updateTemplate` only applies when the template is owned by the series; global templates are read-only. When `savePdf=true`, pdflatex renders to `/storage/latex-pdfs/series/{seriesId}/...`, updates `latex_templates.last_pdf_path/last_pdf_generated_at`, and stores `pdf_path` + `log_excerpt` in `latex_outputs`. Defaults: `persistOutput=true`, `savePdf=false`, `updateTemplate=false`.
-  - Response `200`: `data: LatexOutput` (includes `filledLatex`, `downloadUrl` when a PDF was built, and `lastPdfPath/lastPdfGeneratedAt` mirrors the template).
-
-### Spec Search
-- `GET /api/spec-search/root-categories`
-  - Response `200`: `data: { categories: CategorySummary[] }`.
-
-- `GET /api/spec-search/product-categories?root_id={id}`
-  - Response `200`: `data: { groups: { group: string, categories: CategorySummary[] }[] }`.
-
-- `POST /api/spec-search/products`
-  - Body: `{ "category_ids": int[], "filters": object }`.
-  - Response `200`: `data: { items: ProductSummary[], total: int }` where each item includes `sku`, `series` (series name), `category` (parent category name), `seriesId`, `categoryId`, and any custom fields for that product.
-
-- `POST /api/spec-search/facets`
-  - Body: `{ "category_ids": int[] }`.
-  - Response `200`: `data: { facets: Facet[] }`.
-
-Data Shapes
------------
-- `CategoryNode`: `{ id, parentId, name, type, displayOrder, productCount, categoryCount, products: ProductSummary[], children: CategoryNode[] }`.
-- `CategorySummary`: `{ id, name, type }`.
-- `ProductSummary`: `{ id, sku, name, description, status, categoryId, series, category, seriesId }`.
-- `ProductWithCustom`: `ProductSummary` plus `customValues: Record<fieldKey, string|MediaValue>`.
-- `SeriesCustomFieldDefinition`: `{ id, fieldKey, label, fieldType, fieldScope, defaultValue, sortOrder, isRequired, publicPortalHidden, backendPortalHidden }`.
-- `MediaValue`: `{ filename, url, sizeBytes, storedAt }` (returned for file-type fields).
-- `Facet`: `{ name, label, type, options: { value, count }[] }`.
-- `LatexTemplate`: `{ id, title, description, latex, isGlobal: bool, seriesId: int|null, lastPdfPath?: string, lastPdfGeneratedAt?: string, createdAt, updatedAt }`.
-- `LatexVariable`: `{ id, key, type: "text"|"image", value, isGlobal: bool, seriesId: int|null, createdAt, updatedAt }` (textarea input maps to `type: "text"`, file input maps to `type: "image"` with stored path/text).
-- `SeriesLatexContext`: `{ series: { id, name, parentId, type }, metadata: { definitions: SeriesCustomFieldDefinition[], values: Record<fieldKey, string|MediaValue> }, customFields: SeriesCustomFieldDefinition[], templates: LatexTemplate[], substitutions: Record<fieldKey, string> }`.
-- `LatexOutput`: `{ id?: int, templateId: int, seriesId: int|null, filledLatex: string, pdfPath?: string, downloadUrl?: string, logExcerpt?: string, compiledAt: string, lastPdfPath?: string, lastPdfGeneratedAt?: string }`.
-
-Status Codes
-------------
-- `200 OK`: successful read.
-- `201 Created`: resource created (future endpoints).
-- `202 Accepted`: async/long-running import started.
-- `400 Bad Request`: validation errors.
-- `401 Unauthorized` / `403 Forbidden`: reserved for future auth.
-- `404 Not Found`: resource missing.
-- `409 Conflict`: conflicting update (future).
-- `500 Internal Server Error`: unexpected failure.
-
-Error Model
------------
-```json
-{
-  "error": {
-    "code": "validation_error",
-    "message": "Reason for failure",
-    "correlationId": "uuid"
-  }
-}
+Example:
+```http
+GET /api/catalog/search.php?query=resistor
+200 OK
+{"success":true,"data":[{"id":12,"parent_id":5,"name":"Resistors","type":"category"}],"correlationId":"..."}
 ```
 
-Success Envelope Example
-------------------------
-```json
-{
-  "data": {
-    "items": [
-      { "id": 1, "sku": "ABC123", "name": "Widget", "status": "active" }
-    ],
-    "total": 1
-  },
-  "correlationId": "0f9b2a72-1234-4d9e-9c6e-aaaa5555bbbb"
-}
-```
+## Spec Search
+- `GET /api/spec-search/root-categories.php` — top-level product roots.
+- `GET /api/spec-search/product-categories.php?root_id=ID` — grouped categories under a root.
+- `POST /api/spec-search/facets.php` — body `{ "category_ids": [int] }`; returns facet definitions.
+- `POST /api/spec-search/products.php` — body `{ "category_ids": [int], "filters": { "<key>": ["value"] } }`; returns `{ items, total }` limited to 500 rows.
 
-Testing Notes
--------------
-- UI-only change: DataTables pagination styling updated; no endpoint shapes or status codes are affected.
-- UI-only change: DataTables pagination focus ring removed to prevent blink/second-click behavior; no API impact.
-- Contract tests should assert envelopes, status codes, pagination defaults, and error codes; verify file-field responses return `MediaValue` objects with signed download URLs.
-- Integration tests should seed MySQL with fixture data and hit endpoints via HTTP to confirm shapes expected by DataTables; cover series field CRUD, product/metadata saves via JSON and multipart, file upload type/size enforcement, and media download streaming the original filename.
-- Manual client check: catalog UI displays status banners scoped to the section being updated (Product Catalog Manager vs Series Custom Fields vs Series Metadata vs Products) without leaking messages to other sections.
-- Manual/API check: create/update/delete global LaTeX templates and variables via `/api/latex/templates` and `/api/latex/variables`, confirm persistence in MySQL (`latex_templates`/`latex_variables`) and correlation IDs in responses/logs.
+## Series Metadata
+- `GET /api/series/details.php?series_id=ID` — series metadata + custom field definitions.
+
+## LaTeX Templates
+- `GET /api/latex/templates.php[?series_id=ID]` — list global or series templates.
+- `POST /api/latex/templates.php` — create template; accepts JSON `{title, description, latex, seriesId?}`.
+- `PUT /api/latex/templates.php` — update template by `id`.
+- `DELETE /api/latex/templates.php?id=ID` — delete global template.
+- `POST /api/latex/compile.php` — body `{ "seriesId": ID, "templateId": ID? , "latex": "..." }`; compiles and returns `{ url, path }`.
+- `GET /api/latex/variables.php` — list globals; `POST/PUT/DELETE` manage keys `{key,type,value,id?}`.
+
+## Typst Templates
+- `GET /api/typst/templates.php[?seriesId=ID&id=ID]` — list global/series templates or fetch one.
+- `POST /api/typst/templates.php` — create template (global or series).
+- `PUT /api/typst/templates.php` — update template.
+- `DELETE /api/typst/templates.php?id=ID` — delete template.
+- `POST /api/typst/compile.php` — body `{ "typst": "code", "seriesId": ID? }`; returns `{ url, path }` on success.
+- `GET /api/typst/variables.php` — list globals; `POST/PUT/DELETE` manage keys `{ key, type, value, id? }`.
+
+## Operator UI Pages (Static)
+- `spec-search.html` consumes the Spec Search endpoints above.
+- `catalog_ui.html` drives catalog hierarchy/series editing with Catalog endpoints.
+- `catalog-csv.html` wraps CSV import/export/truncate endpoints.
+- `global_typst_template.html` calls Typst template + variable APIs for global scope.
+- `series_typst_template.html` uses Typst template + variable APIs scoped to a series.
+Navigation between these pages is standardized in the shared sidebar; the obsolete `global_latex_template.html` link was removed to avoid dead pages.
+
+## Error Model and Validation
+- Validation failures use `400` with `code` like `validation_error`; missing resources return `404 not_found`.
+- Server exceptions return `500 internal_error`; logs recorded in `storage/logs/app.log` with correlation IDs.
+- Inputs are expected to be sanitized/escaped before persistence; CSV imports and compile endpoints run server-side commands—invoke only from trusted contexts.

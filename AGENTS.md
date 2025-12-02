@@ -1,89 +1,37 @@
-# Environment
-## Operating system is Windows
-## Commands must be compatible with PowerShell
-## All shell examples and scripts must run in PowerShell; if bash examples exist, a PowerShell equivalent must also be provided
+# Repository Guidelines
 
-# Documentation
-## If a project is divided into different domains (Frontend, Backend), AGENTS.md must be written separately (e.g., frontend/AGENTS.md and backend/AGENTS.md)
-## Before making any modifications, documentation (spec.md, api.md) must be updated first
-## Before writing code, the specification documents must be fully understood, and the understanding must be confirmed with the developer (record Q\&A/decisions)
-## Specification documents must include the following (Mermaid diagrams required where noted):
+## Project Structure & Module Organization
+- `app/` service layer (Catalog, SpecSearch, Latex, Typst) plus Support utilities (Config, Db, Logger, Request/Response).
+- `public/api/` PHP endpoints (catalog, spec-search, latex, typst, series); `public/` also hosts operator UIs and published PDFs under `public/storage`.
+- `assets/` contains UI JS/CSS; `scripts/` holds SQL/bootstrap helpers; `storage/` contains CSV imports, build artifacts, and logs.
+- Documentation lives in `docs/spec.md` (with Mermaid diagrams) and `docs/api.md`; task tracking in `todolist.md`.
 
-```
-1. Architecture and technology choices (rationale, trade-offs, constraints)
-2. Data model
-3. Key processes
-4. Pseudocode (for critical paths)
-5. System context diagram (Mermaid)
-6. Container/deployment overview (Mermaid)
-7. Module relationship diagram (Backend / Frontend) (Mermaid)
-8. Sequence diagram (Mermaid)
-9. ER diagram (Mermaid)
-10. Class diagram (key backend classes) (Mermaid)
-11. Flowchart (Mermaid)
-12. State diagram (Mermaid)
-```
+## Build, Test, and Development Commands
+- `.\scripts\run-tests.ps1 [-SkipSeed]` — runs seed verification and API smoke tests (PowerShell required).
+- `php -S localhost:8000 -t public` — lightweight local server for the static UIs/API routing (align host/port with DB config).
+- `php scripts/run_typst_migrations.php` / `php scripts/run_sql.php` — set up Typst/other tables after DB credentials are configured.
+- Typst/LaTeX binaries: ensure `bin/typst.exe` or `typst` is on PATH; `pdflatex` location comes from env `CATALOG_PDFLATEX_BIN`.
 
-## Mermaid requirement: spec.md must contain the above diagram types in Mermaid format; absence of Mermaid diagrams blocks development
-## If backend code is required, API documentation (api.md) must be planned in advance, following RESTful style (resource naming, versioning, status codes, error model)
-## Definition of Ready (before coding starts):
+## Coding Style & Naming Conventions
+- PHP strict_types everywhere; 4-space indent; single-responsibility services with constructor-injected `mysqli`.
+- Function-level docblocks mandatory; comment important variables/objects; avoid magic values by using `config/*.php`.
+- Log at service boundaries with correlation IDs (`Request::correlationId()` / `Response::success/error`); never log secrets or PII.
+- Prefer descriptive names by domain (`seriesId`, `field_key`, `pdfUrlPrefix`); keep JSON keys snake_case for payloads.
 
-```
-- spec.md updated and reviewed
-- api.md drafted (if backend/API work)
-- open questions resolved or recorded in docs/decisions
-- tasks broken down in todolist.md (independently developable)
-- test approach defined for each task
-```
-## Optional PowerShell presence check (can be used in CI to enforce Mermaid in spec.md):
-````
-if (-not (Select-String -Path .\docs\spec.md -Pattern '```mermaid' -Quiet)) { throw "docs/spec.md must contain Mermaid diagrams." }
-````
+## Testing Guidelines
+- Tests live in `tests/*.php` (plain PHP assertions). Add focused unit/integration tests per change and keep runtimes fast.
+- Run `.\scripts\run-tests.ps1` before merging; seed validation should remain green unless intentionally skipped for docs-only edits.
+- For new endpoints or flows, add minimal API contract tests mirroring the Response envelope (success/error + correlationId).
 
-# Coding Standards
-## Code must include function-level comments, and important variables or objects must also have comments
-## Consistent naming; avoid magic values; centralize configuration; handle errors explicitly
-## Logging at service boundaries; include correlation IDs; never log secrets or PII
-## PowerShell scripts must include comment-based help and set: \$ErrorActionPreference = 'Stop'
+## Documentation & Task Flow
+- Before coding, update `docs/spec.md` (ensure all Mermaid diagrams present) and `docs/api.md`; record open questions/decisions.
+- Break work into independently shippable items in `todolist.md`, mark statuses, and note the test approach per task.
+- Keep specs linked from code/PR descriptions so reviewers can trace rationale.
 
-# Tasks
-## Before development begins, tasks must be broken down so that each can be developed independently without interference, and tasks must be recorded in todolist.md
-## When tasks are in progress or completed, todolist.md must be updated
-## Before starting a new task, todolist.md must be reviewed, and the CONTEXT WINDOW must be reset
-## Context Window reset checklist:
-```
-1. Summarize previous task results in todolist.md
-2. Close or carry over open TODOs
-3. Re-read spec.md and api.md changes since last task
-4. Sync repository and clean local state
-5. Refresh test data/mocks and local environment
-```
+## Commit & Pull Request Guidelines
+- Use short, imperative commit subjects with a scope when helpful (e.g., `catalog: tighten search bounds`, `docs: refresh api spec`); wrap at ~72 chars.
+- PRs should describe intent, key changes, tests run, and reference related tasks/issues; include screenshots or sample payloads for UI/API changes.
 
-## Definition of Done (per task):
-```
-- code implemented and linked to relevant spec/api sections
-- tests written/updated and passing
-- documentation (spec.md/api.md) updated, diagrams refreshed if needed
-- todolist.md status updated (started/completed)
-```
-
-# Testing
-## Each task must pass testing before it is considered complete, and only after testing is completed can the next task begin
-## Testing scope (as applicable):
-```
-- Unit tests (fast, isolated)
-- Integration tests (database, message broker, external services)
-- Contract/API tests (request/response, error model)
-- End-to-end tests for critical user flows
-```
-## Example PowerShell test invocations (adapt to stack):
-
-```
-- dotnet test --configuration Release
-- npm test
-- Invoke-Pester -CI
-```
-
-
-
-
+## Security & Configuration Tips
+- Set DB credentials in `config/db.php` (or `db_config.php` fallback). Rotate truncate token/lock in `config/app.php` for destructive operations.
+- Generated PDFs are publicly reachable under `/storage/*`; avoid writing secrets there. Keep `storage/logs/app.log` trimmed via rotation settings.

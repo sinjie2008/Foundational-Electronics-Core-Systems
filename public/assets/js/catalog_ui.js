@@ -1650,8 +1650,9 @@ class CatalogUI {
                     const node = state.nodeIndex.get(state.selectedNodeId);
                     if (node && node.type === 'series') {
                         // Update link href
-                        const url = `series_latex_template.html?series_id=${node.id}`;
+                        const url = `series_typst_template.html?series_id=${node.id}`;
                         link.attr('href', url);
+                        link.text('Open Series Typst Template');
                         linkContainer.removeClass('d-none');
                     }
                 } else {

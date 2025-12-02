@@ -1,0 +1,26 @@
+DROP TABLE IF EXISTS `typst_templates`;
+DROP TABLE IF EXISTS `typst_variables`;
+
+CREATE TABLE `typst_templates` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `title` VARCHAR(255) NOT NULL,
+  `description` TEXT,
+  `typst_content` MEDIUMTEXT,
+  `is_global` TINYINT(1) DEFAULT 0,
+  `series_id` INT DEFAULT NULL,
+  `last_pdf_path` VARCHAR(255) DEFAULT NULL,
+  `last_pdf_generated_at` DATETIME DEFAULT NULL,
+  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE `typst_variables` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `field_key` VARCHAR(255) NOT NULL,
+  `field_type` VARCHAR(50) NOT NULL DEFAULT 'text',
+  `field_value` TEXT,
+  `is_global` TINYINT(1) DEFAULT 0,
+  `series_id` INT DEFAULT NULL,
+  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
