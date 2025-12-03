@@ -26,12 +26,14 @@ try {
         $title = (string)($input['title'] ?? '');
         $desc = (string)($input['description'] ?? '');
         $code = (string)($input['typst'] ?? '');
+        $pdfPath = isset($input['lastPdfPath']) ? (string)$input['lastPdfPath'] : null;
+        error_log("POST templates.php: pdfPath=" . var_export($pdfPath, true));
         $seriesId = isset($input['seriesId']) ? (int)$input['seriesId'] : null;
         
         if ($seriesId) {
-            $data = $service->createSeriesTemplate($seriesId, $title, $desc, $code);
+            $data = $service->createSeriesTemplate($seriesId, $title, $desc, $code, $pdfPath);
         } else {
-            $data = $service->createGlobalTemplate($title, $desc, $code);
+            $data = $service->createGlobalTemplate($title, $desc, $code, $pdfPath);
         }
         Response::success($data);
     } elseif ($method === 'PUT') {
@@ -40,12 +42,14 @@ try {
         $title = (string)($input['title'] ?? '');
         $desc = (string)($input['description'] ?? '');
         $code = (string)($input['typst'] ?? '');
+        $pdfPath = isset($input['lastPdfPath']) ? (string)$input['lastPdfPath'] : null;
+        error_log("PUT templates.php: pdfPath=" . var_export($pdfPath, true));
         $seriesId = isset($input['seriesId']) ? (int)$input['seriesId'] : null;
         
         if ($seriesId) {
-            $data = $service->updateSeriesTemplate($id, $seriesId, $title, $desc, $code);
+            $data = $service->updateSeriesTemplate($id, $seriesId, $title, $desc, $code, $pdfPath);
         } else {
-            $data = $service->updateGlobalTemplate($id, $title, $desc, $code);
+            $data = $service->updateGlobalTemplate($id, $title, $desc, $code, $pdfPath);
         }
         Response::success($data);
     } elseif ($method === 'DELETE') {

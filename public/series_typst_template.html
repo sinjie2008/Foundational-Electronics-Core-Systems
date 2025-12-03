@@ -125,18 +125,37 @@
                     </div>
                 </section>
 
-                <!-- Load Template -->
+                <!-- Import Global Template -->
                 <section class="template-panel mb-4">
-                    <h2 class="h5 mb-3">Load Template</h2>
+                    <h2 class="h5 mb-3">Import Global Template</h2>
                     <div class="row align-items-center">
                         <div class="col-md-8">
                             <select id="templateSelect" class="form-select">
-                                <option value="">Select a template...</option>
+                                <option value="">Select a global template...</option>
                             </select>
                         </div>
                         <div class="col-md-4">
-                            <button type="button" id="loadTemplateBtn" class="btn btn-outline-primary w-100">Load
+                            <button type="button" id="loadTemplateBtn" class="btn btn-outline-primary w-100">Import
                                 Template</button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Series Template Details -->
+                <section class="template-panel mb-4">
+                    <h2 class="h5 mb-3">Series Template Details</h2>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label for="seriesTemplateTitle" class="form-label fw-bold">Series Template Title <span
+                                    class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="seriesTemplateTitle"
+                                placeholder="Enter template title" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="seriesTemplateDesc" class="form-label fw-bold">Description <span
+                                    class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="seriesTemplateDesc"
+                                placeholder="Enter description" required>
                         </div>
                     </div>
                 </section>
@@ -178,7 +197,7 @@
     <script src="assets/js/sidebar-nav.js"></script>
     <script src="assets/js/app_loading.js"></script>
     <script src="assets/js/app_error.js"></script>
-    <script src="assets/js/series-typst-templating.js"></script>
+    <script src="assets/js/series-typst-templating.js?v=<?php echo time(); ?>"></script>
 </body>
 
 </html>

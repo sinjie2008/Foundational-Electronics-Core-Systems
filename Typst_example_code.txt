@@ -1,0 +1,53 @@
+Series Typst Template
+
+= Basic Variable
+{{series_voltage}}
+{{series_notes}}
+
+= Product Image
+#align(center)[
+    #image("{{series_product_image}}", width: 5cm)
+]
+
+= Basic For loop with table
+#table(
+  columns: (auto, auto, auto, auto, auto, auto, auto, auto),
+  table.header(
+    [*Name*],
+    [*SKU*],
+    [*Length*],
+    [*Width*],
+    [*Height*],
+    [*Impedance*],
+    [*DCR*],
+    [*Irms*],
+  ),
+
+  ..for item in products {
+    (
+     item.name,
+     item.sku,
+     item.attributes.acf_length,
+     item.attributes.acf_width,
+     item.attributes.acf_height,
+     item.attributes.acf_impedance,
+     item.attributes.acf_dcr,
+     item.attributes.acf_irms,
+
+    )
+  }
+)
+
+= Basic For loop
+#for product in products {
+  product.sku
+  product.name
+  product.attributes.acf_length
+  product.attributes.acf_width
+  product.attributes.acf_height
+}
+
+
+= Basic Debug
+// #repr(products)
+

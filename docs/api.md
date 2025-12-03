@@ -42,12 +42,13 @@ GET /api/catalog/search.php?query=resistor
 - `GET /api/latex/variables.php` — list globals; `POST/PUT/DELETE` manage keys `{key,type,value,id?}`.
 
 ## Typst Templates
-- `GET /api/typst/templates.php[?seriesId=ID&id=ID]` — list global/series templates or fetch one.
-- `POST /api/typst/templates.php` — create template (global or series).
-- `PUT /api/typst/templates.php` — update template.
-- `DELETE /api/typst/templates.php?id=ID` — delete template.
-- `POST /api/typst/compile.php` — body `{ "typst": "code", "seriesId": ID? }`; returns `{ url, path }` on success.
-- `GET /api/typst/variables.php` — list globals; `POST/PUT/DELETE` manage keys `{ key, type, value, id? }`.
+- `GET /api/typst/templates.php[?seriesId=ID&id=ID]` – list global/series templates or fetch one.
+- `POST /api/typst/templates.php` – create template (global or series); accepts optional `lastPdfPath` to persist compiled PDF location + set `last_pdf_generated_at`.
+- `PUT /api/typst/templates.php` - update template; accepts optional `lastPdfPath` to refresh stored PDF metadata after compile/save flows.
+- `DELETE /api/typst/templates.php?id=ID` - delete template.
+- `POST /api/typst/compile.php` - body `{ "typst": "code", "seriesId": ID? }`; returns `{ url, path }` on success (the `path` should be echoed back as `lastPdfPath` when saving templates).
+- `GET /api/typst/variables.php` - list globals; `POST/PUT/DELETE` manage keys `{ key, type, value, id? }`.
+- Series Typst templating UI exposes metadata badges as `{{key}}`, and custom fields are grouped inside a `products` wrapper: clicking the wrapper inserts a products loop scaffold, while inner field badges paste `product.attributes.<key>` tokens alongside `product.sku` and `product.name` badges; compile replaces `{{key}}` placeholders with real values and still injects the full `data` object (including `products`).
 
 ## Operator UI Pages (Static)
 - `spec-search.html` consumes the Spec Search endpoints above.

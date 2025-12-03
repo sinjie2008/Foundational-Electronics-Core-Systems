@@ -4,6 +4,7 @@
     const state = {
         seriesId: null,
         templates: [],
+        globalTemplates: [],
         selectedTemplateId: null,
         lineNumberUpdater: null,
     };
@@ -71,6 +72,64 @@
         return render;
     }
 
+    /**
+     * Convert a raw key into a Typst-safe identifier (mirrors TypstService logic).
+     */
+    function sanitizeTypstKey(rawKey) {
+        const normalized = (rawKey || '').toString().replace(/[^A-Za-z0-9_]/g, '_').replace(/^_+/, '');
+        const base = normalized === '' ? 'key' : (/^[0-9]/.test(normalized) ? `_${normalized}` : normalized);
+        return base;
+    }
+
+    /**
+     * Ensure Typst-safe keys stay unique within a collection.
+     */
+    function makeUniqueTypstKey(baseKey, usedKeys) {
+        let candidate = baseKey;
+        let suffix = 1;
+        while (usedKeys[candidate]) {
+            candidate = `${baseKey}_${suffix}`;
+            suffix += 1;
+        }
+        usedKeys[candidate] = true;
+        return candidate;
+    }
+
+    /**
+     * Insert a token into the Typst editor at the current caret position.
+     */
+    function insertTokenIntoEditor(token) {
+        const textarea = document.getElementById('latexSource');
+        if (!textarea) {
+            return;
+        }
+        const start = textarea.selectionStart || 0;
+        const end = textarea.selectionEnd || 0;
+        const value = textarea.value || '';
+        textarea.value = value.slice(0, start) + token + value.slice(end);
+        const newPos = start + token.length;
+        textarea.selectionStart = newPos;
+        textarea.selectionEnd = newPos;
+        textarea.focus();
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        if (typeof state.lineNumberUpdater === 'function') {
+            state.lineNumberUpdater();
+        }
+    }
+
+    /**
+     * Build a clickable badge element that inserts a Typst token.
+     */
+    function buildVariableBadge(displayText, insertToken, tooltip, toneClass) {
+        const badge = $(`<span class="badge rounded-pill fw-semibold variable-badge ${toneClass || 'text-bg-light border border-secondary-subtle text-dark'}"></span>`);
+        badge.text(displayText);
+        badge.attr('title', tooltip || insertToken);
+        badge.attr('data-insert', insertToken);
+        badge.attr('aria-label', tooltip || insertToken);
+        badge.on('click', () => insertTokenIntoEditor(insertToken));
+        return badge;
+    }
+
     async function fetchSeriesDetails(seriesId) {
         try {
             // Fetch hierarchy to find the series node
@@ -121,20 +180,23 @@
         const container = $('#seriesMetadataContainer');
         container.empty();
 
-        if (!data || !data.definitions || data.definitions.length === 0) {
+        if (!data || !Array.isArray(data.definitions) || data.definitions.length === 0) {
             container.html('<span class="text-muted">No metadata fields defined.</span>');
             return;
         }
 
         const wrapper = $('<div class="d-flex flex-wrap gap-2"></div>');
+        const usedKeys = {};
         data.definitions.forEach(def => {
-            const value = data.values[def.fieldKey] || '-';
-            // Chip style badge
-            wrapper.append(
-                `<span class="badge rounded-pill text-bg-light border border-secondary-subtle text-dark fw-normal" title="${def.label}">
-                    <span class="fw-bold text-secondary">${def.label}:</span> ${value}
-                </span>`
-            );
+            const rawKey = def.fieldKey || def.field_key || def.key || '';
+            if (!rawKey) {
+                return;
+            }
+            const safeKey = makeUniqueTypstKey(sanitizeTypstKey(rawKey), usedKeys);
+            const insertToken = `{{${safeKey}}}`;
+            const tooltip = `${def.label || rawKey} • ${insertToken}`;
+            const badge = buildVariableBadge(safeKey, insertToken, tooltip, 'text-bg-light border border-secondary-subtle text-dark');
+            wrapper.append(badge);
         });
         container.append(wrapper);
     }
@@ -158,16 +220,51 @@
             return;
         }
 
-        const wrapper = $('<div class="d-flex flex-wrap gap-2"></div>');
-        fields.forEach(field => {
-            // Chip style badge for custom fields
-            wrapper.append(
-                `<span class="badge rounded-pill text-bg-secondary fw-normal" title="Type: ${field.fieldType}">
-                    ${field.label} <small class="opacity-75">(${field.fieldKey})</small>
-                </span>`
-            );
+        const usedKeys = {};
+
+        const outer = $('<div class="d-flex flex-column gap-2"></div>');
+        const productsRow = $('<div class="d-flex align-items-start gap-2 flex-wrap"></div>');
+
+        const loopSnippet = [
+            '#for product in products {',
+            '  // Example: product.name, product.sku, product.attributes.<key>',
+            '}',
+            ''
+        ].join('\n');
+        const productsBadge = buildVariableBadge(
+            'products',
+            loopSnippet,
+            'Insert products loop scaffold',
+            'text-bg-primary'
+        );
+        productsRow.append(productsBadge);
+
+        const fieldsWrap = $('<div class="d-flex flex-wrap gap-2 ms-2"></div>');
+        // Core product badges
+        const coreBadges = [
+            { label: 'sku', token: 'product.sku', tone: 'text-bg-danger' },
+            { label: 'name', token: 'product.name', tone: 'text-bg-warning text-dark' },
+        ];
+        coreBadges.forEach((b) => {
+            const badge = buildVariableBadge(b.label, b.token, `Insert ${b.token}`, b.tone);
+            fieldsWrap.append(badge);
         });
-        container.append(wrapper);
+
+        fields.forEach(field => {
+            const rawKey = field.fieldKey || field.field_key || '';
+            if (!rawKey) {
+                return;
+            }
+            const safeKey = makeUniqueTypstKey(sanitizeTypstKey(rawKey), usedKeys);
+            const insertToken = `product.attributes.${safeKey}`;
+            const tooltip = `${field.label || rawKey} (${rawKey}) • ${insertToken}` + (field.fieldType ? ` • Type: ${field.fieldType}` : '');
+            const badge = buildVariableBadge(safeKey, insertToken, tooltip, 'text-bg-secondary');
+            fieldsWrap.append(badge);
+        });
+
+        productsRow.append(fieldsWrap);
+        outer.append(productsRow);
+        container.append(outer);
     }
 
     function showStatus(type, message, correlationId) {
@@ -221,11 +318,7 @@
 
     function bindEvents() {
         $('#compileBtn').on('click', handleCompile);
-        $('#saveCompileBtn').on('click', handleSaveCompile); // Save as template? Or save compile result?
-        // In UI it says "Save Compile" and "Save PDF".
-        // "Save Compile" might mean save the template changes?
-        // Let's assume it means Save Template.
-
+        $('#saveCompileBtn').on('click', handleSaveCompile);
         $('#savePdfBtn').on('click', handleSavePdf);
         $('#downloadPdfBtn').on('click', handleDownloadPdf);
 
@@ -237,10 +330,38 @@
 
     async function loadTemplates() {
         try {
-            // Load templates for this series
+            // Load templates for this series (returns both Series and Global)
             const { data } = await withLoading(() => requestJson(`api/typst/templates.php?seriesId=${state.seriesId}`));
-            state.templates = Array.isArray(data) ? data : [];
+            const allTemplates = Array.isArray(data) ? data : [];
+
+            // Filter Global Templates for the dropdown
+            state.globalTemplates = allTemplates.filter(t => t.isGlobal);
+
+            // Find if there is an existing Series Template
+            // Assuming one series template per series for now, or we pick the latest updated one?
+            // The query orders by updated_at DESC.
+            const seriesTemplate = allTemplates.find(t => !t.isGlobal && t.seriesId == state.seriesId);
+
             renderTemplateSelect();
+
+            if (seriesTemplate) {
+                // Populate fields
+                state.selectedTemplateId = seriesTemplate.id;
+                $('#seriesTemplateTitle').val(seriesTemplate.title);
+                $('#seriesTemplateDesc').val(seriesTemplate.description);
+                $('#latexSource').val(seriesTemplate.typst || '');
+
+                if (typeof state.lineNumberUpdater === 'function') {
+                    state.lineNumberUpdater();
+                }
+
+                // If there is a last PDF, maybe we can show it?
+                if (seriesTemplate.downloadUrl) {
+                    const previewEl = document.getElementById('latex-preview-render');
+                    previewEl.innerHTML = `<iframe id="pdfPreviewFrame" src="${seriesTemplate.downloadUrl}" title="PDF Preview"></iframe>`;
+                    $('#downloadPdfBtn').data('url', seriesTemplate.downloadUrl);
+                }
+            }
         } catch (error) {
             showStatus('danger', error.message || 'Failed to load templates.', error.correlationId);
         }
@@ -249,21 +370,21 @@
     function renderTemplateSelect() {
         const select = $('#templateSelect');
         select.empty();
-        select.append('<option value="">Select a template...</option>');
-        state.templates.forEach(t => {
-            select.append(`<option value="${t.id}">${t.title} ${t.isGlobal ? '(Global)' : ''}</option>`);
+        select.append('<option value="">Select a global template...</option>');
+        state.globalTemplates.forEach(t => {
+            select.append(`<option value="${t.id}">${t.title}</option>`);
         });
     }
 
     function loadTemplate(id) {
-        const template = state.templates.find((t) => t.id === id);
+        const template = state.globalTemplates.find((t) => t.id === id);
         if (template) {
-            state.selectedTemplateId = template.id;
+            // Only load code into editor
             $('#latexSource').val(template.typst || '');
             if (typeof state.lineNumberUpdater === 'function') {
                 state.lineNumberUpdater();
             }
-            handleCompile();
+            // Do not overwrite Title/Desc as this is "Import"
         }
     }
 
@@ -273,7 +394,7 @@
 
         if (!typst) {
             previewEl.innerHTML = '<p class="text-muted text-center mt-5">Preview will appear here.</p>';
-            return;
+            return null;
         }
 
         previewEl.innerHTML = '<div class="text-center mt-5"><div class="spinner-border text-primary" role="status"></div><p>Compiling...</p></div>';
@@ -291,16 +412,19 @@
                 previewEl.innerHTML = `<iframe id="pdfPreviewFrame" src="${data.url}" title="PDF Preview"></iframe>`;
                 // Enable download button
                 $('#downloadPdfBtn').data('url', data.url);
+                return data; // Return data including path
             } else {
                 previewEl.innerHTML = '<div class="alert alert-warning">Compilation succeeded but no PDF URL returned.</div>';
+                return null;
             }
         } catch (error) {
             previewEl.innerHTML = `<div class="alert alert-danger">Error: ${error.message}</div>`;
+            throw error;
         }
     }
 
     function handleSavePdf() {
-        handleCompile();
+        return handleSaveCompile();
     }
 
     function handleDownloadPdf() {
@@ -313,47 +437,57 @@
     }
 
     async function handleSaveCompile() {
-        // This likely means "Save Template" for this series
-        // We need a title/description. The UI doesn't have inputs for them in Series view?
-        // Series view has "Load Template" and "Code Editor".
-        // It seems Series view is for *using* templates, not necessarily creating them?
-        // But LatexService has `createSeriesTemplate`.
-        // If the UI doesn't have Title/Desc inputs, maybe we prompt?
-        // Or maybe we update the *loaded* template?
+        // Validate required fields
+        const title = $('#seriesTemplateTitle').val().trim();
+        const description = $('#seriesTemplateDesc').val().trim();
+        const typst = $('#latexSource').val();
 
-        if (!state.selectedTemplateId) {
-            // Create new? We need title.
-            const title = prompt("Enter template title:");
-            if (!title) return;
-            const description = prompt("Enter description (optional):");
-            saveTemplate(title, description);
-        } else {
-            // Update existing
-            const tmpl = state.templates.find(t => t.id === state.selectedTemplateId);
-            if (tmpl && tmpl.isGlobal) {
-                if (!confirm("This is a global template. Do you want to save a copy as a Series template?")) {
-                    return; // Cancel
-                }
-                // Save as new series template
-                const title = prompt("Enter new title:", tmpl.title + " (Copy)");
-                if (!title) return;
-                saveTemplate(title, tmpl.description);
-            } else {
-                // Update series template
-                saveTemplate(tmpl.title, tmpl.description, state.selectedTemplateId);
+        if (!title) {
+            showStatus('warning', 'Series Template Title is required.');
+            $('#seriesTemplateTitle').focus();
+            return;
+        }
+        if (!description) {
+            showStatus('warning', 'Description is required.');
+            $('#seriesTemplateDesc').focus();
+            return;
+        }
+        if (!typst) {
+            showStatus('warning', 'Template code is empty.');
+            return;
+        }
+
+        try {
+            // 1. Compile to generate PDF and get path
+            const compileResult = await handleCompile();
+            console.log("Compile Result:", compileResult);
+
+            if (!compileResult || !compileResult.path) {
+                throw new Error("Compilation failed or did not return a PDF path.");
+            }
+
+            // 2. Save Template with PDF path
+            await saveTemplate(title, description, compileResult.path, state.selectedTemplateId);
+
+        } catch (error) {
+            // Error is already handled/displayed in handleCompile or saveTemplate
+            if (!error.message.includes("Compilation failed")) {
+                showStatus('danger', 'Save failed: ' + error.message);
             }
         }
     }
 
-    async function saveTemplate(title, description, id = null) {
+    async function saveTemplate(title, description, pdfPath, id = null) {
         const typst = $('#latexSource').val();
         const payload = {
             id: id,
             title,
             description,
             typst,
-            seriesId: state.seriesId
+            seriesId: state.seriesId,
+            lastPdfPath: pdfPath
         };
+        console.log("Saving Template Payload:", payload);
         const method = id ? 'PUT' : 'POST';
 
         try {
@@ -366,10 +500,11 @@
             if (data && data.id) {
                 state.selectedTemplateId = data.id;
             }
-            showStatus('success', 'Template saved.', correlationId);
+            showStatus('success', 'Template and PDF saved successfully.', correlationId);
             await loadTemplates();
         } catch (error) {
             showStatus('danger', error.message || 'Failed to save template.', error.correlationId);
+            throw error;
         }
     }
 

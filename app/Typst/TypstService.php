@@ -17,6 +17,8 @@ final class TypstService
     private mysqli $db;
     private string $pdfUrlPrefix;
     private string $typstBinary;
+    /** @var array<string, string> */
+    private array $copiedAssets = [];
 
     public function __construct(?mysqli $db = null)
     {
@@ -74,13 +76,14 @@ final class TypstService
     /**
      * Create global template.
      */
-    public function createGlobalTemplate(string $title, string $description, string $typstCode): array
+    public function createGlobalTemplate(string $title, string $description, string $typstCode, ?string $pdfPath = null): array
     {
         $stmt = $this->db->prepare(
-            'INSERT INTO typst_templates (title, description, typst_content, is_global, series_id)
-             VALUES (?, ?, ?, 1, NULL)'
+            'INSERT INTO typst_templates (title, description, typst_content, is_global, series_id, last_pdf_path, last_pdf_generated_at)
+             VALUES (?, ?, ?, 1, NULL, ?, ?)'
         );
-        $stmt->bind_param('sss', $title, $description, $typstCode);
+        $generatedAt = $pdfPath ? date('Y-m-d H:i:s') : null;
+        $stmt->bind_param('sssss', $title, $description, $typstCode, $pdfPath, $generatedAt);
         $stmt->execute();
 
         return $this->getGlobalTemplate((int) $this->db->insert_id) ?? [];
@@ -89,14 +92,25 @@ final class TypstService
     /**
      * Update global template.
      */
-    public function updateGlobalTemplate(int $id, string $title, string $description, string $typstCode): ?array
+    public function updateGlobalTemplate(int $id, string $title, string $description, string $typstCode, ?string $pdfPath = null): ?array
     {
-        $stmt = $this->db->prepare(
-            'UPDATE typst_templates
-             SET title = ?, description = ?, typst_content = ?, updated_at = CURRENT_TIMESTAMP
-             WHERE id = ? AND is_global = 1'
-        );
-        $stmt->bind_param('sssi', $title, $description, $typstCode, $id);
+        $sql = 'UPDATE typst_templates SET title = ?, description = ?, typst_content = ?, updated_at = CURRENT_TIMESTAMP';
+        $params = [$title, $description, $typstCode];
+        $types = 'sss';
+
+        if ($pdfPath !== null) {
+            $sql .= ', last_pdf_path = ?, last_pdf_generated_at = ?';
+            $params[] = $pdfPath;
+            $params[] = date('Y-m-d H:i:s');
+            $types .= 'ss';
+        }
+
+        $sql .= ' WHERE id = ? AND is_global = 1';
+        $params[] = $id;
+        $types .= 'i';
+
+        $stmt = $this->db->prepare($sql);
+        $stmt->bind_param($types, ...$params);
         $stmt->execute();
 
         return $this->getGlobalTemplate($id);
@@ -155,13 +169,15 @@ final class TypstService
     /**
      * Create series template.
      */
-    public function createSeriesTemplate(int $seriesId, string $title, string $description, string $typstCode): array
+    public function createSeriesTemplate(int $seriesId, string $title, string $description, string $typstCode, ?string $pdfPath = null): array
     {
+        error_log("TypstService::createSeriesTemplate pdfPath=" . var_export($pdfPath, true));
         $stmt = $this->db->prepare(
-            'INSERT INTO typst_templates (title, description, typst_content, is_global, series_id)
-             VALUES (?, ?, ?, 0, ?)'
+            'INSERT INTO typst_templates (title, description, typst_content, is_global, series_id, last_pdf_path, last_pdf_generated_at)
+             VALUES (?, ?, ?, 0, ?, ?, ?)'
         );
-        $stmt->bind_param('sssi', $title, $description, $typstCode, $seriesId);
+        $generatedAt = $pdfPath ? date('Y-m-d H:i:s') : null;
+        $stmt->bind_param('sssiss', $title, $description, $typstCode, $seriesId, $pdfPath, $generatedAt);
         $stmt->execute();
 
         return $this->getTemplate((int) $this->db->insert_id) ?? [];
@@ -170,14 +186,27 @@ final class TypstService
     /**
      * Update series template.
      */
-    public function updateSeriesTemplate(int $id, int $seriesId, string $title, string $description, string $typstCode): ?array
+    public function updateSeriesTemplate(int $id, int $seriesId, string $title, string $description, string $typstCode, ?string $pdfPath = null): ?array
     {
-        $stmt = $this->db->prepare(
-            'UPDATE typst_templates
-             SET title = ?, description = ?, typst_content = ?, updated_at = CURRENT_TIMESTAMP
-             WHERE id = ? AND series_id = ?'
-        );
-        $stmt->bind_param('sssii', $title, $description, $typstCode, $id, $seriesId);
+        error_log("TypstService::updateSeriesTemplate pdfPath=" . var_export($pdfPath, true));
+        $sql = 'UPDATE typst_templates SET title = ?, description = ?, typst_content = ?, updated_at = CURRENT_TIMESTAMP';
+        $params = [$title, $description, $typstCode];
+        $types = 'sss';
+
+        if ($pdfPath !== null) {
+            $sql .= ', last_pdf_path = ?, last_pdf_generated_at = ?';
+            $params[] = $pdfPath;
+            $params[] = date('Y-m-d H:i:s');
+            $types .= 'ss';
+        }
+
+        $sql .= ' WHERE id = ? AND series_id = ?';
+        $params[] = $id;
+        $params[] = $seriesId;
+        $types .= 'ii';
+
+        $stmt = $this->db->prepare($sql);
+        $stmt->bind_param($types, ...$params);
         $stmt->execute();
 
         return $this->getTemplate($id);
@@ -191,18 +220,26 @@ final class TypstService
      */
     public function compileTypst(string $typstCode, ?int $seriesId = null): array
     {
+        // Prepare build directory up front so assets can be staged for relative loading.
+        $buildDir = __DIR__ . '/../../storage/typst-build';
+        if (!is_dir($buildDir)) {
+            mkdir($buildDir, 0777, true);
+        }
+
+        $jobId = uniqid('typst_');
+
         // 1. Generate Data Header
-        $dataHeader = $this->generateDataHeader($seriesId);
+        $dataHeaderResult = $this->generateDataHeader($seriesId, $buildDir);
+        $dataHeader = $dataHeaderResult['header'];
+        $safeData = $dataHeaderResult['safeData'];
+        $placeholderValues = $this->buildPlaceholderMap($safeData);
         
         // 2. Combine Header and Code
-        // We prepend the data variables so they are available in the user's script.
-        $fullSource = $dataHeader . "\n" . $typstCode;
+        // We prepend the data variables so they are available in the user's script and replace {{placeholders}} with concrete values.
+        $renderedTypst = $this->replacePlaceholders($typstCode, $placeholderValues);
+        $fullSource = $dataHeader . "\n" . $renderedTypst;
 
         // 3. Save to Temp File
-        $buildDir = __DIR__ . '/../../storage/typst-build';
-        if (!is_dir($buildDir)) mkdir($buildDir, 0777, true);
-        
-        $jobId = uniqid('typst_');
         $inputFile = $buildDir . '/' . $jobId . '.typ';
         file_put_contents($inputFile, $fullSource);
         
@@ -236,7 +273,7 @@ final class TypstService
         if (!is_dir($storageDir)) mkdir($storageDir, 0777, true);
         
         $finalPdfName = ($seriesId ? 'series_' . $seriesId : 'global') . '_' . date('YmdHis') . '.pdf';
-        $finalPdfPath = $storageDir . '/' . $finalPdfName;
+        $finalPdfPath = str_replace('\\', '/', realpath($storageDir) . '/' . $finalPdfName);
         rename($pdfFile, $finalPdfPath);
         
         // Cleanup
@@ -248,13 +285,21 @@ final class TypstService
         ];
     }
 
-    private function generateDataHeader(?int $seriesId): string
+    /**
+     * Build the Typst data header and return sanitized data for placeholder mapping.
+     *
+     * @param string|null $seriesId
+     * @param string $buildDir Directory where assets should be staged for Typst.
+     * @return array{header: string, safeData: array<string, mixed>}
+     */
+    private function generateDataHeader(?int $seriesId, string $buildDir): array
     {
         $header = "// Auto-generated Data Header\n";
         
         // Global Variables
         $globalVars = $this->listGlobalVariables();
         foreach ($globalVars as $var) {
+            $resolvedValue = $this->resolveAssetPath($var['value'], $buildDir);
             // Sanitize key to be a valid identifier if possible, or use a dictionary
             // Typst identifiers: letters, numbers, underscores, hyphens (but hyphens are minus)
             // Best to put them in a dictionary: #let globals = (...)
@@ -265,7 +310,7 @@ final class TypstService
         // Construct a `data` dictionary
         $data = ['globals' => []];
         foreach ($globalVars as $var) {
-            $data['globals'][$var['key']] = $var['value'];
+            $data['globals'][$var['key']] = $this->resolveAssetPath($var['value'], $buildDir);
         }
 
         if ($seriesId) {
@@ -281,7 +326,7 @@ final class TypstService
                 
                 $data['metadata'] = [];
                 foreach ($seriesDetails['metadata'] ?? [] as $m) {
-                    $data['metadata'][$m['key']] = $m['value'];
+                    $data['metadata'][$m['key']] = $this->resolveAssetPath($m['value'], $buildDir);
                 }
                 
                 $data['products'] = [];
@@ -310,9 +355,10 @@ final class TypstService
                     $pStmt->execute();
                     $attrs = $pStmt->get_result();
                     while ($attr = $attrs->fetch_assoc()) {
-                        $pData['attributes'][$attr['field_key']] = $attr['value'] ?? '';
+                        $resolved = $this->resolveAssetPath($attr['value'] ?? '', $buildDir);
+                        $pData['attributes'][$attr['field_key']] = $resolved;
                         // Also put at top level of product for easy access
-                        $pData[$attr['field_key']] = $attr['value'] ?? '';
+                        $pData[$attr['field_key']] = $resolved;
                     }
                     $pStmt->close();
                     
@@ -335,7 +381,71 @@ final class TypstService
             $header .= "#let products = data.products\n";
         }
 
-        return $header;
+        return [
+            'header' => $header,
+            'safeData' => $safeData,
+        ];
+    }
+
+    /**
+     * Flatten key/value placeholders ({{key}}) for easy Typst authoring.
+     *
+     * @param array<string, mixed> $safeData
+     * @return array<string, string>
+     */
+    private function buildPlaceholderMap(array $safeData): array
+    {
+        $map = [];
+
+        foreach ($safeData['globals'] ?? [] as $key => $value) {
+            $map[$key] = $this->stringifyPlaceholderValue($value);
+        }
+
+        foreach ($safeData['metadata'] ?? [] as $key => $value) {
+            $map[$key] = $this->stringifyPlaceholderValue($value);
+        }
+
+        // Use first product's attributes for quick access (series page is product-centric).
+        $firstProduct = $safeData['products'][0] ?? null;
+        if (is_array($firstProduct)) {
+            foreach (($firstProduct['attributes'] ?? []) as $key => $value) {
+                $map[$key] = $this->stringifyPlaceholderValue($value);
+            }
+        }
+
+        return $map;
+    }
+
+    /**
+     * Replace {{key}} placeholders with concrete values prior to Typst compilation.
+     *
+     * @param array<string, string> $values
+     */
+    private function replacePlaceholders(string $typstCode, array $values): string
+    {
+        return (string) preg_replace_callback('/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/', function ($matches) use ($values) {
+            $key = $matches[1];
+            if (!array_key_exists($key, $values)) {
+                return $matches[0];
+            }
+            return $values[$key];
+        }, $typstCode);
+    }
+
+    /**
+     * Normalize placeholder values to strings.
+     *
+     * @param mixed $value
+     */
+    private function stringifyPlaceholderValue($value): string
+    {
+        if (is_bool($value)) {
+            return $value ? 'true' : 'false';
+        }
+        if (is_scalar($value) || $value === null) {
+            return (string) $value;
+        }
+        return json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: '';
     }
 
     /**
@@ -435,6 +545,67 @@ final class TypstService
             $suffix++;
         }
         return $candidate;
+    }
+
+    /**
+     * Resolve and stage asset paths (e.g., images) into the Typst build directory, returning a path Typst can load.
+     *
+     * @param mixed $value
+     */
+    private function resolveAssetPath($value, string $buildDir)
+    {
+        if (!is_string($value) || $value === '') {
+            return $value;
+        }
+
+        $normalized = str_replace('\\', '/', $value);
+        // Skip URLs
+        if (filter_var($normalized, FILTER_VALIDATE_URL)) {
+            return $normalized;
+        }
+
+        $projectRoot = realpath(__DIR__ . '/../../') ?: (__DIR__ . '/../../');
+        $candidates = [];
+
+        // Absolute path as-is
+        if (str_starts_with($normalized, '/')) {
+            $candidates[] = $normalized;
+        } elseif (preg_match('/^[A-Za-z]:\\//', $normalized) === 1) { // Windows absolute
+            $candidates[] = $normalized;
+        }
+
+        // Relative to project root, public, and storage/media
+        $candidates[] = $projectRoot . '/' . ltrim($normalized, '/');
+        $candidates[] = $projectRoot . '/public/' . ltrim($normalized, '/');
+        $candidates[] = $projectRoot . '/storage/media/' . ltrim($normalized, '/');
+        $candidates[] = $projectRoot . '/public/storage/' . ltrim($normalized, '/');
+
+        $sourcePath = null;
+        foreach ($candidates as $candidate) {
+            if (is_file($candidate)) {
+                $sourcePath = $candidate;
+                break;
+            }
+        }
+
+        if ($sourcePath === null) {
+            return $value;
+        }
+
+        $relativePath = ltrim(str_replace('\\', '/', $normalized), '/');
+        $destPath = $buildDir . '/' . $relativePath;
+
+        if (!isset($this->copiedAssets[$sourcePath])) {
+            $destDir = dirname($destPath);
+            if (!is_dir($destDir)) {
+                mkdir($destDir, 0777, true);
+            }
+            @copy($sourcePath, $destPath);
+            $this->copiedAssets[$sourcePath] = $destPath;
+        }
+
+        // Return a path Typst can read relative to the build directory.
+        return $relativePath;
     }
 
     // Variable CRUD methods...
@@ -550,20 +721,6 @@ final class TypstService
         if (filter_var($path, FILTER_VALIDATE_URL)) {
             return $path;
         }
-        $relativePath = ltrim(str_replace('\\', '/', $path), '/');
-        // Assuming path is absolute, we need to make it relative to public
-        // But here we stored absolute path in DB? LatexService did:
-        // $finalPdfPath = $storageDir . '/' . $finalPdfName;
-        // And buildPdfUrl did: $relativePath = ltrim(str_replace('\\', '/', $path), '/');
-        // This seems to assume $path is relative?
-        // Wait, LatexService: $finalPdfPath = $storageDir . '/' . $finalPdfName; (Absolute)
-        // Then buildPdfUrl: $relativePath = ltrim(str_replace('\\', '/', $path), '/');
-        // If path is "C:/.../public/storage/...", this doesn't make it a URL.
-        // It seems LatexService logic was a bit flawed or relied on $pdfUrlPrefix being absolute?
-        // Or maybe $path stored in DB was relative?
-        // LatexService: rename($pdfFile, $finalPdfPath); -> $finalPdfPath is Absolute.
-        // I will fix this in TypstService to return a proper URL.
-        
         // If path contains 'public', strip everything before it.
         // Simply use the prefix + basename, assuming all PDFs are in the configured directory.
         return $this->pdfUrlPrefix . '/' . basename($path);

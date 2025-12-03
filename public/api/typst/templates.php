@@ -27,11 +27,16 @@ try {
         $desc = (string)($input['description'] ?? '');
         $code = (string)($input['typst'] ?? '');
         $seriesId = isset($input['seriesId']) ? (int)$input['seriesId'] : null;
+        // Persist the compiled PDF path when Save PDF / Save & Compile sends it
+        $pdfPath = array_key_exists('lastPdfPath', $input) ? trim((string) $input['lastPdfPath']) : null;
+        if ($pdfPath === '') {
+            $pdfPath = null;
+        }
         
         if ($seriesId) {
-            $data = $service->createSeriesTemplate($seriesId, $title, $desc, $code);
+            $data = $service->createSeriesTemplate($seriesId, $title, $desc, $code, $pdfPath);
         } else {
-            $data = $service->createGlobalTemplate($title, $desc, $code);
+            $data = $service->createGlobalTemplate($title, $desc, $code, $pdfPath);
         }
         Response::success($data);
     } elseif ($method === 'PUT') {
@@ -41,11 +46,16 @@ try {
         $desc = (string)($input['description'] ?? '');
         $code = (string)($input['typst'] ?? '');
         $seriesId = isset($input['seriesId']) ? (int)$input['seriesId'] : null;
+        // Persist the compiled PDF path when Save PDF / Save & Compile sends it
+        $pdfPath = array_key_exists('lastPdfPath', $input) ? trim((string) $input['lastPdfPath']) : null;
+        if ($pdfPath === '') {
+            $pdfPath = null;
+        }
         
         if ($seriesId) {
-            $data = $service->updateSeriesTemplate($id, $seriesId, $title, $desc, $code);
+            $data = $service->updateSeriesTemplate($id, $seriesId, $title, $desc, $code, $pdfPath);
         } else {
-            $data = $service->updateGlobalTemplate($id, $title, $desc, $code);
+            $data = $service->updateGlobalTemplate($id, $title, $desc, $code, $pdfPath);
         }
         Response::success($data);
     } elseif ($method === 'DELETE') {
