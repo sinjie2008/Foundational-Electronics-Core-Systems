@@ -6,12 +6,18 @@
         templates: [],
         globalTemplates: [],
         selectedTemplateId: null,
+        lastGlobalTemplateId: null,
         lineNumberUpdater: null,
     };
 
-    document.addEventListener('DOMContentLoaded', init);
+    document.addEventListener('DOMContentLoaded', () => {
+        init().catch((error) => {
+            console.error('Failed to initialize page', error);
+            showStatus('danger', 'Initialization failed: ' + (error.message || 'Unknown error'));
+        });
+    });
 
-    function init() {
+    async function init() {
         const urlParams = new URLSearchParams(window.location.search);
         state.seriesId = urlParams.get('series_id');
 
@@ -27,7 +33,8 @@
 
         state.lineNumberUpdater = initLineNumberedEditor('latexSource');
         bindEvents();
-        loadTemplates();
+        await loadTemplates();
+        await fetchSeriesPreference();
     }
 
     /**
@@ -322,9 +329,17 @@
         $('#savePdfBtn').on('click', handleSavePdf);
         $('#downloadPdfBtn').on('click', handleDownloadPdf);
 
-        $('#loadTemplateBtn').on('click', function () {
+        $('#loadTemplateBtn').on('click', async function () {
             const id = $('#templateSelect').val();
-            if (id) loadTemplate(Number(id));
+            if (!id) {
+                showStatus('warning', 'Please select a global template to import.');
+                return;
+            }
+            const parsedId = Number(id);
+            const loaded = loadTemplate(parsedId);
+            if (loaded) {
+                await persistSeriesPreference(parsedId);
+            }
         });
     }
 
@@ -362,8 +377,69 @@
                     $('#downloadPdfBtn').data('url', seriesTemplate.downloadUrl);
                 }
             }
+
+            applyStoredPreferenceToSelect();
         } catch (error) {
             showStatus('danger', error.message || 'Failed to load templates.', error.correlationId);
+        }
+    }
+
+    /**
+     * Load the stored global template preference for this series from the server.
+     */
+    async function fetchSeriesPreference() {
+        try {
+            const { data } = await withLoading(() => requestJson(`api/typst/series-preferences.php?seriesId=${state.seriesId}`));
+            const prefId = data && Object.prototype.hasOwnProperty.call(data, 'lastGlobalTemplateId')
+                ? data.lastGlobalTemplateId
+                : null;
+            state.lastGlobalTemplateId = prefId === null ? null : Number(prefId);
+            applyStoredPreferenceToSelect(true);
+        } catch (error) {
+            console.error('Failed to load series preference', error);
+        }
+    }
+
+    /**
+     * Persist the last imported global template id for this series on the server.
+     */
+    async function persistSeriesPreference(templateId) {
+        state.lastGlobalTemplateId = templateId || null;
+        try {
+            await withLoading(() => requestJson('api/typst/series-preferences.php', {
+                method: 'PUT',
+                body: JSON.stringify({
+                    seriesId: state.seriesId,
+                    lastGlobalTemplateId: templateId || null,
+                })
+            }));
+        } catch (error) {
+            showStatus('warning', 'Failed to remember selected global template: ' + error.message, error.correlationId);
+        }
+    }
+
+    /**
+     * Apply the stored global template preference to the dropdown, clearing it when missing.
+     */
+    function applyStoredPreferenceToSelect(clearMissing = false) {
+        const select = $('#templateSelect');
+        if (!select.length) {
+            return;
+        }
+        const prefId = state.lastGlobalTemplateId;
+        if (!prefId) {
+            select.val('');
+            return;
+        }
+        const exists = state.globalTemplates.some((t) => t.id === prefId);
+        if (exists) {
+            select.val(String(prefId));
+        } else {
+            select.val('');
+            if (clearMissing) {
+                state.lastGlobalTemplateId = null;
+                persistSeriesPreference(null);
+            }
         }
     }
 
@@ -378,14 +454,17 @@
 
     function loadTemplate(id) {
         const template = state.globalTemplates.find((t) => t.id === id);
-        if (template) {
-            // Only load code into editor
-            $('#latexSource').val(template.typst || '');
-            if (typeof state.lineNumberUpdater === 'function') {
-                state.lineNumberUpdater();
-            }
-            // Do not overwrite Title/Desc as this is "Import"
+        if (!template) {
+            showStatus('warning', 'Selected global template could not be found.');
+            return false;
         }
+        // Only load code into editor
+        $('#latexSource').val(template.typst || '');
+        if (typeof state.lineNumberUpdater === 'function') {
+            state.lineNumberUpdater();
+        }
+        // Do not overwrite Title/Desc as this is "Import"
+        return true;
     }
 
     async function handleCompile() {

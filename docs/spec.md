@@ -61,7 +61,7 @@ graph LR
 ```
 
 ## Data Model
-- Core tables: `category` (tree of categories/series), `product` (linked to series), `series_custom_field` (field metadata, scope series/product attributes), `product_custom_field_value`, `latex_templates`/`latex_variables`, `typst_templates`/`typst_variables`.
+- Core tables: `category` (tree of categories/series), `product` (linked to series), `series_custom_field` (field metadata, scope series/product attributes), `product_custom_field_value`, `latex_templates`/`latex_variables`, `typst_templates`/`typst_variables`, `typst_series_preferences` (per-series Typst UI settings such as the last imported global template id).
 - Template audit fields: `typst_templates.last_pdf_path` and `typst_templates.last_pdf_generated_at` hold the most recent compiled PDF location/timestamp for both global and series templates to drive Save PDF/Download actions without recompile.
 - Files: generated PDFs in `public/storage/latex-pdfs` and `public/storage/typst-pdfs`; CSV imports in `storage/csv`.
 
@@ -129,6 +129,13 @@ erDiagram
         bool is_global
         int series_id
     }
+    typst_series_preferences {
+        int series_id
+        int last_global_template_id
+        datetime updated_at
+    }
+    typst_series_preferences ||--|| category : series_id
+    typst_series_preferences }o--|| typst_templates : last_global_template_id
 ```
 
 ## Key Processes
@@ -139,6 +146,7 @@ erDiagram
 - Series Typst variable palette: metadata badges insert `{{key}}` placeholders, and product attribute badges are grouped under a parent `products` wrapper; clicking the wrapper inserts a products loop scaffold, while individual custom-field badges insert `product.attributes.<key>` tokens (plus `product.sku` and `product.name` badges). Compile still replaces `{{key}}` placeholders for convenience and exposes the full `data` object (including `products`) for loop-based Typst code.
 - Operator navigation: a shared sidebar on each operator UI exposes Spec Search, Catalog UI, CSV tools, Global Typst Template, and Series Typst Template to avoid broken links (deprecated Global LaTeX link removed).
 - Template persistence: Typst templates track `last_pdf_path` and `last_pdf_generated_at` so Save PDF / Save & Compile flows can persist the most recent compiled artifact for series/global templates and enable download buttons without re-compiling.
+- Series Typst import preference: when an operator imports a global template on the series page, the selected global template id is stored in `typst_series_preferences` keyed by `series_id`; on page load, the UI pre-selects the stored global template if it still exists, otherwise it falls back to the placeholder without auto-importing.
 - Global Typst assets: file/image variables upload their binary payloads to `public/storage/typst-assets/` with unique, sanitized filenames (value stored as `typst-assets/<name>`). UI previews use the stored URL or data URI, and TypstService stages those assets into the build directory so `#image("{{key}}")` resolves to the actual file instead of a missing placeholder.
 
 ### Operator UI Navigation Map
@@ -277,6 +285,7 @@ TypstService.compileTypst(code, seriesId?):
 - 2025-12-03: Series Typst custom fields are displayed inside a `products` wrapper badge that inserts a loop scaffold; field badges inside the wrapper insert `product.attributes.<key>` tokens to encourage iterating product rows while keeping compilation compatible.
 - 2025-12-04: Global Typst Variables List must render keys as clickable badges; clicking inserts the Typst-safe `{{key}}` placeholder at the current caret, and compile must resolve the badge token to the stored global value (including staged asset paths) so PDF output reflects the latest globals.
 - 2025-12-05: Global Typst file/image variables must upload and persist the binary asset under `public/storage/typst-assets/` (value saved as `typst-assets/<filename>`), display a thumbnail in the Variables List, and ensure Typst compile uses the uploaded asset path (staged into the build directory) instead of an empty placeholder.
+- 2025-12-07: The Series Typst page must remember the last imported global template per series server-side; preferences live in `typst_series_preferences`, and the UI pre-selects the stored global template only when it still exists (otherwise the dropdown defaults to the placeholder without auto-importing).
 
 ## Key Processes (continued) and Constraints
 - CSV lifecycle: imports stored under `storage/csv`, catalog truncation locked via `config/app.php` token/lock key.

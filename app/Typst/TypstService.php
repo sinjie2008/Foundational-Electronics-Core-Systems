@@ -20,6 +20,7 @@ final class TypstService
     private string $assetStorageDir;
     /** @var array<string, string> */
     private array $copiedAssets = [];
+    private bool $seriesPreferencesEnsured = false;
 
     public function __construct(?mysqli $db = null)
     {
@@ -35,6 +36,27 @@ final class TypstService
         } else {
             $this->typstBinary = 'typst'; // Fallback to PATH
         }
+    }
+
+    /**
+     * Ensure the typst_series_preferences table exists for storing per-series UI preferences.
+     */
+    private function ensureSeriesPreferencesTable(): void
+    {
+        if ($this->seriesPreferencesEnsured) {
+            return;
+        }
+
+        $sql = "
+            CREATE TABLE IF NOT EXISTS typst_series_preferences (
+                series_id INT NOT NULL PRIMARY KEY,
+                last_global_template_id INT DEFAULT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                CONSTRAINT fk_series_pref_template FOREIGN KEY (last_global_template_id) REFERENCES typst_templates(id) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        ";
+        $this->db->query($sql);
+        $this->seriesPreferencesEnsured = true;
     }
 
     /**
@@ -147,6 +169,65 @@ final class TypstService
             $templates[] = $this->normalizeTemplateRow($row);
         }
         return $templates;
+    }
+
+    /**
+     * Get the stored global template preference for a series.
+     */
+    public function getSeriesPreference(int $seriesId): array
+    {
+        $this->ensureSeriesPreferencesTable();
+
+        $stmt = $this->db->prepare(
+            'SELECT last_global_template_id FROM typst_series_preferences WHERE series_id = ? LIMIT 1'
+        );
+        $stmt->bind_param('i', $seriesId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $row = $result->fetch_assoc();
+        $stmt->close();
+
+        $prefId = null;
+        if ($row && array_key_exists('last_global_template_id', $row) && $row['last_global_template_id'] !== null) {
+            $prefId = (int) $row['last_global_template_id'];
+        }
+
+        return [
+            'seriesId' => $seriesId,
+            'lastGlobalTemplateId' => $prefId,
+        ];
+    }
+
+    /**
+     * Persist the last imported global template selection for a series.
+     *
+     * @throws RuntimeException when the referenced global template does not exist
+     */
+    public function saveSeriesPreference(int $seriesId, ?int $lastGlobalTemplateId): array
+    {
+        if ($seriesId <= 0) {
+            throw new RuntimeException('Invalid series id.');
+        }
+
+        $this->ensureSeriesPreferencesTable();
+
+        if ($lastGlobalTemplateId !== null) {
+            $template = $this->getGlobalTemplate($lastGlobalTemplateId);
+            if ($template === null) {
+                throw new RuntimeException('Global template not found.');
+            }
+        }
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO typst_series_preferences (series_id, last_global_template_id, updated_at)
+             VALUES (?, ?, CURRENT_TIMESTAMP)
+             ON DUPLICATE KEY UPDATE last_global_template_id = VALUES(last_global_template_id), updated_at = CURRENT_TIMESTAMP'
+        );
+        $stmt->bind_param('ii', $seriesId, $lastGlobalTemplateId);
+        $stmt->execute();
+        $stmt->close();
+
+        return $this->getSeriesPreference($seriesId);
     }
 
     /**

@@ -2,6 +2,9 @@
 
 - Context reset (2025-12-04): reviewed prior Typst badge/navigation work, re-read latest docs/spec.md and docs/api.md, confirmed no open TODOs or dirty tasks before starting global badge UX change.
 - Context reset (2025-12-05): reviewed screenshot of missing global Typst image, re-read updated docs/spec.md and docs/api.md, noted no pending code tasks; environment synced locally and test data unchanged.
+- Context reset (2025-12-06): re-read docs/spec.md and docs/api.md for navigation expectations, confirmed prior Typst/nav tasks closed, no open TODOs, workspace clean; ready to remove sidebar nav from series Typst page.
+- Context reset (2025-12-06, later): revisited docs/spec.md and docs/api.md after sidebar removal, noted need to revert series Typst page back to shared sidebar pattern; no other changes pending.
+- Context reset (2025-12-07): re-read docs/spec.md and docs/api.md, noted new requirement to remember imported global template per series server-side; confirmed todolist closed tasks and no dirty workspaces before starting preference persistence work.
 
 ## Tasks
 1) **Update spec.md with architecture + diagrams** - Status: Done. Test approach: manual review plus optional check `if (-not (Select-String -Path .\docs\spec.md -Pattern '```mermaid' -Quiet)) { throw "docs/spec.md must contain Mermaid diagrams." }`.
@@ -31,3 +34,6 @@
 25) **Add upload pipeline for global Typst file/image variables (UI + API)** - Status: Done. Test approach: manual UI save with image recommended; executed `node --check public/assets/js/global-typst-templating.js` and `php -l public/api/typst/variables.php app/Typst/TypstService.php`.
 26) **Ensure Typst compile uses uploaded global assets (stage into build + placeholder map)** - Status: Done. Test approach: linted `app/Typst/TypstService.php`; manual compile in `global_typst_template.html` with `#image("{{key}}")` recommended to confirm PDF renders uploaded asset.
 27) **Fix global variables image cell layout (thumbnail above path) & relative preview URL** - Status: Done. Test approach: `node --check public/assets/js/global-typst-templating.js`; `php -l app/Typst/TypstService.php`; manual UI check to confirm thumbnail loads and path text sits beneath.
+28) **Remove sidebar navigation from series Typst page** - Status: Reverted. Test approach: superseded by task 29.
+29) **Restore sidebar navigation on series Typst page** - Status: Done. Test approach: manual UI check on `series_typst_template.html` verifying sidebar back and links match other operator UIs; no automated checks run.
+30) **Remember last imported global Typst template per series (server-side preference + UI pre-select)** - Status: Done. Test approach: `php -l` on new/changed Typst PHP files and preference API; `node --check public/assets/js/series-typst-templating.js`; manual UI check on `series_typst_template.html?series_id=<id>` verifying dropdown pre-selects stored global template when still available, persists selection on Import, and clears gracefully when template is missing.
