@@ -135,9 +135,11 @@ erDiagram
 - Catalog hierarchy/search: build tree from `category`, attach products; search by name/SKU.
 - Spec search: root/product category discovery, facet construction from custom fields, filtered product list.
 - Template compilation: fetch series metadata + products, substitute into LaTeX/Typst, compile via external binary, expose PDF URL; Typst data header sanitizes associative keys to Typst-safe identifiers (non-alphanumeric replaced with `_`, leading digits prefixed) and deduplicates collisions to prevent invalid variable names.
+- Global Typst variable palette: the Variables List renders each global key as a badge that inserts `{{typst_safe_key}}` at the caret in the editor; compile replaces these placeholders with the stored `globals` values (with asset paths staged into the Typst build dir).
 - Series Typst variable palette: metadata badges insert `{{key}}` placeholders, and product attribute badges are grouped under a parent `products` wrapper; clicking the wrapper inserts a products loop scaffold, while individual custom-field badges insert `product.attributes.<key>` tokens (plus `product.sku` and `product.name` badges). Compile still replaces `{{key}}` placeholders for convenience and exposes the full `data` object (including `products`) for loop-based Typst code.
 - Operator navigation: a shared sidebar on each operator UI exposes Spec Search, Catalog UI, CSV tools, Global Typst Template, and Series Typst Template to avoid broken links (deprecated Global LaTeX link removed).
 - Template persistence: Typst templates track `last_pdf_path` and `last_pdf_generated_at` so Save PDF / Save & Compile flows can persist the most recent compiled artifact for series/global templates and enable download buttons without re-compiling.
+- Global Typst assets: file/image variables upload their binary payloads to `public/storage/typst-assets/` with unique, sanitized filenames (value stored as `typst-assets/<name>`). UI previews use the stored URL or data URI, and TypstService stages those assets into the build directory so `#image("{{key}}")` resolves to the actual file instead of a missing placeholder.
 
 ### Operator UI Navigation Map
 ```mermaid
@@ -263,6 +265,7 @@ TypstService.compileTypst(code, seriesId?):
   header = generateDataHeader(seriesId)
     - inject globals, series metadata, and products
     - sanitize Typst keys (strip invalid chars, prefix leading digits, dedupe clashes)
+    - build placeholder map for {{typst_safe_key}} badges from globals/metadata/first product attrs
   write header + code to temp .typ file
   call typst.exe compile input output
   on success move PDF to public/storage/typst-pdfs, return URL/path; else throw RuntimeException
@@ -272,10 +275,12 @@ TypstService.compileTypst(code, seriesId?):
 - 2025-12-03: Save PDF on `series_typst_template.html` (and Save & Compile) must compile Typst and persist `last_pdf_path` + `last_pdf_generated_at` on the corresponding `typst_templates` row so operators can download the stored artifact without re-compiling.
 - 2025-12-03: Confirmed with developer that Series Typst metadata badges should show only the Typst-safe key and insert the corresponding `{{key}}` token into the editor so compiled PDFs pull actual series values even when original keys contain dots/spaces (compile replaces placeholders and keeps the structured `data` object available).
 - 2025-12-03: Series Typst custom fields are displayed inside a `products` wrapper badge that inserts a loop scaffold; field badges inside the wrapper insert `product.attributes.<key>` tokens to encourage iterating product rows while keeping compilation compatible.
+- 2025-12-04: Global Typst Variables List must render keys as clickable badges; clicking inserts the Typst-safe `{{key}}` placeholder at the current caret, and compile must resolve the badge token to the stored global value (including staged asset paths) so PDF output reflects the latest globals.
+- 2025-12-05: Global Typst file/image variables must upload and persist the binary asset under `public/storage/typst-assets/` (value saved as `typst-assets/<filename>`), display a thumbnail in the Variables List, and ensure Typst compile uses the uploaded asset path (staged into the build directory) instead of an empty placeholder.
 
 ## Key Processes (continued) and Constraints
 - CSV lifecycle: imports stored under `storage/csv`, catalog truncation locked via `config/app.php` token/lock key.
 - Logging: `App\Support\Logger` writes JSON lines to `storage/logs/app.log` with correlation ID per request.
 - Security baseline: validate/escape SQL inputs, forbid logging secrets/PII, generated PDFs publicly accessible under `public/storage`.
-- Editor UX: Typst/LaTeX template editors wrap `textarea#latexSource` with a line-numbered view (monospace, synchronized scroll) to simplify debugging and support copy/paste without losing positioning; the Series Typst page also exposes clickable badges that paste Typst-safe keys into the editor for rapid variable insertion.
+- Editor UX: Typst/LaTeX template editors wrap `textarea#latexSource` with a line-numbered view (monospace, synchronized scroll) to simplify debugging and support copy/paste without losing positioning; the Series Typst page also exposes clickable badges that paste Typst-safe keys into the editor for rapid variable insertion. Global Typst variables render in a Bootstrap 5 DataTable (Field Key / Field Type / Field Data + Actions); the Field Key cell is a badge that inserts `{{typst_safe_key}}` at the caret, while an Edit button opens the Variable Setup form without inserting anything, and an Add button clears the form for creating a new variable. File/Image variables show a thumbnail preview in the Field Data column, resolving stored paths under `public/` or `public/storage/` (and falling back to a data URI when only a physical path is available).
 - Saved Typst templates: table-level “PDF Download” triggers a fresh compile when no stored `downloadUrl` exists, then opens the generated PDF URL.

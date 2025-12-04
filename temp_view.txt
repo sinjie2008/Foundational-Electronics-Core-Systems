@@ -102,10 +102,7 @@
                         const previewSrc = row.previewUrl || row.previewDataUrl || data;
                         if (row.type === 'image' && previewSrc) {
                             const safeSrc = escapeHtml(previewSrc);
-                            return `<div class="d-flex flex-column align-items-start gap-1">
-                                <img src="${safeSrc}" alt="${safeText}" class="img-thumbnail" style="max-height:48px; max-width:80px;" loading="lazy">
-                                <span class="small text-muted text-break">${safeText}</span>
-                            </div>`;
+                            return `<div class="d-flex align-items-center gap-2"><img src="${safeSrc}" alt="${safeText}" class="img-thumbnail" style="max-height:48px; max-width:80px;" loading="lazy"><span class="small text-muted">${safeText}</span></div>`;
                         }
                         return safeText;
                     },
@@ -265,8 +262,7 @@
             const safeKey = makeUniqueTypstKey(sanitizeTypstKey(v.key), usedKeys);
             const typeLabel = v.type === 'image' ? 'File (Image)' : 'Text';
             const previewUrl = v.previewUrl || v.preview_url || null;
-            const previewDataUrl = v.previewDataUrl || v.preview_data_url || null;
-            return { ...v, safeKey, typeLabel, previewUrl, previewDataUrl };
+            return { ...v, safeKey, typeLabel, previewUrl };
         });
     }
 
@@ -404,7 +400,7 @@
             hint.setAttribute('data-file-hint', 'true');
             hint.textContent = state.selectedVarValue
                 ? `Current stored: ${state.selectedVarValue}`
-                : 'No file stored yet. Upload an image to store it under typst-assets for Typst usage.';
+                : 'No file stored yet. Selecting a file saves its name as the placeholder value.';
             container.append(hint);
         }
     }
@@ -413,41 +409,23 @@
         const key = ($('#varKey').val() || '').toString().trim();
         const type = $('#varType').val();
         const value = getVarDataValue(type);
-        const fileInput = document.getElementById('varData');
-        const hasFile = type === 'file' && fileInput && fileInput.files && fileInput.files[0];
 
         if (!key) {
             showStatus('warning', 'Please enter a field key.');
             return;
         }
-        if (type === 'file' && !hasFile && !value) {
-            showStatus('warning', 'Please choose an image or provide an existing path.');
-            return;
-        }
 
         try {
-            const requestOptions = { method: 'POST' };
-            if (hasFile) {
-                const formData = new FormData();
-                formData.append('key', key);
-                formData.append('type', 'file');
-                formData.append('value', value);
-                if (state.selectedVarId) {
-                    formData.append('id', state.selectedVarId);
-                }
-                formData.append('file', fileInput.files[0]);
-                requestOptions.body = formData;
-            } else {
-                requestOptions.body = JSON.stringify({
-                    id: state.selectedVarId,
-                    key,
-                    type,
-                    value,
-                });
-            }
-
             const { correlationId } = await withLoading(() =>
-                requestJson('api/typst/variables.php', requestOptions)
+                requestJson('api/typst/variables.php', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        id: state.selectedVarId,
+                        key,
+                        type,
+                        value,
+                    }),
+                })
             );
             showStatus('success', 'Variable saved.', correlationId);
             resetVarForm();
@@ -493,8 +471,6 @@
             type: v.type,
             typeLabel: v.typeLabel,
             value: v.value || '',
-            previewUrl: v.previewUrl || null,
-            previewDataUrl: v.previewDataUrl || null,
         }));
         state.variablesTable.clear().rows.add(rows).draw();
         highlightVariableRow(state.selectedVarId);
@@ -734,3 +710,4 @@
             '<p class="text-muted text-center mt-5">Preview will appear here.</p>';
     }
 })();
+

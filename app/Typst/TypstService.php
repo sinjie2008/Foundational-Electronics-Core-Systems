@@ -17,6 +17,7 @@ final class TypstService
     private mysqli $db;
     private string $pdfUrlPrefix;
     private string $typstBinary;
+    private string $assetStorageDir;
     /** @var array<string, string> */
     private array $copiedAssets = [];
 
@@ -25,6 +26,7 @@ final class TypstService
         $this->db = $db ?? Db::connection();
         $config = Config::get('app');
         $this->pdfUrlPrefix = rtrim((string) ($config['typst']['pdf_url_prefix'] ?? 'storage/typst-pdfs'), '/');
+        $this->assetStorageDir = rtrim(__DIR__ . '/../../public/storage/typst-assets', "/\\");
         
         // Determine Typst binary location
         $localBin = __DIR__ . '/../../bin/typst.exe';
@@ -239,6 +241,9 @@ final class TypstService
         $renderedTypst = $this->replacePlaceholders($typstCode, $placeholderValues);
         $fullSource = $dataHeader . "\n" . $renderedTypst;
 
+        // Stage inline assets referenced directly in the Typst code (e.g., #image("foo.png")).
+        $this->stageInlineAssets($renderedTypst, $buildDir);
+
         // 3. Save to Temp File
         $inputFile = $buildDir . '/' . $jobId . '.typ';
         file_put_contents($inputFile, $fullSource);
@@ -299,7 +304,7 @@ final class TypstService
         // Global Variables
         $globalVars = $this->listGlobalVariables();
         foreach ($globalVars as $var) {
-            $resolvedValue = $this->resolveAssetPath($var['value'], $buildDir);
+            $resolvedValue = $this->resolveAssetPath($var['value'], $buildDir, true);
             // Sanitize key to be a valid identifier if possible, or use a dictionary
             // Typst identifiers: letters, numbers, underscores, hyphens (but hyphens are minus)
             // Best to put them in a dictionary: #let globals = (...)
@@ -326,7 +331,7 @@ final class TypstService
                 
                 $data['metadata'] = [];
                 foreach ($seriesDetails['metadata'] ?? [] as $m) {
-                    $data['metadata'][$m['key']] = $this->resolveAssetPath($m['value'], $buildDir);
+                    $data['metadata'][$m['key']] = $this->resolveAssetPath($m['value'], $buildDir, true);
                 }
                 
                 $data['products'] = [];
@@ -355,7 +360,7 @@ final class TypstService
                     $pStmt->execute();
                     $attrs = $pStmt->get_result();
                     while ($attr = $attrs->fetch_assoc()) {
-                        $resolved = $this->resolveAssetPath($attr['value'] ?? '', $buildDir);
+                        $resolved = $this->resolveAssetPath($attr['value'] ?? '', $buildDir, true);
                         $pData['attributes'][$attr['field_key']] = $resolved;
                         // Also put at top level of product for easy access
                         $pData[$attr['field_key']] = $resolved;
@@ -414,6 +419,22 @@ final class TypstService
         }
 
         return $map;
+    }
+
+    /**
+     * Stage assets referenced directly in Typst code (e.g., #image("path")) into the build directory.
+     */
+    private function stageInlineAssets(string $typstCode, string $buildDir): void
+    {
+        if (trim($typstCode) === '') {
+            return;
+        }
+        $matches = [];
+        preg_match_all('/#image\\s*\\(\\s*"([^"]+)"/', $typstCode, $matches);
+        $paths = array_unique($matches[1] ?? []);
+        foreach ($paths as $path) {
+            $this->resolveAssetPath($path, $buildDir, true);
+        }
     }
 
     /**
@@ -552,7 +573,7 @@ final class TypstService
      *
      * @param mixed $value
      */
-    private function resolveAssetPath($value, string $buildDir)
+    private function resolveAssetPath($value, string $buildDir, bool $createPlaceholder = false)
     {
         if (!is_string($value) || $value === '') {
             return $value;
@@ -579,6 +600,7 @@ final class TypstService
         $candidates[] = $projectRoot . '/public/' . ltrim($normalized, '/');
         $candidates[] = $projectRoot . '/storage/media/' . ltrim($normalized, '/');
         $candidates[] = $projectRoot . '/public/storage/' . ltrim($normalized, '/');
+        $candidates[] = $projectRoot . '/storage/' . ltrim($normalized, '/');
 
         $sourcePath = null;
         foreach ($candidates as $candidate) {
@@ -589,6 +611,20 @@ final class TypstService
         }
 
         if ($sourcePath === null) {
+            // Create a placeholder image if requested to avoid compilation failures.
+            if ($createPlaceholder) {
+                $relativePath = ltrim($normalized, '/');
+                $destPath = $buildDir . '/' . $relativePath;
+                $destDir = dirname($destPath);
+                if (!is_dir($destDir)) {
+                    mkdir($destDir, 0777, true);
+                }
+                if (!is_file($destPath)) {
+                    $base64Png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+                    file_put_contents($destPath, base64_decode($base64Png));
+                }
+                return $relativePath;
+            }
             return $value;
         }
 
@@ -608,6 +644,47 @@ final class TypstService
         return $relativePath;
     }
 
+    /**
+     * Persist an uploaded image into the public Typst assets directory and return its relative path.
+     *
+     * @param array<string, mixed> $fileUpload
+     */
+    private function storeUploadedAsset(array $fileUpload): string
+    {
+        $error = (int) ($fileUpload['error'] ?? UPLOAD_ERR_NO_FILE);
+        if ($error !== UPLOAD_ERR_OK) {
+            throw new RuntimeException('File upload failed.');
+        }
+
+        $tmpPath = (string) ($fileUpload['tmp_name'] ?? '');
+        if ($tmpPath === '' || !is_uploaded_file($tmpPath)) {
+            throw new RuntimeException('Invalid upload payload.');
+        }
+
+        $imageInfo = @getimagesize($tmpPath);
+        if ($imageInfo === false) {
+            throw new RuntimeException('Uploaded file is not a valid image.');
+        }
+
+        $original = (string) ($fileUpload['name'] ?? 'upload');
+        $base = preg_replace('/[^A-Za-z0-9_-]/', '_', pathinfo($original, PATHINFO_FILENAME)) ?: 'asset';
+        $extension = strtolower((string) pathinfo($original, PATHINFO_EXTENSION));
+        $extension = $extension !== '' ? '.' . $extension : '';
+        $unique = str_replace('.', '_', uniqid('typst_', true));
+        $filename = $base . '_' . $unique . $extension;
+
+        if (!is_dir($this->assetStorageDir) && !mkdir($this->assetStorageDir, 0777, true) && !is_dir($this->assetStorageDir)) {
+            throw new RuntimeException('Unable to create asset storage directory.');
+        }
+
+        $destination = $this->assetStorageDir . '/' . $filename;
+        if (!move_uploaded_file($tmpPath, $destination)) {
+            throw new RuntimeException('Failed to store uploaded asset.');
+        }
+
+        return 'typst-assets/' . $filename;
+    }
+
     // Variable CRUD methods...
     public function listGlobalVariables(): array
     {
@@ -625,9 +702,23 @@ final class TypstService
         return $variables;
     }
 
-    public function saveGlobalVariable(string $key, string $inputType, string $value, ?int $id = null): ?array
+    /**
+     * Create or update a global variable and optionally persist an uploaded image asset.
+     *
+     * @param array<string, mixed>|null $fileUpload
+     */
+    public function saveGlobalVariable(string $key, string $inputType, string $value, ?int $id = null, ?array $fileUpload = null): ?array
     {
+        $key = trim($key);
         $normalizedType = $this->normalizeVariableType($inputType);
+        $valueToStore = $value;
+
+        if ($normalizedType === 'image' && $fileUpload !== null && ($fileUpload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
+            if ((int) ($fileUpload['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) {
+                throw new RuntimeException('File upload failed.');
+            }
+            $valueToStore = $this->storeUploadedAsset($fileUpload);
+        }
 
         if ($id) {
             $stmt = $this->db->prepare(
@@ -635,7 +726,7 @@ final class TypstService
                  SET field_key = ?, field_type = ?, field_value = ?, updated_at = CURRENT_TIMESTAMP
                  WHERE id = ? AND is_global = 1'
             );
-            $stmt->bind_param('sssi', $key, $normalizedType, $value, $id);
+            $stmt->bind_param('sssi', $key, $normalizedType, $valueToStore, $id);
             $stmt->execute();
             return $this->getGlobalVariable($id);
         }
@@ -644,7 +735,7 @@ final class TypstService
             'INSERT INTO typst_variables (field_key, field_type, field_value, is_global, series_id)
              VALUES (?, ?, ?, 1, NULL)'
         );
-        $stmt->bind_param('sss', $key, $normalizedType, $value);
+        $stmt->bind_param('sss', $key, $normalizedType, $valueToStore);
         $stmt->execute();
 
         return $this->getGlobalVariable((int) $this->db->insert_id);
@@ -692,11 +783,14 @@ final class TypstService
 
     private function normalizeVariableRow(array $row): array
     {
+        $preview = $this->buildAssetPreview((string) ($row['field_value'] ?? ''));
         return [
             'id' => (int) $row['id'],
             'key' => (string) $row['field_key'],
             'type' => (string) $row['field_type'],
             'value' => $row['field_value'] ?? '',
+            'previewUrl' => $preview['url'],
+            'previewDataUrl' => $preview['dataUri'],
             'isGlobal' => (bool) $row['is_global'],
             'seriesId' => isset($row['series_id']) ? (int) $row['series_id'] : null,
             'createdAt' => $row['created_at'] ?? null,
@@ -724,6 +818,86 @@ final class TypstService
         // If path contains 'public', strip everything before it.
         // Simply use the prefix + basename, assuming all PDFs are in the configured directory.
         return $this->pdfUrlPrefix . '/' . basename($path);
+    }
+
+    /**
+     * Attempt to convert a stored file/image path into a web-accessible URL or data URI for previews.
+     *
+     * @return array{url: string|null, dataUri: string|null}
+     */
+    private function buildAssetPreview(string $value): array
+    {
+        if ($value === '') {
+            return ['url' => null, 'dataUri' => null];
+        }
+
+        // If already a URL, return as-is.
+        if (filter_var($value, FILTER_VALIDATE_URL)) {
+            return ['url' => $value, 'dataUri' => null];
+        }
+
+        $normalized = str_replace('\\', '/', $value);
+        $projectRoot = realpath(__DIR__ . '/../../') ?: (__DIR__ . '/../../');
+        $publicRoot = realpath(__DIR__ . '/../../public') ?: (__DIR__ . '/../../public');
+
+        $candidates = [];
+
+        // Absolute path as-is
+        if (str_starts_with($normalized, '/')) {
+            $candidates[] = $normalized;
+        } elseif (preg_match('/^[A-Za-z]:\\//', $normalized) === 1) { // Windows absolute
+            $candidates[] = $normalized;
+        }
+
+        // Relative paths to try
+        $candidates[] = $projectRoot . '/' . ltrim($normalized, '/');
+        $candidates[] = $publicRoot . '/' . ltrim($normalized, '/');
+        $candidates[] = $publicRoot . '/storage/' . ltrim($normalized, '/');
+        $candidates[] = $projectRoot . '/storage/' . ltrim($normalized, '/');
+        $candidates[] = $projectRoot . '/storage/media/' . ltrim($normalized, '/');
+
+        foreach ($candidates as $candidate) {
+            $real = realpath($candidate);
+            if ($real === false || !is_file($real)) {
+                continue;
+            }
+            $real = str_replace('\\', '/', $real);
+            $publicRootNorm = str_replace('\\', '/', $publicRoot);
+            if (str_starts_with($real, $publicRootNorm)) {
+                $relative = ltrim(substr($real, strlen($publicRootNorm)), '/');
+                $webPath = ltrim($relative, '/');
+                return ['url' => $webPath === '' ? null : $webPath, 'dataUri' => null];
+            }
+
+            // Not under public, fall back to data URI (limit size to avoid huge payloads).
+            $dataUri = $this->fileToDataUri($real, 1024 * 1024); // 1MB cap
+            if ($dataUri !== null) {
+                return ['url' => null, 'dataUri' => $dataUri];
+            }
+        }
+
+        // Last resort: treat value as relative URL
+        $fallback = ltrim($normalized, '/');
+        return ['url' => $fallback === '' ? null : $fallback, 'dataUri' => null];
+    }
+
+    /**
+     * Convert a file into a data URI if size within limit.
+     */
+    private function fileToDataUri(string $path, int $maxBytes): ?string
+    {
+        if (!is_file($path) || filesize($path) === false || filesize($path) > $maxBytes) {
+            return null;
+        }
+        $mime = function_exists('mime_content_type') ? @mime_content_type($path) : 'application/octet-stream';
+        if ($mime === false || $mime === '') {
+            $mime = 'application/octet-stream';
+        }
+        $contents = @file_get_contents($path);
+        if ($contents === false) {
+            return null;
+        }
+        return 'data:' . $mime . ';base64,' . base64_encode($contents);
     }
 
     /**
