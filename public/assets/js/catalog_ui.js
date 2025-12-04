@@ -89,10 +89,10 @@ class CatalogUI {
             truncateModalError: '#truncate-modal-error',
             truncateAuditTable: '#truncate-audit-table',
             hierarchySearch: '#hierarchy-search',
-            enableLatexTemplating: '#enableLatexTemplating',
-            latexTemplatingControl: '#latex-templating-control',
-            latexTemplatingLinkContainer: '#latex-templating-link-container',
-            latexTemplatingLink: '#latex-templating-link',
+            enableTypstTemplating: '#enableTypstTemplating',
+            typstTemplatingControl: '#typst-templating-control',
+            typstTemplatingLinkContainer: '#typst-templating-link-container',
+            typstTemplatingLink: '#typst-templating-link',
         };
 
         // Map logical sections to their scoped status banners.
@@ -453,6 +453,18 @@ class CatalogUI {
                 action
             );
 
+        const putJson = (action, payload = {}) =>
+            toPromise(
+                $.ajax({
+                    url: `${apiBase}?action=${encodeURIComponent(action)}`,
+                    method: 'PUT',
+                    contentType: 'application/json',
+                    dataType: 'json',
+                    data: JSON.stringify(payload),
+                }),
+                action
+            );
+
         const postMultipart = (action, formData) =>
             toPromise(
                 $.ajax({
@@ -572,6 +584,12 @@ class CatalogUI {
                     type: node.type ?? node.Type ?? 'category',
                     parentId: node.parentId ?? node.parent_id ?? parentId,
                     displayOrder: node.displayOrder ?? node.display_order ?? 0,
+                    typstTemplatingEnabled: Boolean(
+                        node.typstTemplatingEnabled ??
+                        node.typst_templating_enabled ??
+                        node.latex_templating_enabled ??
+                        false
+                    ),
                     children: Array.isArray(node.children) ? node.children : [],
                 };
                 state.nodeIndex.set(normalized.id, normalized);
@@ -674,6 +692,55 @@ class CatalogUI {
             $el('seriesManagement').prop('hidden', true);
         };
 
+        // Maintain the Typst templating toggle/link state for the selected series.
+        const applyTypstTemplatingState = (enabled) => {
+            const isEnabled = Boolean(enabled);
+            $el('enableTypstTemplating').prop('checked', isEnabled);
+            updateTypstTemplatingLink(isEnabled);
+        };
+
+        const updateTypstTemplatingLink = (enabled) => {
+            const linkContainer = $el('typstTemplatingLinkContainer');
+            const link = $el('typstTemplatingLink');
+            if (!enabled) {
+                linkContainer.addClass('d-none');
+                return;
+            }
+            const node = state.nodeIndex.get(state.selectedNodeId);
+            if (node && node.type === 'series') {
+                const url = `series_typst_template.html?series_id=${node.id}`;
+                link.attr('href', url);
+                link.text('Open Series Typst Template');
+                linkContainer.removeClass('d-none');
+            } else {
+                linkContainer.addClass('d-none');
+            }
+        };
+
+        const setTypstTemplatingFlagOnNode = (nodeId, enabled) => {
+            const node = state.nodeIndex.get(nodeId);
+            if (node) {
+                node.typstTemplatingEnabled = enabled;
+                state.nodeIndex.set(nodeId, node);
+            }
+            const updateTree = (nodes) => {
+                if (!Array.isArray(nodes)) {
+                    return;
+                }
+                nodes.forEach((child) => {
+                    if (Number(child.id) === Number(nodeId)) {
+                        child.typstTemplatingEnabled = enabled;
+                        child.typst_templating_enabled = enabled;
+                        child.latex_templating_enabled = enabled;
+                    }
+                    if (Array.isArray(child.children)) {
+                        updateTree(child.children);
+                    }
+                });
+            };
+            updateTree(state.hierarchy);
+        };
+
         const selectNode = (nodeId) => {
             if (!state.nodeIndex.has(nodeId)) {
                 state.selectedNodeId = null;
@@ -692,18 +759,21 @@ class CatalogUI {
                 $el('updateNodeIdText').text('None');
                 $el('updateNodeParentId').text('N/A');
                 $el('updateNodeTypeText').text('N/A');
-                $el('updateNodeTypeValue').val('');
-                $el('updateNodeName').val('');
-                $el('updateNodeDisplayOrder').val('0');
-                $el('nodeDeleteButton').prop('disabled', true);
-                resetSeriesUI();
-                return;
-            }
+            $el('updateNodeTypeValue').val('');
+            $el('updateNodeName').val('');
+            $el('updateNodeDisplayOrder').val('0');
+            $el('nodeDeleteButton').prop('disabled', true);
+            applyTypstTemplatingState(false);
+            $el('typstTemplatingControl').addClass('d-none');
+            $el('typstTemplatingLinkContainer').addClass('d-none');
+            resetSeriesUI();
+            return;
+        }
 
-            const parentLabel =
-                node.parentId === null || node.parentId === undefined
-                    ? '(root)'
-                    : node.parentId;
+        const parentLabel =
+            node.parentId === null || node.parentId === undefined
+                ? '(root)'
+                : node.parentId;
 
             const info = [
                 `ID: ${node.id}`,
@@ -722,16 +792,16 @@ class CatalogUI {
             $el('updateNodeDisplayOrder').val(node.displayOrder);
             $el('nodeDeleteButton').prop('disabled', false);
 
-            if (node.type === 'series') {
-                $el('seriesManagement').prop('hidden', false);
-                $el('latexTemplatingControl').removeClass('d-none');
-                $el('enableLatexTemplating').prop('checked', false);
-                $el('latexTemplatingLinkContainer').addClass('d-none');
-                loadSeriesContext(node.id);
-            } else {
-                $el('latexTemplatingControl').addClass('d-none');
-                resetSeriesUI();
-            }
+        if (node.type === 'series') {
+            $el('seriesManagement').prop('hidden', false);
+            $el('typstTemplatingControl').removeClass('d-none');
+            applyTypstTemplatingState(Boolean(node.typstTemplatingEnabled));
+            loadSeriesContext(node.id);
+        } else {
+            applyTypstTemplatingState(false);
+            $el('typstTemplatingControl').addClass('d-none');
+            resetSeriesUI();
+        }
         };
 
         const loadHierarchy = async (options = {}) => {
@@ -1641,22 +1711,51 @@ class CatalogUI {
                 }
             });
 
-            $el('enableLatexTemplating').on('change', function () {
-                const isChecked = $(this).is(':checked');
-                const linkContainer = $el('latexTemplatingLinkContainer');
-                const link = $el('latexTemplatingLink');
-
-                if (isChecked && state.selectedNodeId) {
-                    const node = state.nodeIndex.get(state.selectedNodeId);
-                    if (node && node.type === 'series') {
-                        // Update link href
-                        const url = `series_typst_template.html?series_id=${node.id}`;
-                        link.attr('href', url);
-                        link.text('Open Series Typst Template');
-                        linkContainer.removeClass('d-none');
+            $el('enableTypstTemplating').on('change', async function () {
+                if (!state.selectedNodeId) {
+                    setStatus('catalog', 'Select a series first.', true);
+                    applyTypstTemplatingState(false);
+                    return;
+                }
+                const node = state.nodeIndex.get(state.selectedNodeId);
+                if (!node || node.type !== 'series') {
+                    setStatus('catalog', 'Select a series first.', true);
+                    applyTypstTemplatingState(false);
+                    return;
+                }
+                const desiredState = $(this).is(':checked');
+                const previousState = Boolean(node.typstTemplatingEnabled);
+                $el('enableTypstTemplating').prop('disabled', true);
+                try {
+                    const response = await putJson('v1.setSeriesTypstTemplating', {
+                        seriesId: state.selectedNodeId,
+                        enabled: desiredState,
+                    });
+                    if (!response.success) {
+                        handleErrorResponse(response, 'catalog');
+                        setTypstTemplatingFlagOnNode(node.id, previousState);
+                        applyTypstTemplatingState(previousState);
+                        return;
                     }
-                } else {
-                    linkContainer.addClass('d-none');
+                    const enabled = Boolean(
+                        response.data?.typstTemplatingEnabled ?? desiredState
+                    );
+                    setTypstTemplatingFlagOnNode(node.id, enabled);
+                    applyTypstTemplatingState(enabled);
+                    setStatus(
+                        'catalog',
+                        enabled
+                            ? 'Typst templating enabled for this series.'
+                            : 'Typst templating disabled for this series.',
+                        false
+                    );
+                } catch (error) {
+                    console.error(error);
+                    setStatusWithError('catalog', 'Failed to update Typst templating.', error);
+                    setTypstTemplatingFlagOnNode(node.id, previousState);
+                    applyTypstTemplatingState(previousState);
+                } finally {
+                    $el('enableTypstTemplating').prop('disabled', false);
                 }
             });
 

@@ -5,6 +5,7 @@
 - Context reset (2025-12-06): re-read docs/spec.md and docs/api.md for navigation expectations, confirmed prior Typst/nav tasks closed, no open TODOs, workspace clean; ready to remove sidebar nav from series Typst page.
 - Context reset (2025-12-06, later): revisited docs/spec.md and docs/api.md after sidebar removal, noted need to revert series Typst page back to shared sidebar pattern; no other changes pending.
 - Context reset (2025-12-07): re-read docs/spec.md and docs/api.md, noted new requirement to remember imported global template per series server-side; confirmed todolist closed tasks and no dirty workspaces before starting preference persistence work.
+- Context reset (2025-12-04 - latex toggle persistence): re-read docs/spec.md and docs/api.md, noted new requirement to persist the Catalog UI Latex Templating toggle per series; no open TODOs carried over, workspace clean, test data unchanged.
 
 ## Tasks
 1) **Update spec.md with architecture + diagrams** - Status: Done. Test approach: manual review plus optional check `if (-not (Select-String -Path .\docs\spec.md -Pattern '```mermaid' -Quiet)) { throw "docs/spec.md must contain Mermaid diagrams." }`.
@@ -37,3 +38,6 @@
 28) **Remove sidebar navigation from series Typst page** - Status: Reverted. Test approach: superseded by task 29.
 29) **Restore sidebar navigation on series Typst page** - Status: Done. Test approach: manual UI check on `series_typst_template.html` verifying sidebar back and links match other operator UIs; no automated checks run.
 30) **Remember last imported global Typst template per series (server-side preference + UI pre-select)** - Status: Done. Test approach: `php -l` on new/changed Typst PHP files and preference API; `node --check public/assets/js/series-typst-templating.js`; manual UI check on `series_typst_template.html?series_id=<id>` verifying dropdown pre-selects stored global template when still available, persists selection on Import, and clears gracefully when template is missing.
+31) **Document latex templating enablement persistence (spec/api)** - Status: Done. Test approach: manual doc review to confirm spec.md data model/ER and docs/api.md Catalog section describe the latex templating flag and persistence flow.
+32) **Persist Typst templating flag per series (schema + API)** - Status: Done. Test approach: `php -l catalog.php app/Catalog/CatalogService.php`; manual API check recommended to ensure hierarchy/set endpoints return the stored flag.
+33) **Wire catalog UI toggle to stored Typst templating flag** - Status: Done. Test approach: `node --check public/assets/js/catalog_ui.js`; manual UI toggle on `catalog_ui.html` to ensure state persists across reloads after enable/disable.

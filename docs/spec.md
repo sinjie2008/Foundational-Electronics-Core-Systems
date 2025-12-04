@@ -1,4 +1,4 @@
-# Repository Specification
+﻿# Repository Specification
 
 ## Architecture and Technology Choices
 - PHP 8 style procedural endpoints backed by small service classes (`app/*`) for catalog traversal, spec search facets/products, and document templating (LaTeX/Typst); chosen for rapid iteration with minimal framework overhead.
@@ -62,6 +62,7 @@ graph LR
 
 ## Data Model
 - Core tables: `category` (tree of categories/series), `product` (linked to series), `series_custom_field` (field metadata, scope series/product attributes), `product_custom_field_value`, `latex_templates`/`latex_variables`, `typst_templates`/`typst_variables`, `typst_series_preferences` (per-series Typst UI settings such as the last imported global template id).
+- Series-level Typst toggle: `category.typst_templating_enabled` (TINYINT(1) default 0, migrated from legacy `latex_templating_enabled` when present) remembers whether the Catalog UI “Enable Typst Templating” switch was turned on for that series so the UI can surface the Typst template link without re-toggling.
 - Template audit fields: `typst_templates.last_pdf_path` and `typst_templates.last_pdf_generated_at` hold the most recent compiled PDF location/timestamp for both global and series templates to drive Save PDF/Download actions without recompile.
 - Files: generated PDFs in `public/storage/latex-pdfs` and `public/storage/typst-pdfs`; CSV imports in `storage/csv`.
 
@@ -78,6 +79,7 @@ erDiagram
         int parent_id
         string name
         string type
+        bool typst_templating_enabled
     }
     product {
         int id
@@ -148,6 +150,7 @@ erDiagram
 - Template persistence: Typst templates track `last_pdf_path` and `last_pdf_generated_at` so Save PDF / Save & Compile flows can persist the most recent compiled artifact for series/global templates and enable download buttons without re-compiling.
 - Series Typst import preference: when an operator imports a global template on the series page, the selected global template id is stored in `typst_series_preferences` keyed by `series_id`; on page load, the UI pre-selects the stored global template if it still exists, otherwise it falls back to the placeholder without auto-importing.
 - Global Typst assets: file/image variables upload their binary payloads to `public/storage/typst-assets/` with unique, sanitized filenames (value stored as `typst-assets/<name>`). UI previews use the stored URL or data URI, and TypstService stages those assets into the build directory so `#image("{{key}}")` resolves to the actual file instead of a missing placeholder.
+- Catalog Typst templating toggle: toggling “Enable Typst Templating” on a series writes `category.typst_templating_enabled = 1` for that series (and syncs forward from legacy `latex_templating_enabled` if present); hierarchy/series selection reads the flag to pre-check the switch and show the Typst template link without re-toggling.
 
 ### Operator UI Navigation Map
 ```mermaid
@@ -286,10 +289,11 @@ TypstService.compileTypst(code, seriesId?):
 - 2025-12-04: Global Typst Variables List must render keys as clickable badges; clicking inserts the Typst-safe `{{key}}` placeholder at the current caret, and compile must resolve the badge token to the stored global value (including staged asset paths) so PDF output reflects the latest globals.
 - 2025-12-05: Global Typst file/image variables must upload and persist the binary asset under `public/storage/typst-assets/` (value saved as `typst-assets/<filename>`), display a thumbnail in the Variables List, and ensure Typst compile uses the uploaded asset path (staged into the build directory) instead of an empty placeholder.
 - 2025-12-07: The Series Typst page must remember the last imported global template per series server-side; preferences live in `typst_series_preferences`, and the UI pre-selects the stored global template only when it still exists (otherwise the dropdown defaults to the placeholder without auto-importing).
+- 2025-12-04: Catalog UI “Enable Typst Templating” switch must persist per series via `category.typst_templating_enabled` (migrated from `latex_templating_enabled` when present); hierarchy payloads should surface the stored flag so operators see prior enablement without re-clicking the toggle.
 
 ## Key Processes (continued) and Constraints
 - CSV lifecycle: imports stored under `storage/csv`, catalog truncation locked via `config/app.php` token/lock key.
 - Logging: `App\Support\Logger` writes JSON lines to `storage/logs/app.log` with correlation ID per request.
 - Security baseline: validate/escape SQL inputs, forbid logging secrets/PII, generated PDFs publicly accessible under `public/storage`.
 - Editor UX: Typst/LaTeX template editors wrap `textarea#latexSource` with a line-numbered view (monospace, synchronized scroll) to simplify debugging and support copy/paste without losing positioning; the Series Typst page also exposes clickable badges that paste Typst-safe keys into the editor for rapid variable insertion. Global Typst variables render in a Bootstrap 5 DataTable (Field Key / Field Type / Field Data + Actions); the Field Key cell is a badge that inserts `{{typst_safe_key}}` at the caret, while an Edit button opens the Variable Setup form without inserting anything, and an Add button clears the form for creating a new variable. File/Image variables show a thumbnail preview in the Field Data column, resolving stored paths under `public/` or `public/storage/` (and falling back to a data URI when only a physical path is available).
-- Saved Typst templates: table-level “PDF Download” triggers a fresh compile when no stored `downloadUrl` exists, then opens the generated PDF URL.
+- Saved Typst templates: table-level ΓÇ£PDF DownloadΓÇ¥ triggers a fresh compile when no stored `downloadUrl` exists, then opens the generated PDF URL.

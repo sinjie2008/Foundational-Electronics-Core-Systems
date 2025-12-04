@@ -8,14 +8,15 @@
 - Status codes: `200 OK`, `201 Created`, `400 Bad Request`, `404 Not Found`, `405 Method Not Allowed`, `500 Internal Error`.
 
 ## Catalog
-- `GET /api/catalog/hierarchy.php` — return nested category → series → products tree.
-- `GET /api/catalog/search.php?query=term` — flat matches across categories/series/products.
-- `POST /api/catalog/csv-import.php` — upload/import catalog CSV; writes audit trail under `storage/csv`.
-- `GET /api/catalog/csv-download.php?id=timestamp` — download stored CSV by identifier.
-- `POST /api/catalog/csv-restore.php` — restore catalog from prior CSV.
-- `GET /api/catalog/csv-history.php` — list CSV import history.
-- `POST /api/catalog/truncate.php` — truncate catalog tables (guarded by token/lock in `config/app.php`).
-- `GET /api/catalog/pdf.php?series_id=ID&template_id=ID` — generate LaTeX PDF for a series.
+- `GET /api/catalog/hierarchy.php` - return nested category + series + products tree (series nodes include `typst_templating_enabled` for the Catalog UI toggle).
+- `GET /api/catalog/search.php?query=term` - flat matches across categories/series/products.
+- `POST /api/catalog/csv-import.php` - upload/import catalog CSV; writes audit trail under `storage/csv`.
+- `GET /api/catalog/csv-download.php?id=timestamp` - download stored CSV by identifier.
+- `POST /api/catalog/csv-restore.php` - restore catalog from prior CSV.
+- `GET /api/catalog/csv-history.php` - list CSV import history.
+- `POST /api/catalog/truncate.php` - truncate catalog tables (guarded by token/lock in `config/app.php`).
+- `GET /api/catalog/pdf.php?series_id=ID&template_id=ID` - generate LaTeX PDF for a series.
+- `PUT /catalog.php?action=v1.setSeriesTypstTemplating` - body `{ "seriesId": ID, "enabled": true|false }`; persists `category.typst_templating_enabled` for that series (migrating from legacy `latex_templating_enabled` when present) and returns `{ "seriesId": ID, "typstTemplatingEnabled": bool }` (404 if series missing or not a series).
 
 Example:
 ```http

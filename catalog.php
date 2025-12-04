@@ -629,6 +629,7 @@ final class Seeder
                 parent_id INT NULL,
                 name VARCHAR(255) NOT NULL,
                 type ENUM('category', 'series') NOT NULL DEFAULT 'category',
+                typst_templating_enabled TINYINT(1) NOT NULL DEFAULT 0,
                 display_order INT NOT NULL DEFAULT 0,
                 created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -718,6 +719,7 @@ final class Seeder
             $this->connection->query($statement);
         }
 
+        $this->ensureTypstTemplatingColumn();
         $this->ensureColumnExists(
             'series_custom_field',
             'field_scope',
@@ -1154,6 +1156,35 @@ final class Seeder
     }
 
     /**
+     * Ensures typst templating flag column exists and migrates legacy latex flag when present.
+     */
+    private function ensureTypstTemplatingColumn(): void
+    {
+        $this->ensureColumnExists(
+            'category',
+            'typst_templating_enabled',
+            "typst_templating_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER type"
+        );
+
+        $stmt = $this->connection->prepare(
+            'SELECT COUNT(1) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+        );
+        $table = 'category';
+        $legacyColumn = 'latex_templating_enabled';
+        $stmt->bind_param('ss', $table, $legacyColumn);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $legacyCount = (int) ($result->fetch_row()[0] ?? 0);
+        $stmt->close();
+
+        if ($legacyCount > 0) {
+            $this->connection->query(
+                'UPDATE category SET typst_templating_enabled = latex_templating_enabled WHERE typst_templating_enabled IS NULL OR typst_templating_enabled = 0'
+            );
+        }
+    }
+
+    /**
      * @return array<int, array<string, mixed>>
      */
     private function getSeedTree(): array
@@ -1326,6 +1357,7 @@ final class HierarchyService
      */
     public function listHierarchy(): array
     {
+        $this->ensureTypstTemplatingColumn();
         $tree = $this->buildHierarchyTree();
 
         /**
@@ -1345,6 +1377,7 @@ final class HierarchyService
                 'type' => $node['type'],
                 'displayOrder' => $node['displayOrder'],
                 'parentId' => $node['parentId'],
+                'typstTemplatingEnabled' => (bool) ($node['typstTemplatingEnabled'] ?? false),
                 'children' => $children,
             ];
         };
@@ -1496,7 +1529,7 @@ final class HierarchyService
     private function buildHierarchyTree(): array
     {
         $result = $this->connection->query(
-            'SELECT id, parent_id, name, type, display_order FROM category ORDER BY display_order, id'
+            'SELECT id, parent_id, name, type, display_order, typst_templating_enabled, latex_templating_enabled FROM category ORDER BY display_order, id'
         );
 
         /** @var array<int, array<string, mixed>> $nodes */
@@ -1514,6 +1547,7 @@ final class HierarchyService
                 'type' => (string) $row['type'],
                 'displayOrder' => (int) $row['display_order'],
                 'parentId' => $parentId,
+                'typstTemplatingEnabled' => ((int) ($row['typst_templating_enabled'] ?? $row['latex_templating_enabled'] ?? 0)) === 1,
                 'children' => [],
             ];
             $nodes[$id] = $node;
@@ -1555,7 +1589,7 @@ final class HierarchyService
     private function loadCategory(int $nodeId): ?array
     {
         $stmt = $this->connection->prepare(
-            'SELECT id, parent_id, name, type, display_order FROM category WHERE id = ? LIMIT 1'
+            'SELECT id, parent_id, name, type, display_order, typst_templating_enabled, latex_templating_enabled FROM category WHERE id = ? LIMIT 1'
         );
         $stmt->bind_param('i', $nodeId);
         $stmt->execute();
@@ -1573,6 +1607,8 @@ final class HierarchyService
             'name' => (string) $row['name'],
             'type' => (string) $row['type'],
             'display_order' => (int) $row['display_order'],
+            'typst_templating_enabled' => (int) ($row['typst_templating_enabled'] ?? $row['latex_templating_enabled'] ?? 0),
+            'latex_templating_enabled' => (int) ($row['latex_templating_enabled'] ?? 0),
         ];
     }
 
@@ -1603,6 +1639,71 @@ final class HierarchyService
         $stmt->close();
 
         return $newId;
+    }
+
+    /**
+     * Persists the Latex templating toggle for a series.
+     */
+    public function setTypstTemplatingEnabled(int $seriesId, bool $enabled): array
+    {
+        $this->ensureTypstTemplatingColumn();
+        $series = $this->loadCategory($seriesId);
+        if ($series === null || ($series['type'] ?? '') !== 'series') {
+            throw new CatalogApiException('SERIES_NOT_FOUND', 'Series not found.', 404);
+        }
+
+        $flag = $enabled ? 1 : 0;
+        $stmt = $this->connection->prepare(
+            "UPDATE category SET typst_templating_enabled = ?, latex_templating_enabled = ? WHERE id = ? AND type = 'series'"
+        );
+        $stmt->bind_param('iii', $flag, $flag, $seriesId);
+        $stmt->execute();
+        $stmt->close();
+
+        $updated = $this->loadCategory($seriesId);
+
+        return [
+            'seriesId' => $seriesId,
+            'typstTemplatingEnabled' => $updated
+                ? ((int) ($updated['typst_templating_enabled'] ?? $flag)) === 1
+                : $enabled,
+        ];
+    }
+
+    private function ensureTypstTemplatingColumn(): void
+    {
+        // Add typst column when missing.
+        $stmt = $this->connection->prepare(
+            'SELECT COUNT(1) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+        );
+        $table = 'category';
+        $column = 'typst_templating_enabled';
+        $stmt->bind_param('ss', $table, $column);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $count = (int) ($result->fetch_row()[0] ?? 0);
+        $stmt->close();
+
+        if ($count === 0) {
+            $this->connection->query(
+                "ALTER TABLE category ADD COLUMN typst_templating_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER type"
+            );
+        }
+        // If legacy latex column exists, keep it in sync to preserve prior data.
+        $stmt = $this->connection->prepare(
+            'SELECT COUNT(1) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+        );
+        $legacyColumn = 'latex_templating_enabled';
+        $stmt->bind_param('ss', $table, $legacyColumn);
+        $stmt->execute();
+        $legacyResult = $stmt->get_result();
+        $legacyCount = (int) ($legacyResult->fetch_row()[0] ?? 0);
+        $stmt->close();
+        if ($legacyCount > 0) {
+            $this->connection->query(
+                'UPDATE category SET typst_templating_enabled = latex_templating_enabled WHERE typst_templating_enabled IS NULL OR typst_templating_enabled = 0'
+            );
+        }
     }
 }
 /**
@@ -5250,6 +5351,23 @@ final class CatalogApplication
                 }
                 $this->hierarchyService->deleteNode($nodeId);
                 return null;
+            case 'v1.setSeriesTypstTemplating':
+                $this->requestReader->requireMethod('PUT', $method);
+                $payload = $this->requestReader->readJsonBody();
+                $seriesId = isset($payload['seriesId']) ? (int) $payload['seriesId'] : 0;
+                $enabledRaw = $payload['enabled'] ?? null;
+                $enabled = filter_var($enabledRaw, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+                $errors = [];
+                if ($seriesId <= 0) {
+                    $errors['seriesId'] = 'Series ID is required.';
+                }
+                if ($enabled === null) {
+                    $errors['enabled'] = 'Enabled must be boolean.';
+                }
+                if ($errors !== []) {
+                    throw new CatalogApiException('VALIDATION_ERROR', 'Field validation failed.', 400, $errors);
+                }
+                return $this->hierarchyService->setTypstTemplatingEnabled($seriesId, $enabled);
             case 'v1.listSeriesFields':
                 $this->requestReader->requireMethod('GET', $method);
                 $seriesId = isset($_GET['seriesId']) ? (int) $_GET['seriesId'] : 0;
