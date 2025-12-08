@@ -29,7 +29,7 @@ GET /api/catalog/search.php?query=resistor
 - `GET /api/spec-search/root-categories.php` — top-level product roots.
 - `GET /api/spec-search/product-categories.php?root_id=ID` — grouped categories under a root.
 - `POST /api/spec-search/facets.php` — body `{ "category_ids": [int] }`; returns facet definitions.
-- `POST /api/spec-search/products.php` — body `{ "category_ids": [int], "filters": { "<key>": ["value"] } }`; returns `{ items, total }` limited to 500 rows.
+- `POST /api/spec-search/products.php` - body `{ "category_ids": [int], "filters": { "<key>": ["value"] } }`; returns `{ items, total }` limited to 500 rows. Each item includes `seriesImage` (from `series_product_image` metadata) and `pdfDownload`: when `category.typst_templating_enabled = 1` it uses the latest Typst series template PDF (`typst_templates.last_pdf_path`), otherwise it uses the `series_product_spec` metadata file. UI renders "Series Image" as the first column and "PDF Download" as the final column with a download link when available.
 
 ## Series Metadata
 - `GET /api/series/details.php?series_id=ID` — series metadata + custom field definitions.

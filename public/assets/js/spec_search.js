@@ -465,25 +465,74 @@ class SpecSearchPage {
             });
 
             const items = res?.data?.items || [];
-            this.$resultCount.text(`${items.length} items`);
+            const hiddenFields = new Set(['seriesId', 'categoryId', 'series_id', 'category_id']); // Hide raw identifier fields from the table.
+            const displayItems = items.map((item) => {
+                const clone = { ...item };
+                hiddenFields.forEach((field) => {
+                    if (Object.prototype.hasOwnProperty.call(clone, field)) {
+                        delete clone[field];
+                    }
+                });
+                return clone;
+            });
+
+            this.$resultCount.text(`${displayItems.length} items`);
 
             const dynamicKeys = new Set();
-            items.forEach((item) => {
+            displayItems.forEach((item) => {
                 Object.keys(item).forEach((k) => {
-                    if (!['id', 'sku', 'name', 'series'].includes(k)) {
+                    if (!['id', 'sku', 'name', 'series', 'category', 'seriesImage', 'pdfDownload', 'seriesId', 'categoryId', 'series_id', 'category_id'].includes(k)) {
                         dynamicKeys.add(k);
                     }
                 });
             });
 
             const columns = [
-                { title: 'SKU', data: (row) => row.sku ?? '' },
-                { title: 'Name', data: (row) => row.name ?? '' },
+                {
+                    title: 'Series Image',
+                    data: (row) => row.seriesImage ?? row.series_image ?? '',
+                    orderable: false,
+                    searchable: false,
+                    render: (data, type, row) => {
+                        if (type !== 'display') {
+                            return data ?? '';
+                        }
+                        if (!data) {
+                            return '';
+                        }
+                        const escapeAttr = (val) =>
+                            String(val ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                        const src = escapeAttr(data);
+                        const alt = escapeAttr(row.series ?? 'Series image');
+                        return `<img src="${src}" alt="${alt}" class="img-thumbnail" style="max-height: 48px;">`;
+                    },
+                    className: 'text-center align-middle',
+                },
                 { title: 'Series', data: (row) => row.series ?? '' },
+                { title: 'SKU', data: (row) => row.sku ?? '' },
+                { title: 'Category', data: (row) => row.category ?? '' },
                 ...Array.from(dynamicKeys).map((key) => ({
                     title: key,
                     data: (row) => (row[key] !== undefined && row[key] !== null ? row[key] : ''),
                 })),
+                {
+                    title: 'PDF Download',
+                    data: (row) => row.pdfDownload ?? row.pdf_download ?? '',
+                    orderable: false,
+                    searchable: false,
+                    render: (data, type) => {
+                        if (type !== 'display') {
+                            return data ?? '';
+                        }
+                        if (!data) {
+                            return '';
+                        }
+                        const escapeAttr = (val) =>
+                            String(val ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                        const href = escapeAttr(data);
+                        return `<a href="${href}" target="_blank" rel="noopener">Download</a>`;
+                    },
+                },
                 {
                     title: 'Edit',
                     data: null,
@@ -496,7 +545,7 @@ class SpecSearchPage {
                 },
             ];
 
-            this.initTable(items, columns);
+            this.initTable(displayItems, columns);
         } catch (err) {
             this.setStatus(`Error loading products: ${err.message}`);
         } finally {

@@ -257,17 +257,79 @@ final class SpecSearchService
 
         $rawProducts = [];
         $productIds = [];
+        $seriesIds = [];
         while ($row = $result->fetch_assoc()) {
+            $seriesId = (int) $row['series_id'];
             $rawProducts[$row['id']] = [
                 'id' => (int) $row['id'],
                 'sku' => $row['sku'],
                 'name' => $row['name'],
                 'series' => $row['series_name'],
-                'seriesId' => (int) $row['series_id'],
+                'seriesId' => $seriesId,
                 'category' => $row['category_name'],
                 'categoryId' => (int) $row['category_id'],
             ];
+            if (!in_array($seriesId, $seriesIds, true)) {
+                $seriesIds[] = $seriesId;
+            }
             $productIds[] = (int) $row['id'];
+        }
+
+        $seriesImages = [];
+        $seriesSpecs = [];
+        $seriesTypstPdf = [];
+        $seriesTypstEnabled = [];
+        if (!empty($seriesIds)) {
+            $seriesIdsStr = implode(',', $seriesIds);
+
+            // Series metadata: product image
+            $resultSeriesImages = $this->db->query(
+                "SELECT scf.series_id, scfv.value 
+                     FROM series_custom_field scf
+                     LEFT JOIN series_custom_field_value scfv ON scf.id = scfv.series_custom_field_id AND scfv.series_id = scf.series_id
+                     WHERE scf.series_id IN ({$seriesIdsStr})
+                     AND scf.field_scope = 'series_metadata'
+                     AND scf.field_key = 'series_product_image'"
+            );
+            while ($row = $resultSeriesImages->fetch_assoc()) {
+                $seriesImages[(int) $row['series_id']] = $row['value'] ?? '';
+            }
+
+            // Series metadata: product spec PDF
+            $resultSeriesSpecs = $this->db->query(
+                "SELECT scf.series_id, scfv.value 
+                     FROM series_custom_field scf
+                     LEFT JOIN series_custom_field_value scfv ON scf.id = scfv.series_custom_field_id AND scfv.series_id = scf.series_id
+                     WHERE scf.series_id IN ({$seriesIdsStr})
+                     AND scf.field_scope = 'series_metadata'
+                     AND scf.field_key = 'series_product_spec'"
+            );
+            while ($row = $resultSeriesSpecs->fetch_assoc()) {
+                $seriesSpecs[(int) $row['series_id']] = $row['value'] ?? '';
+            }
+
+            // Typst templating flag
+            $resultTypstFlag = $this->db->query(
+                "SELECT id, typst_templating_enabled FROM category WHERE id IN ({$seriesIdsStr})"
+            );
+            while ($row = $resultTypstFlag->fetch_assoc()) {
+                $seriesTypstEnabled[(int) $row['id']] = ((int) ($row['typst_templating_enabled'] ?? 0)) === 1;
+            }
+
+            // Latest Typst PDF per series (if any)
+            $resultTypstPdf = $this->db->query(
+                "SELECT series_id, last_pdf_path, updated_at, id 
+                     FROM typst_templates 
+                     WHERE series_id IN ({$seriesIdsStr}) 
+                       AND last_pdf_path IS NOT NULL 
+                     ORDER BY updated_at DESC, id DESC"
+            );
+            while ($row = $resultTypstPdf->fetch_assoc()) {
+                $sid = (int) $row['series_id'];
+                if (!isset($seriesTypstPdf[$sid])) {
+                    $seriesTypstPdf[$sid] = $row['last_pdf_path'] ?? '';
+                }
+            }
         }
 
         if (!empty($productIds)) {
@@ -287,6 +349,83 @@ final class SpecSearchService
             }
         }
 
+        foreach ($rawProducts as &$product) {
+            $sid = $product['seriesId'];
+            $product['seriesImage'] = $this->formatImagePath($seriesImages[$sid] ?? '');
+
+            $pdfUrl = '';
+            if (($seriesTypstEnabled[$sid] ?? false) && !empty($seriesTypstPdf[$sid])) {
+                $pdfUrl = $this->buildTypstPdfUrl($seriesTypstPdf[$sid]);
+            } elseif (!empty($seriesSpecs[$sid])) {
+                $pdfUrl = $this->formatMediaPath($seriesSpecs[$sid]);
+            }
+            $product['pdfDownload'] = $pdfUrl;
+        }
+        unset($product);
+
         return array_values($rawProducts);
+    }
+
+    /**
+     * Normalize stored image paths to a web-safe URL so the UI can render without broken links.
+     */
+    private function formatImagePath(?string $value): string
+    {
+        return $this->formatMediaPath($value);
+    }
+
+    /**
+     * Normalize stored media paths (images/spec PDFs) to web-safe relative URLs.
+     */
+    private function formatMediaPath(?string $value): string
+    {
+        $path = trim((string) $value);
+        if ($path === '') {
+            return '';
+        }
+
+        // Allow already web-ready values.
+        if (preg_match('#^(https?:)?//#i', $path) === 1 || str_starts_with($path, 'data:')) {
+            return $path;
+        }
+
+        // Normalize separators and strip any local public/ prefix.
+        $path = str_replace('\\', '/', $path);
+        if (preg_match('#/public/(.+)$#i', $path, $matches) === 1) {
+            $path = $matches[1];
+        }
+
+        $relative = ltrim($path, '/');
+        // Prefer storage/media prefix when file exists there.
+        $storageMediaPath = dirname(__DIR__, 2) . '/storage/media/' . $relative;
+        if (is_file($storageMediaPath)) {
+            return '../storage/media/' . $relative;
+        }
+
+        // Otherwise, fall back to storage prefix if already present or simple absolute path under web root.
+        if (str_starts_with($relative, 'storage/')) {
+            return '../' . $relative;
+        }
+
+        return '../' . $relative;
+    }
+
+    /**
+     * Build a Typst PDF URL from a stored path.
+     */
+    private function buildTypstPdfUrl(?string $path): string
+    {
+        if (empty($path)) {
+            return '';
+        }
+        if (filter_var($path, FILTER_VALIDATE_URL)) {
+            return $path;
+        }
+        $file = basename($path);
+        if ($file === '') {
+            return '';
+        }
+        // Served from public/storage/typst-pdfs; relative to spec-search page under /public.
+        return 'storage/typst-pdfs/' . $file;
     }
 }

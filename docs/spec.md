@@ -143,7 +143,7 @@ erDiagram
 
 ## Key Processes
 - Catalog hierarchy/search: build tree from `category`, attach products; search by name/SKU.
-- Spec search: root/product category discovery, facet construction from custom fields, filtered product list.
+- Spec search: root/product category discovery, facet construction from custom fields, filtered product list; results table renders Series Image (from series metadata key `series_product_image`, when present) before SKU, then Series/SKU/Category plus dynamic attribute columns only (raw IDs like `seriesId`/`categoryId` stay hidden). A “PDF Download” column surfaces either the latest Typst-generated PDF when Typst templating is enabled for the series, or the `series_product_spec` metadata file when Typst is disabled.
 - Template compilation: fetch series metadata + products, substitute into LaTeX/Typst, compile via external binary, expose PDF URL; Typst data header sanitizes associative keys to Typst-safe identifiers (non-alphanumeric replaced with `_`, leading digits prefixed) and deduplicates collisions to prevent invalid variable names.
 - Global Typst variable palette: the Variables List renders each global key as a badge that inserts `{{typst_safe_key}}` at the caret in the editor; compile replaces these placeholders with the stored `globals` values (with asset paths staged into the Typst build dir).
 - Series Typst variable palette: metadata badges insert `{{key}}` placeholders, and product attribute badges are grouped under a parent `products` wrapper; clicking the wrapper inserts a products loop scaffold, while individual custom-field badges insert `product.attributes.<key>` tokens (plus `product.sku` and `product.name` badges). Compile still replaces `{{key}}` placeholders for convenience and exposes the full `data` object (including `products`) for loop-based Typst code.
@@ -304,6 +304,10 @@ TypstService.compileTypst(code, seriesId?):
 - 2025-12-04: Category Fields Set is visible only for category nodes; CRUD calls must scope to the selected `category_id` (stored in `typst_variables` with `is_global = 0`) and hide entirely for non-category selections to avoid shared/global field leakage.
 - 2025-12-08: Catalog UI Category Fields List uses the built-in DataTable search box; the custom `category-fields-search` input/id was removed to avoid duplicate filters.
 - 2025-12-08: Confirmed Category Fields must refresh per selected category and clear DataTable filters/pagination each time so scoped fields for non-root categories are visible and saves immediately surface in the list.
+- 2025-12-08: Spec Search results table should not display raw identifiers (`seriesId`, `categoryId`); only SKU/Name/Series/Category and dynamic attribute columns remain visible for operators.
+- 2025-12-08: Spec Search must surface a "Series Image" column before SKU when the series metadata field `series_product_image` has a value; cells stay blank when no image is stored.
+- 2025-12-08: Series image paths returned by Spec Search normalize stored values to web-safe URLs (drop `public/` prefixes, convert backslashes, and allow http/https/data URIs) so images render without broken links.
+- 2025-12-08: Spec Search “PDF Download” column: when `category.typst_templating_enabled = 1`, use the latest Typst series template PDF (`typst_templates.last_pdf_path`); otherwise fall back to the `series_product_spec` metadata file. Links are normalized to web-safe URLs without hardcoded hosts.
 
 ## Key Processes (continued) and Constraints
 - CSV lifecycle: imports stored under `storage/csv`, catalog truncation locked via `config/app.php` token/lock key.
