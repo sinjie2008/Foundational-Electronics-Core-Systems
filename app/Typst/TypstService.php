@@ -784,42 +784,59 @@ final class TypstService
     }
 
     /**
+     * List variables scoped to a specific category/series (`is_global = 0`).
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function listScopedVariables(int $seriesId): array
+    {
+        $variables = [];
+        $stmt = $this->db->prepare(
+            'SELECT id, field_key, field_type, field_value, is_global, series_id, created_at, updated_at
+             FROM typst_variables
+             WHERE is_global = 0
+               AND series_id = ?
+             ORDER BY field_key ASC'
+        );
+        $stmt->bind_param('i', $seriesId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            $variables[] = $this->normalizeVariableRow($row);
+        }
+        $stmt->close();
+
+        return $variables;
+    }
+
+    /**
      * Create or update a global variable and optionally persist an uploaded image asset.
      *
      * @param array<string, mixed>|null $fileUpload
      */
     public function saveGlobalVariable(string $key, string $inputType, string $value, ?int $id = null, ?array $fileUpload = null): ?array
     {
-        $key = trim($key);
-        $normalizedType = $this->normalizeVariableType($inputType);
-        $valueToStore = $value;
+        return $this->persistVariable($key, $inputType, $value, $id, true, null, $fileUpload);
+    }
 
-        if ($normalizedType === 'image' && $fileUpload !== null && ($fileUpload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
-            if ((int) ($fileUpload['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) {
-                throw new RuntimeException('File upload failed.');
-            }
-            $valueToStore = $this->storeUploadedAsset($fileUpload);
+    /**
+     * Create or update a category/series-scoped variable (`is_global = 0`).
+     *
+     * @param array<string, mixed>|null $fileUpload
+     */
+    public function saveScopedVariable(
+        int $seriesId,
+        string $key,
+        string $inputType,
+        string $value,
+        ?int $id = null,
+        ?array $fileUpload = null
+    ): ?array {
+        if ($seriesId <= 0) {
+            throw new RuntimeException('Series ID is required for scoped variables.');
         }
 
-        if ($id) {
-            $stmt = $this->db->prepare(
-                'UPDATE typst_variables
-                 SET field_key = ?, field_type = ?, field_value = ?, updated_at = CURRENT_TIMESTAMP
-                 WHERE id = ? AND is_global = 1'
-            );
-            $stmt->bind_param('sssi', $key, $normalizedType, $valueToStore, $id);
-            $stmt->execute();
-            return $this->getGlobalVariable($id);
-        }
-
-        $stmt = $this->db->prepare(
-            'INSERT INTO typst_variables (field_key, field_type, field_value, is_global, series_id)
-             VALUES (?, ?, ?, 1, NULL)'
-        );
-        $stmt->bind_param('sss', $key, $normalizedType, $valueToStore);
-        $stmt->execute();
-
-        return $this->getGlobalVariable((int) $this->db->insert_id);
+        return $this->persistVariable($key, $inputType, $value, $id, false, $seriesId, $fileUpload);
     }
 
     public function deleteGlobalVariable(int $id): bool
@@ -829,20 +846,29 @@ final class TypstService
         return $stmt->execute();
     }
 
-    public function getGlobalVariable(int $id): ?array
+    /**
+     * Delete a scoped variable tied to a category/series.
+     */
+    public function deleteScopedVariable(int $id, int $seriesId): bool
     {
         $stmt = $this->db->prepare(
-            'SELECT id, field_key, field_type, field_value, is_global, series_id, created_at, updated_at
-             FROM typst_variables
-             WHERE id = ? AND is_global = 1
-             LIMIT 1'
+            'DELETE FROM typst_variables WHERE id = ? AND is_global = 0 AND series_id = ? LIMIT 1'
         );
-        $stmt->bind_param('i', $id);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $row = $result->fetch_assoc();
+        $stmt->bind_param('ii', $id, $seriesId);
+        return $stmt->execute();
+    }
 
-        return $row ? $this->normalizeVariableRow($row) : null;
+    public function getGlobalVariable(int $id): ?array
+    {
+        return $this->getVariable($id, true, null);
+    }
+
+    /**
+     * Fetch a scoped variable belonging to a category/series.
+     */
+    public function getScopedVariable(int $id, int $seriesId): ?array
+    {
+        return $this->getVariable($id, false, $seriesId);
     }
 
     private function normalizeTemplateRow(array $row): array
@@ -886,6 +912,86 @@ final class TypstService
             return 'image';
         }
         return 'text';
+    }
+
+    /**
+     * Persist a variable (global or scoped) and return the stored row.
+     *
+     * @param array<string, mixed>|null $fileUpload
+     */
+    private function persistVariable(
+        string $key,
+        string $inputType,
+        string $value,
+        ?int $id,
+        bool $isGlobal,
+        ?int $seriesId,
+        ?array $fileUpload = null
+    ): ?array {
+        $key = trim($key);
+        $normalizedType = $this->normalizeVariableType($inputType);
+        $valueToStore = $value;
+
+        if ($normalizedType === 'image' && $fileUpload !== null && ($fileUpload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
+            if ((int) ($fileUpload['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) {
+                throw new RuntimeException('File upload failed.');
+            }
+            $valueToStore = $this->storeUploadedAsset($fileUpload);
+        }
+
+        if ($id) {
+            $sql = 'UPDATE typst_variables
+                 SET field_key = ?, field_type = ?, field_value = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ? AND is_global = ?';
+            $types = 'sssii';
+            $params = [$key, $normalizedType, $valueToStore, $id, $isGlobal ? 1 : 0];
+            if (!$isGlobal) {
+                $sql .= ' AND series_id = ?';
+                $types .= 'i';
+                $params[] = $seriesId ?? 0;
+            }
+            $stmt = $this->db->prepare($sql);
+            $stmt->bind_param($types, ...$params);
+            $stmt->execute();
+            return $this->getVariable($id, $isGlobal, $seriesId);
+        }
+
+        $isGlobalFlag = $isGlobal ? 1 : 0;
+        $seriesValue = $isGlobal ? 0 : ($seriesId ?? 0);
+        $stmt = $this->db->prepare(
+            'INSERT INTO typst_variables (field_key, field_type, field_value, is_global, series_id)
+             VALUES (?, ?, ?, ?, ?)'
+        );
+        $stmt->bind_param('sssii', $key, $normalizedType, $valueToStore, $isGlobalFlag, $seriesValue);
+        $stmt->execute();
+
+        return $this->getVariable((int) $this->db->insert_id, $isGlobal, $seriesId);
+    }
+
+    /**
+     * Fetch a variable row by id and scope.
+     */
+    private function getVariable(int $id, bool $isGlobal, ?int $seriesId = null): ?array
+    {
+        $sql = 'SELECT id, field_key, field_type, field_value, is_global, series_id, created_at, updated_at
+             FROM typst_variables
+             WHERE id = ? AND is_global = ?';
+        $types = 'ii';
+        $params = [$id, $isGlobal ? 1 : 0];
+        if (!$isGlobal) {
+            $sql .= ' AND series_id = ?';
+            $types .= 'i';
+            $params[] = $seriesId ?? 0;
+        }
+        $sql .= ' LIMIT 1';
+
+        $stmt = $this->db->prepare($sql);
+        $stmt->bind_param($types, ...$params);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $row = $result->fetch_assoc();
+
+        return $row ? $this->normalizeVariableRow($row) : null;
     }
 
     private function buildPdfUrl(?string $path): ?string

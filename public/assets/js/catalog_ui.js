@@ -93,6 +93,16 @@ class CatalogUI {
             typstTemplatingControl: '#typst-templating-control',
             typstTemplatingLinkContainer: '#typst-templating-link-container',
             typstTemplatingLink: '#typst-templating-link',
+            statusCategoryFields: '#status-message-category-fields',
+            categoryFieldsSection: '#category-fields-section',
+            categoryFieldsTable: '#category-fields-table',
+            categoryFieldForm: '#category-field-form',
+            categoryFieldId: '#category-field-id',
+            categoryFieldKey: '#category-field-key',
+            categoryFieldType: '#category-field-type',
+            categoryFieldDataContainer: '#category-field-data-container',
+            categoryFieldAddButton: '#category-field-add-button',
+            categoryFieldDeleteButton: '#category-field-delete-button',
         };
 
         // Map logical sections to their scoped status banners.
@@ -101,6 +111,7 @@ class CatalogUI {
             seriesFields: 'statusSeriesFields',
             seriesMetadata: 'statusSeriesMetadata',
             products: 'statusProducts',
+            categoryFields: 'statusCategoryFields',
         };
 
         const domCache = new Map();
@@ -131,6 +142,13 @@ class CatalogUI {
             searchQuery: '',
             deepLinkApplied: false,
             deepLinkProductFilter: '',
+            categoryFields: [],
+            selectedCategoryFieldId: null,
+            categoryFieldCurrentValue: '',
+            categoryFieldsCategoryId: null,
+            categoryFieldsTableContext: null, // Track which category the Category Fields table is bound to.
+            categoryFieldRequestId: 0,
+            selectedCategoryId: null,
         };
         const dataTableRegistry = new Map();
         const DATA_TABLE_DOM =
@@ -165,6 +183,19 @@ class CatalogUI {
             language: DATA_TABLE_LANGUAGE,
             order: [[0, 'asc']],
         };
+        const CATEGORY_FIELD_COLUMNS = [
+            { title: 'Field Key', data: 'fieldKey' },
+            { title: 'Field Type', data: 'fieldType', width: '140px' },
+            { title: 'Field Data', data: 'fieldValue' },
+            {
+                title: 'Actions',
+                data: 'actions',
+                orderable: false,
+                searchable: false,
+                width: '160px',
+                className: 'text-nowrap',
+            },
+        ];
         const buildTableHeader = (tableKey, columns = []) => {
             const $table = $el(tableKey);
             if (!$table.length) {
@@ -691,6 +722,237 @@ class CatalogUI {
             state.products = [];
             $el('seriesManagement').prop('hidden', true);
         };
+        const formatCategoryFieldType = (type) => (type === 'image' || type === 'file' ? 'File (Image)' : 'Text');
+        const formatCategoryFieldValue = (field = {}) => {
+            const value = field.value ?? '';
+            const previewUrl = field.previewUrl || '';
+            const previewDataUrl = field.previewDataUrl || '';
+            if ((field.type === 'image' || field.type === 'file') && (previewUrl || previewDataUrl)) {
+                const src = escapeHtml(previewUrl || previewDataUrl);
+                const label = escapeHtml(value);
+                return `<div class="media-preview">
+                    <img src="${src}" alt="${label || 'Category field image'}" loading="lazy">
+                    ${label ? `<div class="text-muted small">${label}</div>` : ''}
+                </div>`;
+            }
+            return escapeHtml(value);
+        };
+        const renderCategoryFieldInput = (type = 'text', value = '', previews = {}) => {
+            const $container = $el('categoryFieldDataContainer');
+            if (!$container.length) {
+                return;
+            }
+            const safeValue = escapeHtml(value ?? '');
+            if (type === 'file' || type === 'image') {
+                const previewHtml = formatCategoryFieldValue({
+                    type: type,
+                    value,
+                    previewUrl: previews.previewUrl,
+                    previewDataUrl: previews.previewDataUrl,
+                });
+                const previewBlock = previewHtml
+                    ? `<div class="category-field-preview">${previewHtml}</div>`
+                    : '<div class="text-muted small">No file uploaded.</div>';
+                $container.html(`<label>Field Data:
+                        <input type="file" id="category-field-file" accept="image/*">
+                    </label>
+                    <label class="inline-checkbox file-clear"><input type="checkbox" id="category-field-clear-file"> Clear existing file</label>
+                    ${previewBlock}`);
+                return;
+            }
+            if (type === 'textarea') {
+                $container.html(
+                    `<label>Field Data:<textarea id="category-field-value" rows="4">${safeValue}</textarea></label>`
+                );
+                return;
+            }
+            $container.html(
+                `<label>Field Data:<input type="text" id="category-field-value" value="${safeValue}"></label>`
+            );
+        };
+        const resetCategoryFieldForm = () => {
+            $el('categoryFieldForm')[0]?.reset?.();
+            $el('categoryFieldId').val('');
+            $el('categoryFieldKey').val('');
+            $el('categoryFieldType').val('text');
+            state.selectedCategoryFieldId = null;
+            state.categoryFieldCurrentValue = '';
+            renderCategoryFieldInput('text');
+        };
+        const renderCategoryFieldsTable = () => {
+            const fields = Array.isArray(state.categoryFields) ? state.categoryFields : [];
+            if (!fields.length) {
+                destroyDataTable('categoryFieldsTable');
+                setEmptyTableState(
+                    'categoryFieldsTable',
+                    CATEGORY_FIELD_COLUMNS,
+                    'No category fields defined for this category.'
+                );
+                return;
+            }
+            const rows = fields.map((field) => ({
+                fieldKey: `<span class="badge bg-secondary">${escapeHtml(field.key)}</span>`,
+                fieldType: formatCategoryFieldType(field.type),
+                fieldValue: formatCategoryFieldValue(field),
+                actions: `<div class="datatable-actions">
+                    <button type="button" class="category-field-action" data-category-field-action="edit" data-field-id="${field.id}">Edit</button>
+                    <button type="button" class="category-field-action" data-category-field-action="delete" data-field-id="${field.id}">Delete</button>
+                </div>`,
+            }));
+            syncDataTable('categoryFieldsTable', CATEGORY_FIELD_COLUMNS, rows, {
+                order: [[0, 'asc']],
+                pageLength: 5,
+                emptyMessage: 'No category fields defined for this category.',
+                signatureKey: state.categoryFieldsTableContext ?? state.categoryFieldsCategoryId,
+            });
+        };
+        const resetCategoryFieldsUI = () => {
+            state.categoryFields = [];
+            state.selectedCategoryFieldId = null;
+            state.categoryFieldCurrentValue = '';
+            state.categoryFieldsCategoryId = null;
+            state.categoryFieldsTableContext = null;
+            destroyDataTable('categoryFieldsTable');
+            setEmptyTableState(
+                'categoryFieldsTable',
+                CATEGORY_FIELD_COLUMNS,
+                'Select a category to view Category Fields.'
+            );
+            resetCategoryFieldForm();
+            $el('categoryFieldsSection').prop('hidden', true);
+            setStatus('categoryFields', '');
+        };
+        const showCategoryFieldsSection = () => {
+            $el('categoryFieldsSection').prop('hidden', false);
+        };
+        const loadCategoryFields = async (categoryId) => {
+            state.categoryFieldsCategoryId = categoryId;
+            state.categoryFieldsTableContext = categoryId || null;
+            state.categoryFieldRequestId += 1;
+            const requestId = state.categoryFieldRequestId;
+            if (!categoryId) {
+                resetCategoryFieldsUI();
+                return;
+            }
+            showCategoryFieldsSection();
+            destroyDataTable('categoryFieldsTable');
+            setEmptyTableState('categoryFieldsTable', CATEGORY_FIELD_COLUMNS, 'Loading fields...');
+            try {
+                const response = await toPromise(
+                    $.getJSON('api/typst/variables.php', { seriesId: categoryId }),
+                    'categoryFields:list'
+                );
+                if (requestId !== state.categoryFieldRequestId) {
+                    return;
+                }
+                if (!response.success) {
+                    handleErrorResponse(response, 'categoryFields', 'Failed to load category fields.');
+                    return;
+                }
+                state.categoryFields = Array.isArray(response.data) ? response.data : [];
+                renderCategoryFieldsTable();
+                resetCategoryFieldForm();
+            } catch (error) {
+                if (requestId !== state.categoryFieldRequestId) {
+                    return;
+                }
+                console.error(error);
+                setStatusWithError('categoryFields', 'Unable to load category fields.', error);
+            }
+        };
+        const populateCategoryFieldForm = (field) => {
+            if (!field) {
+                return;
+            }
+            const type = field.type === 'image' ? 'file' : field.type || 'text';
+            state.selectedCategoryFieldId = field.id;
+            state.categoryFieldCurrentValue = field.value ?? '';
+            $el('categoryFieldId').val(field.id);
+            $el('categoryFieldKey').val(field.key ?? '');
+            $el('categoryFieldType').val(type);
+            renderCategoryFieldInput(type, field.value ?? '', field);
+        };
+        const saveCategoryField = (payload, fileInput, hasFile) => {
+            if (hasFile && fileInput?.files?.length) {
+                const formData = new FormData();
+                formData.append('key', payload.key);
+                formData.append('type', 'file');
+                formData.append('seriesId', payload.seriesId);
+                if (payload.id) {
+                    formData.append('id', payload.id);
+                }
+                if (payload.value !== undefined && payload.value !== null) {
+                    formData.append('value', payload.value);
+                }
+                formData.append('file', fileInput.files[0]);
+                return toPromise(
+                    $.ajax({
+                        url: 'api/typst/variables.php',
+                        method: 'POST',
+                        processData: false,
+                        contentType: false,
+                        dataType: 'json',
+                        data: formData,
+                    }),
+                    'categoryFields:save'
+                );
+            }
+            return toPromise(
+                $.ajax({
+                    url: 'api/typst/variables.php',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    dataType: 'json',
+                    data: JSON.stringify(payload),
+                }),
+                'categoryFields:save'
+            );
+        };
+        const deleteCategoryField = async (fieldId) => {
+            if (!fieldId || !state.categoryFieldsCategoryId) {
+                return;
+            }
+            const response = await toPromise(
+                $.ajax({
+                    url: `api/typst/variables.php?id=${encodeURIComponent(fieldId)}&seriesId=${encodeURIComponent(
+                        state.categoryFieldsCategoryId
+                    )}`,
+                    method: 'DELETE',
+                    dataType: 'json',
+                }),
+                'categoryFields:delete'
+            );
+            return response;
+        };
+        const handleCategoryFieldAction = async (event) => {
+            const action = $(event.currentTarget).data('category-field-action');
+            const fieldId = Number($(event.currentTarget).data('field-id'));
+            const field = state.categoryFields.find((item) => Number(item.id) === Number(fieldId));
+            if (!action || Number.isNaN(fieldId)) {
+                return;
+            }
+            if (action === 'edit' && field) {
+                populateCategoryFieldForm(field);
+                setStatus('categoryFields', 'Editing category field.', false);
+            }
+            if (action === 'delete') {
+                if (!window.confirm('Delete this category field?')) {
+                    return;
+                }
+                try {
+                    const response = await deleteCategoryField(fieldId);
+                    if (!response?.success) {
+                        handleErrorResponse(response, 'categoryFields', 'Failed to delete category field.');
+                        return;
+                    }
+                    setStatus('categoryFields', 'Category field deleted.', false);
+                    await loadCategoryFields(state.categoryFieldsCategoryId);
+                } catch (error) {
+                    console.error(error);
+                    setStatusWithError('categoryFields', 'Failed to delete category field.', error);
+                }
+            }
+        };
 
         // Maintain the Typst templating toggle/link state for the selected series.
         const applyTypstTemplatingState = (enabled) => {
@@ -767,6 +1029,8 @@ class CatalogUI {
             $el('typstTemplatingControl').addClass('d-none');
             $el('typstTemplatingLinkContainer').addClass('d-none');
             resetSeriesUI();
+            resetCategoryFieldsUI();
+            state.selectedCategoryId = null;
             return;
         }
 
@@ -775,6 +1039,8 @@ class CatalogUI {
                 ? '(root)'
                 : node.parentId;
 
+            const isCategory = node.type === 'category';
+            const isSeries = node.type === 'series';
             const info = [
                 `ID: ${node.id}`,
                 `Parent ID: ${parentLabel}`,
@@ -792,15 +1058,25 @@ class CatalogUI {
             $el('updateNodeDisplayOrder').val(node.displayOrder);
             $el('nodeDeleteButton').prop('disabled', false);
 
-        if (node.type === 'series') {
+        if (isSeries) {
+            state.selectedCategoryId = null;
             $el('seriesManagement').prop('hidden', false);
             $el('typstTemplatingControl').removeClass('d-none');
             applyTypstTemplatingState(Boolean(node.typstTemplatingEnabled));
+            resetCategoryFieldsUI();
             loadSeriesContext(node.id);
         } else {
+            resetSeriesUI();
             applyTypstTemplatingState(false);
             $el('typstTemplatingControl').addClass('d-none');
-            resetSeriesUI();
+            if (isCategory) {
+                state.selectedCategoryId = node.id;
+                showCategoryFieldsSection();
+                loadCategoryFields(node.id);
+            } else {
+                state.selectedCategoryId = null;
+                resetCategoryFieldsUI();
+            }
         }
         };
 
@@ -2032,6 +2308,99 @@ class CatalogUI {
 
             $el('productListTable').on('click', 'button[data-product-action]', handleProductListAction);
         };
+        const bindCategoryFieldEvents = () => {
+            $el('categoryFieldsTable').on('click', '.category-field-action', handleCategoryFieldAction);
+
+            $el('categoryFieldForm').on('submit', async (event) => {
+                event.preventDefault();
+                const categoryId = state.selectedCategoryId || state.categoryFieldsCategoryId;
+                if (!categoryId) {
+                    setStatus('categoryFields', 'Select a category first.', true);
+                    return;
+                }
+                const key = $el('categoryFieldKey').val().toString().trim();
+                const typeSelection = ($el('categoryFieldType').val() || 'text').toString();
+                if (!key) {
+                    setStatus('categoryFields', 'Field key is required.', true);
+                    return;
+                }
+                const payload = {
+                    seriesId: categoryId,
+                    key,
+                    type: typeSelection,
+                    value: '',
+                };
+                const inputField = $el('categoryFieldDataContainer').find('#category-field-value');
+                const fileInput = document.getElementById('category-field-file');
+                const clearFile = $el('categoryFieldDataContainer').find('#category-field-clear-file').is(':checked');
+                let hasFile = false;
+                if (typeSelection === 'file' || typeSelection === 'image') {
+                    if (fileInput?.files?.length) {
+                        hasFile = true;
+                    } else if (clearFile) {
+                        payload.value = '';
+                    } else {
+                        payload.value = state.categoryFieldCurrentValue || '';
+                    }
+                    payload.type = 'file';
+                } else {
+                    payload.value = inputField.val();
+                }
+                const idValue = toInt($el('categoryFieldId').val(), null);
+                if (idValue) {
+                    payload.id = idValue;
+                }
+                try {
+                    const response = await saveCategoryField(payload, fileInput, hasFile);
+                    if (!response.success) {
+                        handleErrorResponse(response, 'categoryFields', 'Failed to save category field.');
+                        return;
+                    }
+                    setStatus('categoryFields', 'Category field saved.', false);
+                    await loadCategoryFields(categoryId);
+                } catch (error) {
+                    console.error(error);
+                    setStatusWithError('categoryFields', 'Failed to save category field.', error);
+                }
+            });
+
+            $el('categoryFieldAddButton').on('click', () => {
+                resetCategoryFieldForm();
+                setStatus('categoryFields', '');
+            });
+
+            $el('categoryFieldDeleteButton').on('click', async () => {
+                if (!state.selectedCategoryFieldId) {
+                    return;
+                }
+                if (!window.confirm('Delete this category field?')) {
+                    return;
+                }
+                try {
+                    const response = await deleteCategoryField(state.selectedCategoryFieldId);
+                    if (!response?.success) {
+                        handleErrorResponse(response, 'categoryFields', 'Failed to delete category field.');
+                        return;
+                    }
+                    setStatus('categoryFields', 'Category field deleted.', false);
+                    await loadCategoryFields(state.categoryFieldsCategoryId);
+                } catch (error) {
+                    console.error(error);
+                    setStatusWithError('categoryFields', 'Failed to delete category field.', error);
+                }
+            });
+
+            $el('categoryFieldType').on('change', () => {
+                const selectedType = $el('categoryFieldType').val()?.toString() || 'text';
+                const selectedField =
+                    state.categoryFields.find((item) => Number(item.id) === Number(state.selectedCategoryFieldId)) || {};
+                const currentValue =
+                    $el('categoryFieldDataContainer').find('#category-field-value').val() ??
+                    state.categoryFieldCurrentValue ??
+                    '';
+                renderCategoryFieldInput(selectedType, currentValue, selectedField);
+            });
+        };
         const bindCsvEvents = () => {
             $el('csvExportButton').on('click', async () => {
                 if (state.truncate.submitting || state.truncate.serverLock) {
@@ -2218,6 +2587,7 @@ class CatalogUI {
             bindSeriesFieldEvents();
             bindMetadataEvents();
             bindProductEvents();
+            bindCategoryFieldEvents();
             if (csvUiPresent) {
                 bindCsvEvents();
                 bindTruncateEvents();
@@ -2230,6 +2600,7 @@ class CatalogUI {
             bindLayoutReflowEvents();
             observeSidebarState();
             resetSeriesUI();
+            resetCategoryFieldsUI();
             await loadHierarchy();
             await applyDeepLinkFromQuery();
             if (csvUiPresent) {

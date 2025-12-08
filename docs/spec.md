@@ -62,9 +62,10 @@ graph LR
 
 ## Data Model
 - Core tables: `category` (tree of categories/series), `product` (linked to series), `series_custom_field` (field metadata, scope series/product attributes), `product_custom_field_value`, `latex_templates`/`latex_variables`, `typst_templates`/`typst_variables`, `typst_series_preferences` (per-series Typst UI settings such as the last imported global template id).
-- Series-level Typst toggle: `category.typst_templating_enabled` (TINYINT(1) default 0, migrated from legacy `latex_templating_enabled` when present) remembers whether the Catalog UI “Enable Typst Templating” switch was turned on for that series so the UI can surface the Typst template link without re-toggling.
+- Series-level Typst toggle: `category.typst_templating_enabled` (TINYINT(1) default 0, migrated from legacy `latex_templating_enabled` when present) remembers whether the Catalog UI "Enable Typst Templating" switch was turned on for that series so the UI can surface the Typst template link without re-toggling.
 - Template audit fields: `typst_templates.last_pdf_path` and `typst_templates.last_pdf_generated_at` hold the most recent compiled PDF location/timestamp for both global and series templates to drive Save PDF/Download actions without recompile.
 - Files: generated PDFs in `public/storage/latex-pdfs` and `public/storage/typst-pdfs`; CSV imports in `storage/csv`.
+- Category fields: per-category key/type/value pairs live in `typst_variables` with `is_global = 0` and `series_id = <category_id>`; file/image values reuse Typst asset storage under `public/storage/typst-assets/` for previews/downloads.
 
 ### ER Diagram
 ```mermaid
@@ -150,7 +151,9 @@ erDiagram
 - Template persistence: Typst templates track `last_pdf_path` and `last_pdf_generated_at` so Save PDF / Save & Compile flows can persist the most recent compiled artifact for series/global templates and enable download buttons without re-compiling.
 - Series Typst import preference: when an operator imports a global template on the series page, the selected global template id is stored in `typst_series_preferences` keyed by `series_id`; on page load, the UI pre-selects the stored global template if it still exists, otherwise it falls back to the placeholder without auto-importing.
 - Global Typst assets: file/image variables upload their binary payloads to `public/storage/typst-assets/` with unique, sanitized filenames (value stored as `typst-assets/<name>`). UI previews use the stored URL or data URI, and TypstService stages those assets into the build directory so `#image("{{key}}")` resolves to the actual file instead of a missing placeholder.
-- Catalog Typst templating toggle: toggling “Enable Typst Templating” on a series writes `category.typst_templating_enabled = 1` for that series (and syncs forward from legacy `latex_templating_enabled` if present); hierarchy/series selection reads the flag to pre-check the switch and show the Typst template link without re-toggling.
+- Catalog Typst templating toggle: toggling "Enable Typst Templating" on a series writes `category.typst_templating_enabled = 1` for that series (and syncs forward from legacy `latex_templating_enabled` if present); hierarchy/series selection reads the flag to pre-check the switch and show the Typst template link without re-toggling.
+- Category Fields panel: Category nodes on `catalog_ui.html` show a Category Fields Set table + editor; selecting a category loads its scoped key/type/value rows (backed by `typst_variables` with `series_id = category_id`, `is_global = 0`), while non-category selections hide the panel and skip field fetch to avoid globally shared values. Switching categories clears the Category Fields table search/pagination state so scoped fields for non-root categories render even when a previous filter/page was applied.
+- Category Fields editor layout: the Add button stays left-aligned while the Save/Delete action group aligns to the right within the form to clearly separate creation from update actions.
 
 ### Operator UI Navigation Map
 ```mermaid
@@ -265,6 +268,14 @@ Catalog.search(query):
   search products name/SKU LIKE %query%
   map ids/parents/type into flat list
 
+CatalogUI.handleCategorySelection(node):
+  if node.type != 'category':
+    hideCategoryFieldsPanel()
+    return
+  showCategoryFieldsPanel()
+  fetch category fields via typst_variables API (seriesId = node.id, is_global = 0)
+  bind add/edit/delete to categoryId-scoped endpoints
+
 SpecSearch.getProducts(categoryIds, filters):
   build base JOIN query for products under series in categoryIds
   apply series name IN filter when provided
@@ -289,7 +300,10 @@ TypstService.compileTypst(code, seriesId?):
 - 2025-12-04: Global Typst Variables List must render keys as clickable badges; clicking inserts the Typst-safe `{{key}}` placeholder at the current caret, and compile must resolve the badge token to the stored global value (including staged asset paths) so PDF output reflects the latest globals.
 - 2025-12-05: Global Typst file/image variables must upload and persist the binary asset under `public/storage/typst-assets/` (value saved as `typst-assets/<filename>`), display a thumbnail in the Variables List, and ensure Typst compile uses the uploaded asset path (staged into the build directory) instead of an empty placeholder.
 - 2025-12-07: The Series Typst page must remember the last imported global template per series server-side; preferences live in `typst_series_preferences`, and the UI pre-selects the stored global template only when it still exists (otherwise the dropdown defaults to the placeholder without auto-importing).
-- 2025-12-04: Catalog UI “Enable Typst Templating” switch must persist per series via `category.typst_templating_enabled` (migrated from `latex_templating_enabled` when present); hierarchy payloads should surface the stored flag so operators see prior enablement without re-clicking the toggle.
+- 2025-12-04: Catalog UI "Enable Typst Templating" switch must persist per series via `category.typst_templating_enabled` (migrated from `latex_templating_enabled` when present); hierarchy payloads should surface the stored flag so operators see prior enablement without re-clicking the toggle.
+- 2025-12-04: Category Fields Set is visible only for category nodes; CRUD calls must scope to the selected `category_id` (stored in `typst_variables` with `is_global = 0`) and hide entirely for non-category selections to avoid shared/global field leakage.
+- 2025-12-08: Catalog UI Category Fields List uses the built-in DataTable search box; the custom `category-fields-search` input/id was removed to avoid duplicate filters.
+- 2025-12-08: Confirmed Category Fields must refresh per selected category and clear DataTable filters/pagination each time so scoped fields for non-root categories are visible and saves immediately surface in the list.
 
 ## Key Processes (continued) and Constraints
 - CSV lifecycle: imports stored under `storage/csv`, catalog truncation locked via `config/app.php` token/lock key.

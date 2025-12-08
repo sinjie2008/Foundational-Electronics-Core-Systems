@@ -226,6 +226,13 @@ button:disabled {
     gap: 8px;
     align-items: center;
 }
+#category-field-form .category-field-actions {
+    justify-content: space-between;
+    width: 100%;
+}
+#category-field-form .category-field-actions__group {
+    margin-left: auto;
+}
 
 .inline-checkbox {
     display: inline-flex;

@@ -48,8 +48,9 @@ GET /api/catalog/search.php?query=resistor
 - `PUT /api/typst/templates.php` - update template; accepts optional `lastPdfPath` to refresh stored PDF metadata after compile/save flows.
 - `DELETE /api/typst/templates.php?id=ID` - delete template.
 - `POST /api/typst/compile.php` - body `{ "typst": "code", "seriesId": ID? }`; returns `{ url, path }` on success (the `path` should be echoed back as `lastPdfPath` when saving templates).
-- `GET /api/typst/variables.php` - list globals; `POST/PUT/DELETE` manage keys `{ key, type, value, id? }`.
-  - For file/image variables, `POST` accepts either JSON `{ key, type: "file", value, id? }` (uses the provided path) or `multipart/form-data` with fields `key`, `type=file`, optional `id`, and `file` upload; uploads are stored under `public/storage/typst-assets/` with a unique filename and the saved `value` is the relative path `typst-assets/<file>`.
+- `GET /api/typst/variables.php[?seriesId=ID]` - list globals (no `seriesId`) or scoped variables for a specific category/series (`series_id = ID`, `is_global = 0`); `POST/PUT` manage keys `{ key, type, value, id?, seriesId? }` and `DELETE /api/typst/variables.php?id=ID[&seriesId=ID]` removes the matching global/scoped record.
+  - For file/image variables, `POST` accepts either JSON `{ key, type: "file", value, id?, seriesId? }` (uses the provided path) or `multipart/form-data` with fields `key`, `type=file`, optional `id`, optional `seriesId`, and `file` upload; uploads are stored under `public/storage/typst-assets/` with a unique filename and the saved `value` is the relative path `typst-assets/<file>`.
+- Category Fields Set on `catalog_ui.html` calls `variables.php` with `seriesId=<categoryId>` to load/save per-category fields and hides the panel entirely when the selected node is not a category so scoped fields never fall back to globals. The list/editor clear DataTable search and pagination state on every category switch so non-root category fields are visible immediately after save.
 - Global Typst Variables List renders as a Bootstrap 5 DataTable with columns Field Key / Field Type / Field Data (+ Actions); the Field Key cell is a clickable badge that inserts `{{typst_safe_key}}` into the editor, the Edit button opens Variable Setup without inserting, and the Add button clears the form for a new variable. File/Image variables show a small thumbnail preview in the Field Data column, resolving stored paths under `public/` / `public/storage/` or using a data URI when only a physical path is available. Compile replaces those placeholders with the stored `globals` values (with file/image paths staged into the Typst build directory).
 - Series Typst templating UI exposes metadata badges as `{{key}}`, and custom fields are grouped inside a `products` wrapper: clicking the wrapper inserts a products loop scaffold, while inner field badges paste `product.attributes.<key>` tokens alongside `product.sku` and `product.name` badges; compile replaces `{{key}}` placeholders with real values and still injects the full `data` object (including `products`).
 - `GET /api/typst/series-preferences.php?seriesId=ID` - return `{ "seriesId": ID, "lastGlobalTemplateId": ID? }` representing the last global Typst template imported on the Series Typst page for that series. If no preference is stored, `lastGlobalTemplateId` is `null`.
@@ -57,7 +58,8 @@ GET /api/catalog/search.php?query=resistor
 
 ## Operator UI Pages (Static)
 - `spec-search.html` consumes the Spec Search endpoints above.
-- `catalog_ui.html` drives catalog hierarchy/series editing with Catalog endpoints.
+- `catalog_ui.html` drives catalog hierarchy/series editing with Catalog endpoints; Category Fields Set panel calls `api/typst/variables.php` with the selected category id (`seriesId`) and stays hidden when the selected node is not a category.
+- Category Fields Editor layout: the Add button sits on the left, and the Save/Delete inline group is right-aligned to separate create from update actions.
 - `catalog-csv.html` wraps CSV import/export/truncate endpoints.
 - `global_typst_template.html` calls Typst template + variable APIs for global scope.
 - `series_typst_template.html` uses Typst template + variable APIs scoped to a series.

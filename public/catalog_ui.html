@@ -253,6 +253,52 @@
                         </div>
                     </div>
                 </div>
+
+                <div id="category-fields-section" class="section" hidden>
+                    <div class="panel panel-category-fields">
+                        <h3>Category Fields Set</h3>
+                        <div id="status-message-category-fields" class="status-message is-empty" role="status"
+                            aria-live="polite"></div>
+                        <div class="row g-3">
+                            <div class="col-lg-7">
+                                <div class="d-flex align-items-center mb-2">
+                                    <span class="fw-semibold">Category Fields List</span>
+                                </div>
+                                <table id="category-fields-table"
+                                    class="table table-striped table-hover align-middle datatable w-100">
+                                    <thead></thead>
+                                    <tbody>
+                                        <tr>
+                                            <td>Loading...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="col-lg-5">
+                                <h4 class="h6">Category Fields Editor</h4>
+                                <form id="category-field-form" class="stacked-form">
+                                    <input type="hidden" id="category-field-id">
+                                    <label>Field Key:<input type="text" id="category-field-key" required></label>
+                                    <label>Field Type:
+                                        <select id="category-field-type">
+                                            <option value="text">Text</option>
+                                            <option value="textarea">Text Area</option>
+                                            <option value="file">File (Image)</option>
+                                        </select>
+                                    </label>
+                                    <div id="category-field-data-container"></div>
+                                    <div class="inline-actions category-field-actions">
+                                        <button type="button" id="category-field-add-button">Add</button>
+                                        <div class="inline-actions category-field-actions__group">
+                                            <button type="submit" id="category-field-submit">Save</button>
+                                            <button type="button" id="category-field-delete-button">Delete</button>
+                                        </div>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </main>
         </div>
         <div class="sidebar-backdrop" aria-hidden="true"></div>
