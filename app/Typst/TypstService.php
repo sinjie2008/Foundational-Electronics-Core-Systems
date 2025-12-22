@@ -20,6 +20,7 @@ final class TypstService
     private string $assetStorageDir;
     /** @var array<string, string> */
     private array $copiedAssets = [];
+    private bool $typstTablesEnsured = false;
     private bool $seriesPreferencesEnsured = false;
 
     public function __construct(?mysqli $db = null)
@@ -36,6 +37,48 @@ final class TypstService
         } else {
             $this->typstBinary = 'typst'; // Fallback to PATH
         }
+
+        $this->ensureTypstTables();
+    }
+
+    /**
+     * Ensure Typst tables exist when migrations were skipped.
+     */
+    private function ensureTypstTables(): void
+    {
+        if ($this->typstTablesEnsured) {
+            return;
+        }
+
+        $this->db->query(
+            'CREATE TABLE IF NOT EXISTS typst_templates (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                title VARCHAR(255) NOT NULL,
+                description TEXT,
+                typst_content MEDIUMTEXT,
+                is_global TINYINT(1) DEFAULT 0,
+                series_id INT DEFAULT NULL,
+                last_pdf_path VARCHAR(255) DEFAULT NULL,
+                last_pdf_generated_at DATETIME DEFAULT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+
+        $this->db->query(
+            'CREATE TABLE IF NOT EXISTS typst_variables (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                field_key VARCHAR(255) NOT NULL,
+                field_type VARCHAR(50) NOT NULL DEFAULT \'text\',
+                field_value TEXT,
+                is_global TINYINT(1) DEFAULT 0,
+                series_id INT DEFAULT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+        );
+
+        $this->typstTablesEnsured = true;
     }
 
     /**
@@ -46,6 +89,8 @@ final class TypstService
         if ($this->seriesPreferencesEnsured) {
             return;
         }
+
+        $this->ensureTypstTables();
 
         $sql = "
             CREATE TABLE IF NOT EXISTS typst_series_preferences (

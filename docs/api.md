@@ -8,7 +8,7 @@
 - Status codes: `200 OK`, `201 Created`, `400 Bad Request`, `404 Not Found`, `405 Method Not Allowed`, `500 Internal Error`.
 
 ## Catalog
-- `GET /api/catalog/hierarchy.php` - return nested category + series + products tree (series nodes include `typst_templating_enabled` for the Catalog UI toggle).
+- `GET /api/catalog/hierarchy.php` - return nested category + series + products tree (series nodes include `typst_templating_enabled` for the Catalog UI toggle; legacy `latex_templating_enabled` is optional and treated as disabled when absent).
 - `GET /api/catalog/search.php?query=term` - flat matches across categories/series/products.
 - `POST /api/catalog/csv-import.php` - upload/import catalog CSV; writes audit trail under `storage/csv`.
 - `GET /api/catalog/csv-download.php?id=timestamp` - download stored CSV by identifier.
@@ -43,6 +43,7 @@ GET /api/catalog/search.php?query=resistor
 - `GET /api/latex/variables.php` — list globals; `POST/PUT/DELETE` manage keys `{key,type,value,id?}`.
 
 ## Typst Templates
+- Typst endpoints will auto-create missing Typst tables on first use to avoid failures if migrations were skipped.
 - `GET /api/typst/templates.php[?seriesId=ID&id=ID]` – list global/series templates or fetch one.
 - `POST /api/typst/templates.php` – create template (global or series); accepts optional `lastPdfPath` to persist compiled PDF location + set `last_pdf_generated_at`.
 - `PUT /api/typst/templates.php` - update template; accepts optional `lastPdfPath` to refresh stored PDF metadata after compile/save flows.

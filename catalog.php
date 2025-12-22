@@ -1346,6 +1346,8 @@ final class Seeder
  */
 final class HierarchyService
 {
+    private ?bool $hasLegacyTemplatingColumn = null;
+
     public function __construct(private mysqli $connection)
     {
     }
@@ -1358,7 +1360,8 @@ final class HierarchyService
     public function listHierarchy(): array
     {
         $this->ensureTypstTemplatingColumn();
-        $tree = $this->buildHierarchyTree();
+        $hasLegacyColumn = $this->hasLegacyTemplatingColumn();
+        $tree = $this->buildHierarchyTree($hasLegacyColumn);
 
         /**
          * @param array<string, mixed> $node
@@ -1524,13 +1527,16 @@ final class HierarchyService
     /**
      * Builds the hierarchical tree of categories/series.
      *
+     * @param bool $includeLegacy Whether to include legacy latex_templating_enabled in the select.
+     *
      * @return array<int, array<string, mixed>>
      */
-    private function buildHierarchyTree(): array
+    private function buildHierarchyTree(bool $includeLegacy): array
     {
-        $result = $this->connection->query(
-            'SELECT id, parent_id, name, type, display_order, typst_templating_enabled, latex_templating_enabled FROM category ORDER BY display_order, id'
-        );
+        $result = $this->connection->query(sprintf(
+            'SELECT %s FROM category ORDER BY display_order, id',
+            self::getCategorySelectColumns($includeLegacy)
+        ));
 
         /** @var array<int, array<string, mixed>> $nodes */
         $nodes = [];
@@ -1547,7 +1553,7 @@ final class HierarchyService
                 'type' => (string) $row['type'],
                 'displayOrder' => (int) $row['display_order'],
                 'parentId' => $parentId,
-                'typstTemplatingEnabled' => ((int) ($row['typst_templating_enabled'] ?? $row['latex_templating_enabled'] ?? 0)) === 1,
+                'typstTemplatingEnabled' => ((int) ($row['typst_templating_enabled'] ?? ($includeLegacy ? (int) ($row['latex_templating_enabled'] ?? 0) : 0))) === 1,
                 'children' => [],
             ];
             $nodes[$id] = $node;
@@ -1588,8 +1594,12 @@ final class HierarchyService
      */
     private function loadCategory(int $nodeId): ?array
     {
+        $hasLegacyColumn = $this->hasLegacyTemplatingColumn();
         $stmt = $this->connection->prepare(
-            'SELECT id, parent_id, name, type, display_order, typst_templating_enabled, latex_templating_enabled FROM category WHERE id = ? LIMIT 1'
+            sprintf(
+                'SELECT %s FROM category WHERE id = ? LIMIT 1',
+                self::getCategorySelectColumns($hasLegacyColumn)
+            )
         );
         $stmt->bind_param('i', $nodeId);
         $stmt->execute();
@@ -1607,8 +1617,11 @@ final class HierarchyService
             'name' => (string) $row['name'],
             'type' => (string) $row['type'],
             'display_order' => (int) $row['display_order'],
-            'typst_templating_enabled' => (int) ($row['typst_templating_enabled'] ?? $row['latex_templating_enabled'] ?? 0),
-            'latex_templating_enabled' => (int) ($row['latex_templating_enabled'] ?? 0),
+            'typst_templating_enabled' => (int) (
+                $row['typst_templating_enabled']
+                ?? ($hasLegacyColumn ? (int) ($row['latex_templating_enabled'] ?? 0) : 0)
+            ),
+            'latex_templating_enabled' => $hasLegacyColumn ? (int) ($row['latex_templating_enabled'] ?? 0) : 0,
         ];
     }
 
@@ -1653,10 +1666,18 @@ final class HierarchyService
         }
 
         $flag = $enabled ? 1 : 0;
-        $stmt = $this->connection->prepare(
-            "UPDATE category SET typst_templating_enabled = ?, latex_templating_enabled = ? WHERE id = ? AND type = 'series'"
-        );
-        $stmt->bind_param('iii', $flag, $flag, $seriesId);
+        $hasLegacyColumn = $this->hasLegacyTemplatingColumn();
+        if ($hasLegacyColumn) {
+            $stmt = $this->connection->prepare(
+                "UPDATE category SET typst_templating_enabled = ?, latex_templating_enabled = ? WHERE id = ? AND type = 'series'"
+            );
+            $stmt->bind_param('iii', $flag, $flag, $seriesId);
+        } else {
+            $stmt = $this->connection->prepare(
+                "UPDATE category SET typst_templating_enabled = ? WHERE id = ? AND type = 'series'"
+            );
+            $stmt->bind_param('ii', $flag, $seriesId);
+        }
         $stmt->execute();
         $stmt->close();
 
@@ -1672,38 +1693,71 @@ final class HierarchyService
 
     private function ensureTypstTemplatingColumn(): void
     {
-        // Add typst column when missing.
+        $column = 'typst_templating_enabled';
+        if (!$this->hasCategoryColumn($column)) {
+            $this->connection->query(
+                "ALTER TABLE category ADD COLUMN typst_templating_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER type"
+            );
+        }
+        // If legacy latex column exists, keep it in sync to preserve prior data.
+        $legacyColumn = 'latex_templating_enabled';
+        $this->hasLegacyTemplatingColumn = $this->hasCategoryColumn($legacyColumn);
+        if ($this->hasLegacyTemplatingColumn) {
+            $this->connection->query(
+                'UPDATE category SET typst_templating_enabled = latex_templating_enabled WHERE typst_templating_enabled IS NULL OR typst_templating_enabled = 0'
+            );
+        }
+    }
+
+    /**
+     * Returns whether the legacy latex templating column exists on category.
+     */
+    private function hasLegacyTemplatingColumn(): bool
+    {
+        if ($this->hasLegacyTemplatingColumn === null) {
+            $this->hasLegacyTemplatingColumn = $this->hasCategoryColumn('latex_templating_enabled');
+        }
+
+        return $this->hasLegacyTemplatingColumn;
+    }
+
+    /**
+     * Builds the category select column list with optional legacy flags.
+     */
+    private static function getCategorySelectColumns(bool $includeLegacy): string
+    {
+        $columns = [
+            'id',
+            'parent_id',
+            'name',
+            'type',
+            'display_order',
+            'typst_templating_enabled',
+        ];
+
+        if ($includeLegacy) {
+            $columns[] = 'latex_templating_enabled';
+        }
+
+        return implode(', ', $columns);
+    }
+
+    /**
+     * Checks whether a column exists on the category table.
+     */
+    private function hasCategoryColumn(string $column): bool
+    {
         $stmt = $this->connection->prepare(
             'SELECT COUNT(1) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
         );
         $table = 'category';
-        $column = 'typst_templating_enabled';
         $stmt->bind_param('ss', $table, $column);
         $stmt->execute();
         $result = $stmt->get_result();
         $count = (int) ($result->fetch_row()[0] ?? 0);
         $stmt->close();
 
-        if ($count === 0) {
-            $this->connection->query(
-                "ALTER TABLE category ADD COLUMN typst_templating_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER type"
-            );
-        }
-        // If legacy latex column exists, keep it in sync to preserve prior data.
-        $stmt = $this->connection->prepare(
-            'SELECT COUNT(1) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
-        );
-        $legacyColumn = 'latex_templating_enabled';
-        $stmt->bind_param('ss', $table, $legacyColumn);
-        $stmt->execute();
-        $legacyResult = $stmt->get_result();
-        $legacyCount = (int) ($legacyResult->fetch_row()[0] ?? 0);
-        $stmt->close();
-        if ($legacyCount > 0) {
-            $this->connection->query(
-                'UPDATE category SET typst_templating_enabled = latex_templating_enabled WHERE typst_templating_enabled IS NULL OR typst_templating_enabled = 0'
-            );
-        }
+        return $count > 0;
     }
 }
 /**

@@ -12,6 +12,7 @@ use mysqli;
 final class CatalogService
 {
     private mysqli $db;
+    private ?bool $hasLegacyTemplatingColumn = null;
 
     public function __construct(?mysqli $db = null)
     {
@@ -26,16 +27,19 @@ final class CatalogService
     public function getHierarchy(): array
     {
         $this->ensureTypstTemplatingColumn();
+        $hasLegacyColumn = $this->hasLegacyTemplatingColumn();
         $categories = [];
 
-        $result = $this->db->query(
-            'SELECT id, parent_id, name, type, display_order, typst_templating_enabled, latex_templating_enabled FROM category ORDER BY display_order ASC, name ASC'
-        );
+        $result = $this->db->query(sprintf(
+            'SELECT %s FROM category ORDER BY display_order ASC, name ASC',
+            self::getCategorySelectColumns($hasLegacyColumn)
+        ));
         while ($row = $result->fetch_assoc()) {
             $row['id'] = (int) $row['id'];
             $row['parent_id'] = $row['parent_id'] ? (int) $row['parent_id'] : null;
             $row['display_order'] = (int) $row['display_order'];
-            $row['typst_templating_enabled'] = ((int) ($row['typst_templating_enabled'] ?? $row['latex_templating_enabled'] ?? 0)) === 1;
+            $legacyFlag = $hasLegacyColumn ? (int) ($row['latex_templating_enabled'] ?? 0) : 0;
+            $row['typst_templating_enabled'] = ((int) ($row['typst_templating_enabled'] ?? $legacyFlag)) === 1;
             $row['children'] = [];
             $row['products'] = [];
             $row['product_count'] = 0;
@@ -79,39 +83,72 @@ final class CatalogService
      */
     private function ensureTypstTemplatingColumn(): void
     {
-        $stmt = $this->db->prepare(
-            'SELECT COUNT(1) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
-        );
-        $table = 'category';
         $column = 'typst_templating_enabled';
-        $stmt->bind_param('ss', $table, $column);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $count = (int) ($result->fetch_row()[0] ?? 0);
-        $stmt->close();
-
-        if ($count === 0) {
+        if (!$this->hasCategoryColumn($column)) {
             $this->db->query(
                 "ALTER TABLE category ADD COLUMN typst_templating_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER type"
             );
         }
 
         // Keep legacy latex flag in sync when present.
-        $stmt = $this->db->prepare(
-            'SELECT COUNT(1) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
-        );
         $legacyColumn = 'latex_templating_enabled';
-        $stmt->bind_param('ss', $table, $legacyColumn);
-        $stmt->execute();
-        $legacyResult = $stmt->get_result();
-        $legacyCount = (int) ($legacyResult->fetch_row()[0] ?? 0);
-        $stmt->close();
-
-        if ($legacyCount > 0) {
+        $this->hasLegacyTemplatingColumn = $this->hasCategoryColumn($legacyColumn);
+        if ($this->hasLegacyTemplatingColumn) {
             $this->db->query(
                 'UPDATE category SET typst_templating_enabled = latex_templating_enabled WHERE typst_templating_enabled IS NULL OR typst_templating_enabled = 0'
             );
         }
+    }
+
+    /**
+     * Returns whether the legacy latex templating column exists on category.
+     */
+    private function hasLegacyTemplatingColumn(): bool
+    {
+        if ($this->hasLegacyTemplatingColumn === null) {
+            $this->hasLegacyTemplatingColumn = $this->hasCategoryColumn('latex_templating_enabled');
+        }
+
+        return $this->hasLegacyTemplatingColumn;
+    }
+
+    /**
+     * Builds the category select column list with optional legacy flags.
+     */
+    private static function getCategorySelectColumns(bool $includeLegacy): string
+    {
+        $columns = [
+            'id',
+            'parent_id',
+            'name',
+            'type',
+            'display_order',
+            'typst_templating_enabled',
+        ];
+
+        if ($includeLegacy) {
+            $columns[] = 'latex_templating_enabled';
+        }
+
+        return implode(', ', $columns);
+    }
+
+    /**
+     * Checks whether a column exists on the category table.
+     */
+    private function hasCategoryColumn(string $column): bool
+    {
+        $stmt = $this->db->prepare(
+            'SELECT COUNT(1) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+        );
+        $table = 'category';
+        $stmt->bind_param('ss', $table, $column);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $count = (int) ($result->fetch_row()[0] ?? 0);
+        $stmt->close();
+
+        return $count > 0;
     }
 
     /**

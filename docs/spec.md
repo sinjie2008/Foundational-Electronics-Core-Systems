@@ -63,6 +63,8 @@ graph LR
 ## Data Model
 - Core tables: `category` (tree of categories/series), `product` (linked to series), `series_custom_field` (field metadata, scope series/product attributes), `product_custom_field_value`, `latex_templates`/`latex_variables`, `typst_templates`/`typst_variables`, `typst_series_preferences` (per-series Typst UI settings such as the last imported global template id).
 - Series-level Typst toggle: `category.typst_templating_enabled` (TINYINT(1) default 0, migrated from legacy `latex_templating_enabled` when present) remembers whether the Catalog UI "Enable Typst Templating" switch was turned on for that series so the UI can surface the Typst template link without re-toggling.
+- Legacy compatibility: `category.latex_templating_enabled` is optional; hierarchy reads must not depend on it and should treat missing legacy flags as disabled.
+- Typst bootstrap: Typst tables (`typst_templates`, `typst_variables`, `typst_series_preferences`) are created on first use when missing so operator UIs do not fail if migrations were skipped.
 - Template audit fields: `typst_templates.last_pdf_path` and `typst_templates.last_pdf_generated_at` hold the most recent compiled PDF location/timestamp for both global and series templates to drive Save PDF/Download actions without recompile.
 - Files: generated PDFs in `public/storage/latex-pdfs` and `public/storage/typst-pdfs`; CSV imports in `storage/csv`.
 - Category fields: per-category key/type/value pairs live in `typst_variables` with `is_global = 0` and `series_id = <category_id>`; file/image values reuse Typst asset storage under `public/storage/typst-assets/` for previews/downloads.
