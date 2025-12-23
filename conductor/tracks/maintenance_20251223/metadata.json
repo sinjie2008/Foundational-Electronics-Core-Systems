@@ -1,0 +1,8 @@
+﻿{
+    "description":  "Enhance the Typst templating system with better error handling and validation for global variable assets.",
+    "track_id":  "maintenance_20251223",
+    "type":  "feature",
+    "created_at":  "2025-12-23T20:28:07Z",
+    "status":  "new",
+    "updated_at":  "2025-12-23T20:28:07Z"
+}
