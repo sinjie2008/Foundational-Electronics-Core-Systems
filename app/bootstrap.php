@@ -2,10 +2,10 @@
 declare(strict_types=1);
 
 /**
- * Minimal bootstrap providing autoloading for the App namespace.
+ * Standalone bootstrap. Composer loads module classes without these side effects.
  */
 spl_autoload_register(function (string $class): void {
-    $prefix = 'App\\';
+    $prefix = 'CatalogSuite\\';
     $baseDir = __DIR__ . DIRECTORY_SEPARATOR;
 
     if (strncmp($prefix, $class, strlen($prefix)) !== 0) {
@@ -22,3 +22,5 @@ spl_autoload_register(function (string $class): void {
 
 // Ensure MySQLi throws exceptions for predictable error handling.
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+
+require_once __DIR__ . '/compatibility.php';

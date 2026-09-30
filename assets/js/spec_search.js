@@ -3,7 +3,7 @@
  * jQuery-powered, class-based controller for the spec search UI.
  * Uses Bootstrap 5 + DataTables and talks to the public/api endpoints.
  */
-class SpecSearchPage {
+export class SpecSearchPage {
     constructor() {
         this.api = {
             roots: 'api/spec-search/root-categories.php',
@@ -33,6 +33,34 @@ class SpecSearchPage {
     }
 
     /**
+     * Build a catalog UI deep-link with query parameters.
+     */
+    buildEditUrl(row) {
+        const category =
+            row.category ??
+            row.category_name ??
+            row.categoryId ??
+            row.category_id ??
+            '';
+        const series =
+            row.series ??
+            row.series_name ??
+            '';
+        const product =
+            row.sku ??
+            row.product ??
+            row.itemCode ??
+            row.item_code ??
+            '';
+        const params = new URLSearchParams({
+            category,
+            series,
+            product,
+        });
+        return `catalog_ui.html?${params.toString()}`;
+    }
+
+    /**
      * Initialize event bindings, DataTable, and initial data load.
      */
     init() {
@@ -52,11 +80,16 @@ class SpecSearchPage {
             this.loadProducts();
         });
 
-        this.$table.on('click', '[data-action="edit"]', (event) => this.handleEditClick(event));
+        this.$table.on('click', 'button[data-edit-url]', (event) => {
+            const url = event.currentTarget.getAttribute('data-edit-url');
+            if (url) {
+                window.location.href = url;
+            }
+        });
     }
 
     /**
-     * Set transient status text with optional inline spinner.
+     * Set transient status text.
      */
     setStatus(text, isLoading = false) {
         this.$status.empty();
@@ -74,18 +107,71 @@ class SpecSearchPage {
     }
 
     /**
+     * Run async work without the global loading overlay (Spec Search stays interactive).
+     */
+    withLoading(promiseFactory) {
+        try {
+            const result =
+                typeof promiseFactory === 'function'
+                    ? promiseFactory()
+                    : promiseFactory;
+            return Promise.resolve(result);
+        } catch (error) {
+            return Promise.reject(error);
+        }
+    }
+
+    /**
      * Fetch JSON with basic error handling.
      */
     async fetchJson(url, options = {}) {
-        const response = await fetch(url, {
-            headers: { 'Content-Type': 'application/json' },
-            ...options,
-        });
-        if (!response.ok) {
-            const body = await response.text();
-            throw new Error(body || `Request failed: ${response.status}`);
-        }
-        return response.json();
+        const runner = async () => {
+            const response = await fetch(url, {
+                headers: { 'Content-Type': 'application/json' },
+                ...options,
+            });
+
+            const text = await response.text();
+            let payload = {};
+            try {
+                payload = text ? JSON.parse(text) : {};
+            } catch (parseError) {
+                payload = {};
+            }
+
+            const correlationId = AppError.extractCorrelationId(payload, response);
+
+            if (!response.ok) {
+                const message =
+                    payload?.error?.message ??
+                    payload?.message ??
+                    `Request failed: ${response.status}`;
+                AppError.logDev({
+                    level: 'error',
+                    endpoint: url,
+                    status: response.status,
+                    errorCode: payload?.error?.code ?? 'request_failed',
+                    correlationId,
+                    message,
+                });
+                const error = new Error(AppError.buildUserMessage(message, correlationId));
+                error.correlationId = correlationId;
+                error.errorCode = payload?.error?.code ?? 'request_failed';
+                throw error;
+            }
+
+            AppError.logDev({
+                level: 'info',
+                endpoint: url,
+                status: response.status,
+                correlationId,
+                message: 'ok',
+            });
+
+            return payload;
+        };
+
+        return this.withLoading(runner);
     }
 
     /**
@@ -98,13 +184,15 @@ class SpecSearchPage {
                 { data: 'sku', title: 'SKU' },
                 { data: 'name', title: 'Name' },
                 { data: 'series', title: 'Series' },
-                { data: 'category', title: 'Category' },
                 {
-                    data: () => '',
-                    title: 'Actions',
+                    title: 'Edit',
+                    data: null,
                     orderable: false,
                     searchable: false,
-                    className: 'text-nowrap',
+                    render: (_, __, row) => {
+                        const url = this.buildEditUrl(row);
+                        return `<button type="button" class="btn btn-sm btn-outline-primary" data-edit-url="${url}">Edit</button>`;
+                    },
                 },
             ];
 
@@ -377,7 +465,7 @@ class SpecSearchPage {
             });
 
             const items = res?.data?.items || [];
-            const hiddenFields = new Set(['seriesId', 'categoryId', 'series_id', 'category_id']); // Hide raw identifiers from the UI table.
+            const hiddenFields = new Set(['seriesId', 'categoryId', 'series_id', 'category_id']); // Hide raw identifier fields from the table.
             const displayItems = items.map((item) => {
                 const clone = { ...item };
                 hiddenFields.forEach((field) => {
@@ -393,21 +481,7 @@ class SpecSearchPage {
             const dynamicKeys = new Set();
             displayItems.forEach((item) => {
                 Object.keys(item).forEach((k) => {
-                    if (
-                        ![
-                            'id',
-                            'sku',
-                            'name',
-                            'series',
-                            'category',
-                            'seriesImage',
-                            'pdfDownload',
-                            'seriesId',
-                            'categoryId',
-                            'series_id',
-                            'category_id',
-                        ].includes(k)
-                    ) {
+                    if (!['id', 'sku', 'name', 'series', 'category', 'seriesImage', 'pdfDownload', 'seriesId', 'categoryId', 'series_id', 'category_id'].includes(k)) {
                         dynamicKeys.add(k);
                     }
                 });
@@ -460,12 +534,14 @@ class SpecSearchPage {
                     },
                 },
                 {
-                    title: 'Actions',
-                    data: () =>
-                        '<button type="button" class="btn btn-sm btn-outline-primary" data-action="edit">Edit</button>',
+                    title: 'Edit',
+                    data: null,
                     orderable: false,
                     searchable: false,
-                    className: 'text-nowrap',
+                    render: (_, __, row) => {
+                        const url = this.buildEditUrl(row);
+                        return `<button type="button" class="btn btn-sm btn-outline-primary" data-edit-url="${url}">Edit</button>`;
+                    },
                 },
             ];
 
@@ -475,28 +551,6 @@ class SpecSearchPage {
         } finally {
             this.setStatus('');
         }
-    }
-
-    /**
-     * Redirect to catalog UI with query params for the selected row.
-     */
-    handleEditClick(event) {
-        if (!this.tableInstance) {
-            return;
-        }
-        const $row = $(event.currentTarget).closest('tr');
-        const rowData = this.tableInstance.row($row).data();
-        if (!rowData) {
-            return;
-        }
-
-        const params = new URLSearchParams({
-            category: rowData.category ?? '',
-            series: rowData.series ?? '',
-            product: rowData.sku ?? '',
-        });
-
-        window.location.href = `catalog_ui.html?${params.toString()}`;
     }
 }
 

@@ -1,37 +1,25 @@
-# Repository Guidelines
+# Project Guidelines
 
-## Project Structure & Module Organization
-- `app/` service layer (Catalog, SpecSearch, Latex, Typst) plus Support utilities (Config, Db, Logger, Request/Response).
-- `public/api/` PHP endpoints (catalog, spec-search, latex, typst, series); `public/` also hosts operator UIs and published PDFs under `public/storage`.
-- `assets/` contains UI JS/CSS; `scripts/` holds SQL/bootstrap helpers; `storage/` contains CSV imports, build artifacts, and logs.
-- Documentation lives in `docs/spec.md` (with Mermaid diagrams) and `docs/api.md`; task tracking in `todolist.md`.
+## Scope
+- Preserve all features, page URLs and API contracts, including legacy `catalog.php?action=v1.*` actions and WordPress consumers.
+- This standalone PHP MVC project is intended for later Laravel integration. Do not change frameworks, database schema or API field names during structural cleanup.
+- Separate PHP implementation from HTML templates. Keep styling and browser behaviour in asset files.
 
-## Build, Test, and Development Commands
-- `.\scripts\run-tests.ps1 [-SkipSeed]` — runs seed verification and API smoke tests (PowerShell required).
-- `php -S localhost:8000 -t public` — lightweight local server for the static UIs/API routing (align host/port with DB config).
-- `php scripts/run_typst_migrations.php` / `php scripts/run_sql.php` — set up Typst/other tables after DB credentials are configured.
-- Typst/LaTeX binaries: ensure `bin/typst.exe` or `typst` is on PATH; `pdflatex` location comes from env `CATALOG_PDFLATEX_BIN`.
+## Structure
+- Controllers handle HTTP requests; services implement feature workflows; repositories/models handle database persistence.
+- Keep five backend folders: `Controllers`, `Services`, `Repositories`, `Http`, `Support`. Schema/seed and configuration wiring belong in `Support`.
+- Use `CatalogSuite\` namespaces so the module does not collide with a Laravel application's `App\` classes.
+- `public/` exposes compatible pages/API entrypoints and compiled assets. `assets/scss/` and `assets/js/` contain sources.
+- `config/` holds settings; `scripts/` holds operational commands. Storage directories contain user/generated files.
+- `catalog.php` and `app/compatibility.php` retain historical integrations through namespaced implementation classes.
+- Composer loads the core without standalone bootstrap, global aliases or database setup. The optional Laravel provider owns host routes, connections and storage settings.
+- The legacy HTTP bridge supports sequential requests. Do not claim concurrent Octane/Swoole support without replacing its shared request/response capture state.
 
-## Coding Style & Naming Conventions
-- PHP strict_types everywhere; 4-space indent; single-responsibility services with constructor-injected `mysqli`.
-- Function-level docblocks mandatory; comment important variables/objects; avoid magic values by using `config/*.php`.
-- Log at service boundaries with correlation IDs (`Request::correlationId()` / `Response::success/error`); never log secrets or PII.
-- Prefer descriptive names by domain (`seriesId`, `field_key`, `pdfUrlPrefix`); keep JSON keys snake_case for payloads.
-
-## Testing Guidelines
-- Tests live in `tests/*.php` (plain PHP assertions). Add focused unit/integration tests per change and keep runtimes fast.
-- Run `.\scripts\run-tests.ps1` before merging; seed validation should remain green unless intentionally skipped for docs-only edits.
-- For new endpoints or flows, add minimal API contract tests mirroring the Response envelope (success/error + correlationId).
-
-## Documentation & Task Flow
-- Before coding, update `docs/spec.md` (ensure all Mermaid diagrams present) and `docs/api.md`; record open questions/decisions.
-- Break work into independently shippable items in `todolist.md`, mark statuses, and note the test approach per task.
-- Keep specs linked from code/PR descriptions so reviewers can trace rationale.
-
-## Commit & Pull Request Guidelines
-- Use short, imperative commit subjects with a scope when helpful (e.g., `catalog: tighten search bounds`, `docs: refresh api spec`); wrap at ~72 chars.
-- PRs should describe intent, key changes, tests run, and reference related tasks/issues; include screenshots or sample payloads for UI/API changes.
-
-## Security & Configuration Tips
-- Set DB credentials in `config/db.php` (or `db_config.php` fallback). Rotate truncate token/lock in `config/app.php` for destructive operations.
-- Generated PDFs are publicly reachable under `/storage/*`; avoid writing secrets there. Keep `storage/logs/app.log` trimmed via rotation settings.
+## Changes and Verification
+- Use strict PHP types, four-space indentation, descriptive names and focused responsibilities.
+- Preserve camelCase/snake_case fields, response envelopes, SQL ordering, validation, transactions, file paths and errors.
+- Run relevant PHP syntax checks, asset builds and functional/API checks. Destructive checks require disposable data.
+- No permanent project tests or runner. Temporary verification belongs outside this repository.
+- Never delete uploaded/generated files or expose credentials in logs.
+- Keep only `README.md`, `API.md` and these instructions current. Edit HTML in `views/` and assets in `assets/`; `public/` outputs are generated by the build.
+- Do not commit, push, deploy or update WordPress unless requested.

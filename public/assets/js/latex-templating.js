@@ -1,29 +1,38 @@
-(function () {
-    'use strict';
+export class LatexTemplatePage {
+    constructor() {
+        this.state = {
+            table: null,
+            templates: new Map(),
+            selectedId: null,
+            previewTimer: null,
+            saving: false,
+            building: false
+        };
+        for (const methodName of Object.getOwnPropertyNames(Object.getPrototypeOf(this))) {
+            if (methodName !== 'constructor' && typeof this[methodName] === 'function') {
+                this[methodName] = this[methodName].bind(this);
+            }
+        }
+        document.addEventListener('DOMContentLoaded', this.init);
+    }
 
     /** Tracks UI state for the LaTeX template workspace. */
-    const state = {
-        table: null,
-        templates: new Map(),
-        selectedId: null,
-        previewTimer: null,
-        saving: false,
-        building: false
-    };
+
 
     /** Wrap async work with the global loading overlay when available. */
-    function withLoading(promiseFactory) {
+    withLoading(promiseFactory) {
+        const page = this;
         if (window.LoadingOverlay && typeof window.LoadingOverlay.wrapPromise === 'function') {
             return window.LoadingOverlay.wrapPromise(promiseFactory);
         }
         return promiseFactory();
     }
 
-    document.addEventListener('DOMContentLoaded', init);
 
     /** Initializes DataTables, live preview defaults, and event handlers. */
-    function init() {
-        state.table = $('#latexTemplatesTable').DataTable({
+    init() {
+        const page = this;
+        page.state.table = $('#latexTemplatesTable').DataTable({
             data: [],
             columns: [
                 { data: 'title', title: 'Title' },
@@ -38,8 +47,8 @@
                         return text.length > 80 ? text.slice(0, 80) + '…' : text;
                     }
                 },
-                { data: 'createdAt', title: 'Created', render: renderDate },
-                { data: 'updatedAt', title: 'Updated', render: renderDate },
+                { data: 'createdAt', title: 'Created', render: page.renderDate },
+                { data: 'updatedAt', title: 'Updated', render: page.renderDate },
                 {
                     data: null,
                     title: 'Actions',
@@ -62,150 +71,159 @@
             lengthMenu: [10, 25, 50]
         });
 
-        bindEvents();
-        refreshTemplates();
-        renderPreview('');
-        updateActionButtons();
-        resetBuildLog();
+        page.bindEvents();
+        page.refreshTemplates();
+        page.renderPreview('');
+        page.updateActionButtons();
+        page.resetBuildLog();
     }
 
     /** Wires DOM events for CRUD operations, preview, and DataTable actions. */
-    function bindEvents() {
-        $('#templateForm').on('submit', handleSaveTemplate);
-        $('#latexSource').on('input', schedulePreviewRender);
+    bindEvents() {
+        const page = this;
+        $('#templateForm').on('submit', page.handleSaveTemplate);
+        $('#latexSource').on('input', page.schedulePreviewRender);
         $('#newTemplateButton').on('click', function () {
-            clearForm();
-            showAlert('info', 'Ready to create a new template.');
+            page.clearForm();
+            page.showAlert('info', 'Ready to create a new template.');
         });
         $('#buildTemplateButton').on('click', function () {
-            triggerBuild(state.selectedId);
+            page.triggerBuild(page.state.selectedId);
         });
-        $('#deleteTemplateButton').on('click', handleDeleteFromForm);
-        $('#refreshTemplatesButton').on('click', refreshTemplates);
+        $('#deleteTemplateButton').on('click', page.handleDeleteFromForm);
+        $('#refreshTemplatesButton').on('click', page.refreshTemplates);
 
         const tbody = $('#latexTemplatesTable tbody');
-        tbody.on('click', '.js-edit-template', handleRowEdit);
+        tbody.on('click', '.js-edit-template', page.handleRowEdit);
         tbody.on('click', '.js-build-template', function (event) {
-            const templateId = readTemplateIdFromEvent(event);
-            triggerBuild(templateId);
+            const templateId = page.readTemplateIdFromEvent(event);
+            page.triggerBuild(templateId);
         });
         tbody.on('click', '.js-delete-template', function (event) {
-            const templateId = readTemplateIdFromEvent(event);
+            const templateId = page.readTemplateIdFromEvent(event);
             if (templateId) {
-                deleteTemplate(templateId);
+                page.deleteTemplate(templateId);
             }
         });
     }
 
     /** Handles template creation or update submissions. */
-    async function handleSaveTemplate(event) {
+    async handleSaveTemplate(event) {
+        const page = this;
         event.preventDefault();
-        if (state.saving) {
+        if (page.state.saving) {
             return;
         }
 
-        const payload = serializeForm();
-        const templateId = state.selectedId;
+        const payload = page.serializeForm();
+        const templateId = page.state.selectedId;
         const action = templateId ? 'v1.updateLatexTemplate' : 'v1.createLatexTemplate';
         const method = templateId ? 'PUT' : 'POST';
 
         try {
-            setSaving(true);
-            const data = await apiRequest(action, {
+            page.setSaving(true);
+            const data = await page.apiRequest(action, {
                 method: method,
                 body: payload,
                 query: templateId ? { id: templateId } : undefined
             });
             if (data && typeof data === 'object') {
-                populateForm(data);
+                page.populateForm(data);
             }
-            await refreshTemplates();
-            showAlert('success', templateId ? 'Template updated successfully.' : 'Template created successfully.');
+            await page.refreshTemplates();
+            page.showAlert('success', templateId ? 'Template updated successfully.' : 'Template created successfully.');
         } catch (error) {
-            showAlert('danger', buildErrorMessage(error));
+            page.showAlert('danger', page.buildErrorMessage(error));
         } finally {
-            setSaving(false);
+            page.setSaving(false);
         }
     }
 
     /** Pulls the latest templates from the backend and refreshes the DataTable. */
-    async function refreshTemplates() {
+    async refreshTemplates() {
+        const page = this;
         try {
-            const rows = await apiRequest('v1.listLatexTemplates');
-            state.templates.clear();
+            const rows = await page.apiRequest('v1.listLatexTemplates');
+            page.state.templates.clear();
             const templateRows = Array.isArray(rows) ? rows : [];
             templateRows.forEach(function (row) {
                 if (row && typeof row.id === 'number') {
-                    state.templates.set(row.id, row);
+                    page.state.templates.set(row.id, row);
                 }
             });
-            if (state.table) {
-                state.table.clear().rows.add(templateRows).draw();
+            if (page.state.table) {
+                page.state.table.clear().rows.add(templateRows).draw();
             }
         } catch (error) {
-            showAlert('danger', buildErrorMessage(error));
+            page.showAlert('danger', page.buildErrorMessage(error));
         }
     }
 
     /** Responds to Edit clicks originating from the DataTable actions column. */
-    function handleRowEdit(event) {
-        const templateId = readTemplateIdFromEvent(event);
+    handleRowEdit(event) {
+        const page = this;
+        const templateId = page.readTemplateIdFromEvent(event);
         if (templateId) {
-            loadTemplate(templateId);
+            page.loadTemplate(templateId);
         }
     }
 
     /** Extracts a numeric template id from a delegated event target. */
-    function readTemplateIdFromEvent(event) {
+    readTemplateIdFromEvent(event) {
+        const page = this;
         const target = event && event.currentTarget;
         const idValue = target ? Number(target.getAttribute('data-template-id')) : NaN;
         return Number.isInteger(idValue) && idValue > 0 ? idValue : null;
     }
 
     /** Loads a single template from the backend and hydrates the editor form. */
-    async function loadTemplate(templateId) {
+    async loadTemplate(templateId) {
+        const page = this;
         try {
-            const data = await apiRequest('v1.getLatexTemplate', { method: 'GET', query: { id: templateId } });
-            populateForm(data);
-            showAlert('info', 'Editing template #' + templateId + '.');
+            const data = await page.apiRequest('v1.getLatexTemplate', { method: 'GET', query: { id: templateId } });
+            page.populateForm(data);
+            page.showAlert('info', 'Editing template #' + templateId + '.');
         } catch (error) {
-            showAlert('danger', buildErrorMessage(error));
+            page.showAlert('danger', page.buildErrorMessage(error));
         }
     }
 
     /** Binds loaded template data to inputs and preview widgets. */
-    function populateForm(template) {
+    populateForm(template) {
+        const page = this;
         if (!template) {
             return;
         }
-        state.selectedId = typeof template.id === 'number' ? template.id : null;
-        $('#templateId').val(state.selectedId != null ? state.selectedId : '');
+        page.state.selectedId = typeof template.id === 'number' ? template.id : null;
+        $('#templateId').val(page.state.selectedId != null ? page.state.selectedId : '');
         $('#templateTitle').val(template.title || '');
         $('#templateDescription').val(template.description || '');
         $('#latexSource').val(template.latex || '');
-        setFormModeBadge(state.selectedId);
-        updateActionButtons();
-        updatePdfSection(template);
-        updateBuildLog('', '');
-        renderPreview(template.latex || '');
+        page.setFormModeBadge(page.state.selectedId);
+        page.updateActionButtons();
+        page.updatePdfSection(template);
+        page.updateBuildLog('', '');
+        page.renderPreview(template.latex || '');
     }
 
     /** Clears the form, preview, and PDF context. */
-    function clearForm() {
-        state.selectedId = null;
+    clearForm() {
+        const page = this;
+        page.state.selectedId = null;
         $('#templateId').val('');
         $('#templateTitle').val('');
         $('#templateDescription').val('');
         $('#latexSource').val('');
-        setFormModeBadge(null);
-        updateActionButtons();
-        updatePdfSection(null);
-        resetBuildLog();
-        renderPreview('');
+        page.setFormModeBadge(null);
+        page.updateActionButtons();
+        page.updatePdfSection(null);
+        page.resetBuildLog();
+        page.renderPreview('');
     }
 
     /** Serializes form inputs into a payload object sent to the API. */
-    function serializeForm() {
+    serializeForm() {
+        const page = this;
         return {
             title: ($('#templateTitle').val() || '').toString().trim(),
             description: ($('#templateDescription').val() || '').toString().trim(),
@@ -214,84 +232,89 @@
     }
 
     /** Initiates the delete flow from the editor panel. */
-    function handleDeleteFromForm() {
-        if (!state.selectedId) {
-            showAlert('warning', 'Select a template before deleting.');
+    handleDeleteFromForm() {
+        const page = this;
+        if (!page.state.selectedId) {
+            page.showAlert('warning', 'Select a template before deleting.');
             return;
         }
-        deleteTemplate(state.selectedId);
+        page.deleteTemplate(page.state.selectedId);
     }
 
     /** Sends a delete request after confirming with the operator. */
-    async function deleteTemplate(templateId) {
+    async deleteTemplate(templateId) {
+        const page = this;
         if (!templateId) {
             return;
         }
-        const template = state.templates.get(templateId);
+        const template = page.state.templates.get(templateId);
         const label = template && template.title ? '"' + template.title + '"' : '#' + templateId;
         if (!window.confirm('Delete template ' + label + '? This cannot be undone.')) {
             return;
         }
         try {
-            await apiRequest('v1.deleteLatexTemplate', { method: 'DELETE', query: { id: templateId } });
-            if (state.selectedId === templateId) {
-                clearForm();
+            await page.apiRequest('v1.deleteLatexTemplate', { method: 'DELETE', query: { id: templateId } });
+            if (page.state.selectedId === templateId) {
+                page.clearForm();
             }
-            await refreshTemplates();
-            showAlert('success', 'Template ' + label + ' deleted.');
+            await page.refreshTemplates();
+            page.showAlert('success', 'Template ' + label + ' deleted.');
         } catch (error) {
-            showAlert('danger', buildErrorMessage(error));
+            page.showAlert('danger', page.buildErrorMessage(error));
         }
     }
 
     /** Calls the PDF build endpoint and displays status/log output. */
-    async function triggerBuild(templateId) {
+    async triggerBuild(templateId) {
+        const page = this;
         if (!templateId) {
-            showAlert('warning', 'Save and select a template before building the PDF.');
+            page.showAlert('warning', 'Save and select a template before building the PDF.');
             return;
         }
-        if (state.building) {
+        if (page.state.building) {
             return;
         }
         try {
-            setBuilding(true);
-            const result = await apiRequest('v1.buildLatexTemplate', {
+            page.setBuilding(true);
+            const result = await page.apiRequest('v1.buildLatexTemplate', {
                 method: 'POST',
                 query: { id: templateId }
             });
-            await refreshTemplates();
-            if (state.selectedId === templateId) {
-                updatePdfSection({
+            await page.refreshTemplates();
+            if (page.state.selectedId === templateId) {
+                page.updatePdfSection({
                     pdfPath: result && result.pdfPath ? result.pdfPath : null,
                     downloadUrl: result && result.downloadUrl ? result.downloadUrl : null,
                     updatedAt: result && result.updatedAt ? result.updatedAt : null
                 });
-                updateBuildLog(result && result.log ? result.log : '', result && result.correlationId ? result.correlationId : '');
+                page.updateBuildLog(result && result.log ? result.log : '', result && result.correlationId ? result.correlationId : '');
             }
-            const cached = state.templates.get(templateId);
+            const cached = page.state.templates.get(templateId);
             const name = cached && cached.title ? cached.title : 'template #' + templateId;
-            showAlert('success', 'Build completed for ' + name + '.');
+            page.showAlert('success', 'Build completed for ' + name + '.');
         } catch (error) {
             const details = error && error.details ? error.details : {};
-            updateBuildLog(details.stderr || '', details.correlationId || '');
-            showAlert('danger', buildErrorMessage(error));
+            page.updateBuildLog(details.stderr || '', details.correlationId || '');
+            page.showAlert('danger', page.buildErrorMessage(error));
         } finally {
-            setBuilding(false);
+            page.setBuilding(false);
         }
     }
 
     /** Debounces preview updates as the operator types. */
-    function schedulePreviewRender() {
-        if (state.previewTimer) {
-            window.clearTimeout(state.previewTimer);
+    schedulePreviewRender() {
+        const page = this;
+        if (page.state.previewTimer) {
+            window.clearTimeout(page.state.previewTimer);
         }
-        state.previewTimer = window.setTimeout(function () {
-            renderPreview(($('#latexSource').val() || '').toString());
+        page.state.previewTimer = window.setTimeout(function () {
+            page.renderPreview(($('#latexSource').val() || '').toString());
         }, 250);
     }
 
     /** Updates the MathJax preview along with the raw source snapshot. */
-    function renderPreview(latex) {
+    renderPreview(latex) {
+        const page = this;
         const sourceEl = document.getElementById('latex-preview-source');
         const renderEl = document.getElementById('latex-preview-render');
         if (!sourceEl || !renderEl) {
@@ -322,7 +345,8 @@
     }
 
     /** Toggles download/link widgets for the latest generated PDF. */
-    function updatePdfSection(template) {
+    updatePdfSection(template) {
+        const page = this;
         const link = document.getElementById('pdfDownloadLink');
         const frame = document.getElementById('pdfPreviewFrame');
         const status = document.getElementById('pdfStatusText');
@@ -347,12 +371,13 @@
             }
         }
         if (status) {
-            status.textContent = updatedAt ? 'Last built ' + formatDateTime(updatedAt) : 'No PDF generated yet.';
+            status.textContent = updatedAt ? 'Last built ' + page.formatDateTime(updatedAt) : 'No PDF generated yet.';
         }
     }
 
     /** Displays the last compilation log output with an optional correlation id. */
-    function updateBuildLog(logText, correlationId) {
+    updateBuildLog(logText, correlationId) {
+        const page = this;
         const logEl = document.getElementById('latex-build-log');
         const metaEl = document.getElementById('buildMetaDetails');
         if (logEl) {
@@ -366,12 +391,14 @@
     }
 
     /** Resets the build log console to its default placeholder. */
-    function resetBuildLog() {
-        updateBuildLog('', '');
+    resetBuildLog() {
+        const page = this;
+        page.updateBuildLog('', '');
     }
 
     /** Renders a dismissible Bootstrap alert in the status placeholder. */
-    function showAlert(variant, message) {
+    showAlert(variant, message) {
+        const page = this;
         const container = document.getElementById('statusAlert');
         if (!container) {
             return;
@@ -385,15 +412,17 @@
     }
 
     /** Formats ISO timestamps for DataTable cells. */
-    function renderDate(value) {
+    renderDate(value) {
+        const page = this;
         if (!value) {
             return '<span class="text-muted">—</span>';
         }
-        return formatDateTime(value);
+        return page.formatDateTime(value);
     }
 
     /** Produces a localized timestamp string with graceful fallbacks. */
-    function formatDateTime(value) {
+    formatDateTime(value) {
+        const page = this;
         try {
             const date = new Date(value);
             if (Number.isNaN(date.getTime())) {
@@ -406,27 +435,31 @@
     }
 
     /** Enables/disables the Save button to prevent duplicate clicks. */
-    function setSaving(isSaving) {
-        state.saving = isSaving;
+    setSaving(isSaving) {
+        const page = this;
+        page.state.saving = isSaving;
         $('#saveTemplateButton').prop('disabled', isSaving);
     }
 
     /** Coordinates Build button state with ongoing MiKTeX invocations. */
-    function setBuilding(isBuilding) {
-        state.building = isBuilding;
-        $('#buildTemplateButton').prop('disabled', isBuilding || !state.selectedId);
+    setBuilding(isBuilding) {
+        const page = this;
+        page.state.building = isBuilding;
+        $('#buildTemplateButton').prop('disabled', isBuilding || !page.state.selectedId);
     }
 
     /** Refreshes action button availability and badge text based on selection. */
-    function updateActionButtons() {
-        const hasSelection = Boolean(state.selectedId);
+    updateActionButtons() {
+        const page = this;
+        const hasSelection = Boolean(page.state.selectedId);
         $('#deleteTemplateButton').prop('disabled', !hasSelection);
-        $('#buildTemplateButton').prop('disabled', !hasSelection || state.building);
-        setFormModeBadge(state.selectedId);
+        $('#buildTemplateButton').prop('disabled', !hasSelection || page.state.building);
+        page.setFormModeBadge(page.state.selectedId);
     }
 
     /** Updates the mode badge to signal whether a template is selected. */
-    function setFormModeBadge(templateId) {
+    setFormModeBadge(templateId) {
+        const page = this;
         const badge = document.getElementById('formModeBadge');
         if (!badge) {
             return;
@@ -443,7 +476,8 @@
     }
 
     /** Builds a user-visible error message from an API exception (with correlation ID). */
-    function buildErrorMessage(error) {
+    buildErrorMessage(error) {
+        const page = this;
         if (!error) {
             return 'Unable to complete the request.';
         }
@@ -455,8 +489,9 @@
     }
 
     /** Issues an AJAX request against catalog.php with JSON handling. */
-    async function apiRequest(action, options) {
-        return withLoading(async () => {
+    async apiRequest(action, options) {
+        const page = this;
+        return page.withLoading(async () => {
             const opts = options || {};
             const method = opts.method || 'GET';
             const headers = { Accept: 'application/json' };
@@ -519,4 +554,6 @@
             return payload.data || null;
         });
     }
-})();
+}
+
+new LatexTemplatePage();

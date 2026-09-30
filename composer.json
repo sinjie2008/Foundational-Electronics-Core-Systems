@@ -1,0 +1,26 @@
+{
+    "name": "catalog-suite/module",
+    "description": "Standalone catalog MVC application with Laravel module integration",
+    "type": "library",
+    "require": {
+        "php": ">=8.3",
+        "ext-mysqli": "*",
+        "ext-mbstring": "*",
+        "ext-fileinfo": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "CatalogSuite\\": "app/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "CatalogSuite\\Support\\ModuleServiceProvider"
+            ]
+        }
+    },
+    "suggest": {
+        "laravel/framework": "Required by the optional Laravel service provider and HTTP bridge"
+    }
+}

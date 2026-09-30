@@ -3,7 +3,7 @@
  * jQuery-powered, class-based controller for the spec search UI.
  * Uses Bootstrap 5 + DataTables and talks to the public/api endpoints.
  */
-class SpecSearchPage {
+export class SpecSearchPage {
     constructor() {
         this.api = {
             roots: 'api/spec-search/root-categories.php',

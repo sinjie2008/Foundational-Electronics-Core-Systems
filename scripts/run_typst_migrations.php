@@ -1,12 +1,12 @@
 <?php
 require_once __DIR__ . '/../app/Support/Db.php';
-use App\Support\Db;
+use CatalogSuite\Support\Db;
 
-// Assuming Db class handles connection. 
+// Assuming Db class handles connection.
 // If not, I'll fallback to raw PDO using config.
-// Let's check App\Support\Db first. 
+// Let's check CatalogSuite\Support\Db first.
 // Actually, to be safe and quick, I'll copy the logic from run_sql.php but point to the new file.
-// But run_sql.php used config/db.php which might be different from App\Support\Db.
+// But run_sql.php used config/db.php which might be different from CatalogSuite\Support\Db.
 // Let's stick to the pattern in run_sql.php but fix the path if needed.
 
 $configPath = __DIR__ . '/../config/db.php';
@@ -43,13 +43,13 @@ try {
     if (!file_exists($sqlFile)) {
         die("SQL file not found: $sqlFile");
     }
-    
+
     $sql = file_get_contents($sqlFile);
-    
+
     // Split by semicolon to run multiple queries if needed, or just exec if PDO supports multiple
     // PDO::exec supports multiple queries in one string for MySQL usually.
     $pdo->exec($sql);
-    
+
     echo "Typst tables created successfully.\n";
 } catch (PDOException $e) {
     echo "Error: " . $e->getMessage() . "\n";

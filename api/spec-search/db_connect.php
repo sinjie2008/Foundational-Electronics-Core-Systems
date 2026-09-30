@@ -1,7 +1,9 @@
 <?php
-// api/spec-search/db_connect.php
+declare(strict_types=1);
 
-function getDbConnection() {
+// Compatibility database helper retained for existing integrations.
+function getDbConnection()
+{
     $configPath = __DIR__ . '/../../db_config.php';
     if (!file_exists($configPath)) {
         die(json_encode(['error' => 'Database configuration not found']));
@@ -25,4 +27,3 @@ function getDbConnection() {
 
     return $mysqli;
 }
-?>

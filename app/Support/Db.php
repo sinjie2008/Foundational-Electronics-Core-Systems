@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace App\Support;
+namespace CatalogSuite\Support;
 
 use mysqli;
 use mysqli_sql_exception;
@@ -25,7 +25,8 @@ final class Db
             (string) $config['username'],
             (string) $config['password'],
             (string) $config['database'],
-            (int) $config['port']
+            (int) ($config['port'] ?? 3306),
+            $config['unix_socket'] ?? null
         );
 
         $mysqli->set_charset($config['charset'] ?? 'utf8mb4');

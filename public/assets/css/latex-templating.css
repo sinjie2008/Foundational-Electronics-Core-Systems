@@ -1,112 +1,112 @@
 :root {
-    --latex-panel-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.05);
+  --latex-panel-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.05);
 }
 
 body {
-    background-color: #f8f9fb;
+  background-color: #f8f9fb;
 }
 
 .template-panel {
-    background-color: #ffffff;
-    border-radius: 0.5rem;
-    box-shadow: var(--latex-panel-shadow);
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
+  background-color: #ffffff;
+  border-radius: 0.5rem;
+  box-shadow: var(--latex-panel-shadow);
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
 }
 
 .template-panel h2,
 .template-panel h3 {
-    font-size: 1.15rem;
-    margin-bottom: 1rem;
+  font-size: 1.15rem;
+  margin-bottom: 1rem;
 }
 
 #latex-preview-render {
-    min-height: 240px;
-    border: 1px solid #dee2e6;
-    border-radius: 0.5rem;
-    padding: 1rem;
-    background-color: #fefefe;
-    overflow-x: auto;
+  min-height: 240px;
+  border: 1px solid #dee2e6;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  background-color: #fefefe;
+  overflow-x: auto;
 }
 
 #latex-preview-source {
-    min-height: 200px;
-    border: 1px dashed #ced4da;
-    border-radius: 0.5rem;
-    padding: 1rem;
-    background-color: #fcfcfc;
-    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-    font-size: 0.85rem;
-    white-space: pre-wrap;
-    word-wrap: break-word;
+  min-height: 200px;
+  border: 1px dashed #ced4da;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  background-color: #fcfcfc;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 
 .pdf-frame {
-    width: 100%;
-    min-height: 420px;
-    border: 1px solid #ced4da;
-    border-radius: 0.5rem;
-    background-color: #fff;
+  width: 100%;
+  min-height: 420px;
+  border: 1px solid #ced4da;
+  border-radius: 0.5rem;
+  background-color: #fff;
 }
 
 .table-actions .btn {
-    margin-right: 0.25rem;
+  margin-right: 0.25rem;
 }
 
 .table-actions .btn:last-child {
-    margin-right: 0;
+  margin-right: 0;
 }
 
 .alert-placeholder {
-    min-height: 2.25rem;
+  min-height: 2.25rem;
 }
 
 #latex-build-log {
-    max-height: 200px;
-    overflow-y: auto;
-    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-    font-size: 0.85rem;
-    background-color: #0f172a;
-    color: #e2e8f0;
-    border-radius: 0.35rem;
-    padding: 0.75rem;
+  max-height: 200px;
+  overflow-y: auto;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.85rem;
+  background-color: #0f172a;
+  color: #e2e8f0;
+  border-radius: 0.35rem;
+  padding: 0.75rem;
 }
 
 .line-numbered-editor {
-    position: relative;
-    width: 100%;
+  position: relative;
+  width: 100%;
 }
 
 .line-numbered-editor textarea {
-    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-    font-size: 0.9rem;
-    line-height: 1.5;
-    padding-left: 3.5rem;
-    white-space: pre;
-    overflow: auto;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  padding-left: 3.5rem;
+  white-space: pre;
+  overflow: auto;
 }
 
 .line-numbered-editor .line-numbers {
-    position: absolute;
-    top: 0.25rem;
-    bottom: 0.25rem;
-    left: 0.35rem;
-    width: 2.75rem;
-    background: #f6f7f9;
-    border-right: 1px solid #dee2e6;
-    color: #6c757d;
-    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-    font-size: 0.85rem;
-    line-height: 1.5;
-    text-align: right;
-    padding: 0.35rem 0.5rem;
-    user-select: none;
-    pointer-events: none;
-    overflow: hidden;
-    border-top-left-radius: 0.35rem;
-    border-bottom-left-radius: 0.35rem;
+  position: absolute;
+  top: 0.25rem;
+  bottom: 0.25rem;
+  left: 0.35rem;
+  width: 2.75rem;
+  background: #f6f7f9;
+  border-right: 1px solid #dee2e6;
+  color: #6c757d;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  text-align: right;
+  padding: 0.35rem 0.5rem;
+  user-select: none;
+  pointer-events: none;
+  overflow: hidden;
+  border-top-left-radius: 0.35rem;
+  border-bottom-left-radius: 0.35rem;
 }
 
 .line-numbered-editor .line-numbers div {
-    height: 1.5em;
+  height: 1.5em;
 }

@@ -1,0 +1,11 @@
+{
+  "name": "catalog-suite-assets",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:assets": "node scripts/build-assets.mjs"
+  },
+  "devDependencies": {
+    "sass": "1.105.1"
+  }
+}
