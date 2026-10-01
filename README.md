@@ -74,6 +74,8 @@ Use ordinary sequential Laravel request handling, such as PHP-FPM. The compatibi
 
 Optional `CATALOG_DB_HOST`, `CATALOG_DB_PORT`, `CATALOG_DB_USERNAME`, `CATALOG_DB_PASSWORD` and `CATALOG_DB_DATABASE` override database settings. `CATALOG_STORAGE_ROOT` isolates legacy catalog storage for development checks. Defaults preserve the existing installation.
 
+The default database host is `localhost` on Windows so Laragon can use IPv6 when WSL forwards `127.0.0.1:3306` to another database. Other platforms retain `127.0.0.1`; set `CATALOG_DB_HOST` explicitly to select a different server.
+
 There is no permanent project test directory or runner. Use PHP syntax checks, the asset build and temporary functional/API checks outside the repository. CSV restore/truncate and other destructive checks require disposable data. Do not run them against production data.
 
 Keep uploaded files, generated PDFs and credentials out of source-control cleanup. Do not deploy or update WordPress until API compatibility has been checked against the intended installation.
