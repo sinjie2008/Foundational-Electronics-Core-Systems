@@ -4,176 +4,167 @@ Branch: `plan/public-product-api-v1`
 
 ## Goal
 
-Design and verify a dynamic public product API inside this repository first, before integrating it into the Laravel website.
+Build and verify the dynamic public product API inside this repository first.
 
-The API must support these four wireframe routes without page-specific hard-coding:
+Do **not** integrate it into the Laravel website yet.
+
+The API must support the four approved product-page structures:
 
 1. `/products`
 2. `/products/general`
 3. `/products/general/emc`
 4. `/products/general/emc/a4k`
 
-The API contract must be driven by catalog data, hierarchy, field definitions, content blocks, assets, and product values. Adding a new category, family, series, field, image, document, section, or part number must not require new API code for that specific item.
+The four routes define the required UI/data capabilities. They do **not** authorize hard-coded product/category/series data.
 
-## Non-negotiable rules
+## Critical testing rule
 
-- No `if ($series === 'A4K')` or equivalent product-specific branches.
-- No fixed EMC-only or General-only API controllers.
-- No fixed specification column list in code.
-- No fixed A4K section list in code.
-- No fixed category depth assumption.
-- No URL logic derived only from mutable display names.
-- Existing catalog tables and legacy endpoints must remain compatible.
-- New schema changes must be additive wherever possible.
-- Existing Filament/DataTable mapping must be able to read the same field definitions later.
-- Public data visibility must respect `is_public_portal_hidden`.
-- Backend visibility must remain independent via `is_backend_portal_hidden`.
-- API responses must be versioned.
-- API behaviour must be testable using deterministic fixture data.
+No invented catalog data will be shipped for verification.
+
+That means:
+
+- no B9X test series
+- no fake product families
+- no fake part numbers
+- no fake A4K specifications
+- no fake specification values
+- no fake product documents/images presented as real catalog data
+
+After implementation, the user will import the actual catalog data and use that real imported data for acceptance testing.
+
+Automated tests may create isolated temporary records inside the test database where technically required, but these records must be generic test records, must not resemble production catalog entries, and must never be included in production seed/import data.
 
 ---
 
-# 1. What the four pages require
+## Non-negotiable architecture rules
 
-## Page A — /products
+- No `if ($series === 'A4K')` or equivalent series-specific branching.
+- No `if ($category === 'EMC')` page logic.
+- No fixed General/Automotive/EMC controller logic.
+- No fixed specification-column list.
+- No fixed category depth.
+- No fixed section list for A4K.
+- No fabricated seed catalog.
+- No URL generated only from mutable display names.
+- Existing legacy API behaviour must remain compatible.
+- New schema changes should be additive where possible.
+- Public visibility must respect `is_public_portal_hidden`.
+- Backend visibility remains independent through `is_backend_portal_hidden`.
+- The same field definitions must later be reusable by Filament/DataTable.
+- All new public endpoints are versioned.
 
-Wireframe requirements:
+The design principle is:
 
-- Breadcrumb
-- Hero banner
-- General Components section
-- Automotive Components section
-- Product category columns
-- Dynamic product/family item rows
-- View More links
-- Latest Release section
-- Latest-release cards
-- Previous/next browsing controls
+```
+Admin/import defines data
+        ↓
+Database stores hierarchy + schema + content + assets + values
+        ↓
+Catalog domain services resolve data dynamically
+        ↓
+Public API exposes generic resources
+        ↓
+Website renders those resources
+```
 
-The API therefore needs to expose:
+---
 
-- page identity
-- breadcrumb path
+# 1. Four-page capability mapping
+
+## /products
+
+Must support dynamically:
+
+- breadcrumb
 - hero content
-- top-level catalog groups
-- category/family children
-- ordered item rows
-- navigation targets
-- latest-release entries
-- release card image/title/subtitle/link
+- General/Automotive-style top-level groups
+- category/family columns
+- item rows
+- View More targets
+- Latest Release collection
+- release cards
+- release ordering
+- previous/next UI data
+
+Names such as General, Automotive, EMC, etc. come from imported data.
+
+## /products/general
+
+Must support dynamically:
+
+- breadcrumb
+- hero
+- horizontal sub-navigation
+- child sections
+- child section title/description
+- category/family thumbnails
+- category/family labels
+- ordered children
+- target paths
+
+The same category-detail API must support another root branch without new code.
+
+## /products/general/emc
+
+Must support dynamically:
+
+- breadcrumb
+- hero/title/description
+- family navigation
+- multiple family sections
+- family descriptions
+- dynamic series-summary table schemas
+- dynamic series rows
+- thumbnail/image
+- download link when actual document exists
 - display order
 
-Nothing in this page should require the API to know the words "General", "Automotive", "EMC", etc. Those are data.
+The API must not know which columns EMC uses.
 
-## Page B — /products/general
+Each imported family controls its own summary-table schema.
 
-Wireframe requirements:
+## /products/general/emc/a4k
 
-- Breadcrumb
-- Hero banner
-- Horizontal sub-navigation
-- EMC Components section
-- Magnetic Components section
-- Transformer section
-- product-family labels
-- product-family thumbnails/visuals
-- section descriptions
-- ordered product/family rows
+Must support a generic series-detail page capable of rendering the approved A4K wireframe structure:
 
-The API therefore needs:
-
-- resolved node for `general`
-- node metadata/content
-- child category/family navigation
-- ordered category sections
-- section image/visual
-- section description
-- ordered child items
-- item image/thumbnail
-- item label
-- target path
-
-The same contract must also be able to render Automotive or another branch later.
-
-## Page C — /products/general/emc
-
-Wireframe requirements:
-
-- Breadcrumb
-- hero/title + description
-- product-family sub-navigation
-- Chip Array Ferrite Bead section
-- Chip Inductor section
-- Ferrite Bead Assembly section
-- Ferrite Chip Bead section
-- additional family tabs when configured
-- dynamic table columns
-- ordered series rows
-- series/product thumbnail
-- Download action
-- per-family description
-- multiple rows per family
-
-The API must NOT hard-code the columns visible in these tables.
-
-For each family, the API should return:
-
-- family definition
-- family description
-- table schema
-- series rows
-- series thumbnail
-- dynamic summary values
-- download document where available
-- destination URL for each series
-- display order
-
-This page is a key reason the field-definition model must be reusable at both:
-- family/series-summary level
-- series/part-number level
-
-## Page D — /products/general/emc/a4k
-
-The saved wireframe scan contains these sections:
-
-- Breadcrumb
-- Product title
-- Product category/family
-- Introduction
-- Feature list
-- Product status
-- Compliance information
-- Product image
-- 3D view
-- dimension summary
-- sub-navigation
+- breadcrumb
+- title
+- family/category context
+- introduction
+- features
+- product status
+- compliance
+- image/gallery
+- optional 3D asset
+- dimensional summary
+- section/sub-navigation
 - Specifications
-- specification summary values
 - search
-- inquiry
-- selectable part-number rows
+- selectable part numbers
 - dynamic specification columns
+- filters
+- sorting
 - pagination
-- row download action
+- row download where configured
 - Environmental
 - Performance Curves
 - Physical Dimension
 - PCB Layout
 - Tape & Reel
-- Soldering / Washing
+- Soldering/Washing
 - CTA
-- Send Enquiry
-- Download Brochure
+- enquiry action metadata
+- brochure/document metadata
 
-This page must be rendered from a generic series-detail resource.
+A4K is an actual catalog series to be provided by imported data.
 
-A4K is test data, not API logic.
+The implementation must not contain A4K-specific code.
 
 ---
 
-# 2. Domain model direction
+# 2. Existing model to preserve
 
-The repository already has a strong base:
+The repository already contains the core dynamic structure:
 
 ```
 category
@@ -181,77 +172,72 @@ product
 series_custom_field
 series_custom_field_value
 product_custom_field_value
-typst_templates
 ```
 
-Keep this foundation.
+Continue using this foundation.
 
-## 2.1 Category / series hierarchy
+Conceptually:
 
-Current:
-- `category.type = category | series`
-- recursive `parent_id`
+```
+category hierarchy
+    ↓
+series
+    ↓
+products / part numbers
+    ↓
+dynamic field definitions
+    ↓
+dynamic field values
+```
 
-Add:
+Do not create tables or classes per product series.
 
-- `slug`
-- optional publication fields
-- optional navigation visibility flags if needed
+---
 
-Recommended unique constraint:
+# 3. Persistent slug/path support
+
+Add persistent slug support to hierarchy nodes.
+
+Recommended:
+
+```
+category.slug
+```
+
+with sibling uniqueness:
 
 ```
 UNIQUE(parent_id, slug)
 ```
 
-Path resolution must be recursive and depth-independent.
+Rules:
 
-Example test hierarchy:
+- slug stored in DB
+- display-name change does not silently change URL
+- path built recursively from hierarchy
+- unlimited category depth
+- canonical path resolution
+- optional aliases/flattening can be represented as data later
+- no A4K path exception in source code
 
-```
-Products (virtual API root)
-└── General
-    └── EMC
-        └── Chip Array Ferrite Bead
-            └── A4K
-```
+---
 
-The database does not need a literal "Products" category if the API root represents the catalog itself.
+# 4. Dynamic field/schema support
 
-## 2.2 Product / part number
+Extend `series_custom_field` additively for API/DataTable rendering.
 
-Keep:
+Recommended fields:
 
-```
-product
-- id
-- series_id
-- sku
-- name
-- description
-```
-
-A4K part numbers remain product records.
-
-Do not create a new table per series.
-
-## 2.3 Dynamic field definitions
-
-Extend the existing `series_custom_field` definition rather than hard-coding specification columns.
-
-Recommended additive fields:
-
-- `unit` nullable string
-- `is_filterable` boolean
-- `is_sortable` boolean
-- `is_table_column` boolean
-- `filter_type` nullable enum/string
-- `data_type` or continue using `field_type`
-- `config_json` nullable JSON
+- `unit`
+- `is_filterable`
+- `is_sortable`
+- `is_table_column`
+- `filter_type`
+- `config_json`
 - optional `group_key`
 - optional `group_label`
 
-Existing fields remain authoritative:
+Existing properties remain important:
 
 - `field_key`
 - `label`
@@ -263,28 +249,17 @@ Existing fields remain authoritative:
 - `is_public_portal_hidden`
 - `is_backend_portal_hidden`
 
-A DataTable later reads the same field definitions.
+The public DataTable schema is generated from these records.
 
-## 2.4 Series metadata
+No column names are hard-coded in the controller.
 
-Keep the current `series_metadata` scope for scalar metadata.
+---
 
-Examples:
+# 5. Generic content blocks
 
-- category label
-- product status
-- compliance flags
-- package dimensions
-- summary specification values
-- brochure/document IDs when suitable
+The current scalar metadata model is not enough for all series-detail sections.
 
-Do not put large structured page layouts into scalar metadata.
-
-## 2.5 Generic content blocks
-
-Add a generic content-block model to support the non-tabular A4K sections and higher-level page content.
-
-Recommended table:
+Add a generic content-block model, for example:
 
 ```
 catalog_content_block
@@ -301,12 +276,13 @@ catalog_content_block
 - updated_at
 ```
 
-Possible `owner_type`:
-- catalog_root
+Owner can be:
+
+- catalog root
 - category
 - series
 
-Possible controlled `block_type` values:
+Reusable block types may include:
 
 - hero
 - rich_text
@@ -324,18 +300,15 @@ Possible controlled `block_type` values:
 - navigation
 - collection
 
-These block types are renderer semantics, not product names.
+Do not create product-specific block types such as `a4k_environmental`.
 
-Do not add block types named:
-- a4k_environmental
-- emc_table
-- general_banner
+Sub-navigation is generated from available public content blocks and their order.
 
-## 2.6 Generic media/assets
+---
 
-Add a normalized asset model rather than relying only on specific field keys.
+# 6. Generic asset model
 
-Recommended:
+Add a normalized asset model, for example:
 
 ```
 catalog_asset
@@ -354,182 +327,119 @@ catalog_asset
 - updated_at
 ```
 
-Example roles:
+Reusable roles can cover:
 
-- primary_image
+- primary image
 - thumbnail
-- gallery
-- hero_visual
-- 3d_model
-- performance_curve
-- dimension_drawing
-- pcb_layout
-- tape_reel
-- soldering_curve
+- gallery image
+- hero visual
+- 3D model
+- performance curve
+- dimension drawing
+- PCB layout
+- tape/reel drawing
+- soldering/reflow curve
 - datasheet
 - brochure
 
-Roles remain data-driven and reusable.
+Actual role records come from imported/admin-managed data.
 
 ---
 
-# 3. Public API shape
+# 7. Generic collections
 
-Proposed base:
+The `/products` Latest Release area should be data-driven.
+
+Use a generic collection concept, for example:
+
+```
+catalog_collection
+catalog_collection_item
+```
+
+This allows imported/admin-managed ordering of:
+
+- latest releases
+- featured series
+- featured categories
+- future sliders/collections
+
+Do not determine "latest release" only from database ID.
+
+---
+
+# 8. Public API V1
+
+Base:
 
 ```
 /api/v1/catalog
 ```
 
-This repository should build and verify the contract first. Laravel Passport comes later when this contract is accepted.
-
-## 3.1 Catalog root
+## Root
 
 ```
 GET /api/v1/catalog
 ```
 
-Purpose:
-- support `/products`
+Supports the `/products` composition.
 
-Returns:
-- root page metadata
-- breadcrumb
-- hero/content blocks
-- top-level group collections
-- latest releases
-- navigation paths
-
-## 3.2 Tree
+## Tree
 
 ```
 GET /api/v1/catalog/tree
 ```
 
-Returns a public-safe hierarchy.
+Public-safe hierarchy.
 
-Use for:
-- navigation
-- sitemap
-- route discovery
-- menu construction
-
-Must filter hidden/private data.
-
-## 3.3 Resolve a path
+## Resolve
 
 ```
 GET /api/v1/catalog/resolve/{path}
 ```
 
-Examples:
+Examples after actual data is imported:
 
 ```
-GET /api/v1/catalog/resolve/general
-GET /api/v1/catalog/resolve/general/emc
-GET /api/v1/catalog/resolve/general/emc/a4k
+/api/v1/catalog/resolve/general
+/api/v1/catalog/resolve/general/emc
+/api/v1/catalog/resolve/general/emc/a4k
 ```
 
-Returns:
-- resolved entity type
-- entity ID
-- canonical slug/path
-- breadcrumb chain
-- parent/ancestor information
-
-No frontend database IDs required.
-
-## 3.4 Category detail
+## Category detail
 
 ```
 GET /api/v1/catalog/categories/{path}
 ```
 
-Examples:
+Generic category resource for pages such as:
 
-```
-GET /api/v1/catalog/categories/general
-GET /api/v1/catalog/categories/general/emc
-```
-
-Returns dynamically:
-
-- category data
-- content blocks
-- assets
-- child categories
-- child series
-- collections/sections
-- summary-table schemas when configured
-
-This one generic resource supports both:
 - `/products/general`
 - `/products/general/emc`
 
-## 3.5 Series detail
+## Series detail
 
 ```
 GET /api/v1/catalog/series/{path}
 ```
 
-Example:
+Generic series resource for pages such as A4K.
 
-```
-GET /api/v1/catalog/series/general/emc/a4k
-```
-
-Returns:
-
-- series identity
-- breadcrumbs
-- family/category context
-- metadata
-- content blocks
-- assets
-- compliance/status
-- part schema
-- summary specifications
-- downloads
-- sub-navigation generated from public blocks
-
-No A4K-specific response code.
-
-## 3.6 Series field schema
+## Series fields
 
 ```
 GET /api/v1/catalog/series/{path}/fields
 ```
 
-Returns public product-attribute field definitions.
+Returns field/schema definitions from imported data.
 
-Example shape:
-
-```json
-{
-  "data": [
-    {
-      "key": "impedance",
-      "label": "Impedance",
-      "type": "number",
-      "unit": "ohm",
-      "sortable": true,
-      "filterable": true,
-      "tableColumn": true,
-      "sortOrder": 10
-    }
-  ]
-}
-```
-
-Frontend/DataTable must build columns from this.
-
-## 3.7 Series parts
+## Series parts
 
 ```
 GET /api/v1/catalog/series/{path}/parts
 ```
 
-Supported query parameters:
+Supports:
 
 - `page`
 - `per_page`
@@ -538,539 +448,308 @@ Supported query parameters:
 - `direction`
 - `filter[field_key]`
 
-Example:
-
-```
-GET /api/v1/catalog/series/general/emc/a4k/parts
-  ?page=1
-  &per_page=25
-  &search=A4K300
-  &sort=dcr
-  &direction=asc
-  &filter[impedance][]=30
-```
-
-Response:
-
-```json
-{
-  "schema": [],
-  "data": [],
-  "meta": {
-    "currentPage": 1,
-    "perPage": 25,
-    "total": 0,
-    "lastPage": 0
-  }
-}
-```
-
-Schema may be embedded here to minimize requests, but it must come from field definitions.
-
-## 3.8 Facets
+## Facets
 
 ```
 GET /api/v1/catalog/series/{path}/facets
 ```
 
-or generic category search facets where needed.
+Generated only from imported fields marked filterable.
 
-Facet definitions come from `is_filterable` fields.
-
-## 3.9 Search
+## Search
 
 ```
-GET /api/v1/catalog/search?q=
+GET /api/v1/catalog/search?q=`
 ```
 
-Search:
-- categories
-- families
+Searches public:
+
+- category/family
 - series
-- products/part numbers
-
-Return canonical paths.
-
-## 3.10 Downloads
-
-Downloads should be represented as resource links in API responses.
-
-The API should not infer file role from a hard-coded field name if the new asset model exists.
-
-Existing legacy media/PDF behaviour must remain compatible.
+- product/part number
 
 ---
 
-# 4. Dynamic page composition
+# 9. Dynamic EMC/family summary tables
 
-The API should not contain controllers named after the four pages.
+Family tables must be schema-driven.
 
-Instead, the frontend composition is driven by generic resources.
-
-## /products
-
-Uses:
-
-- catalog root
-- content blocks
-- top-level collections
-- latest releases
-
-## /products/general
-
-Uses:
-
-- category detail for `general`
-- child category collections
-- category content blocks
-- category assets
-
-## /products/general/emc
-
-Uses:
-
-- category detail for `general/emc`
-- family collections
-- dynamic family summary-table schemas
-- ordered series rows
-- asset/document links
-
-## /products/general/emc/a4k
-
-Uses:
-
-- series detail for `general/emc/a4k`
-- content blocks
-- assets
-- field schema
-- parts endpoint
-- facet endpoint
-
-This is the central verification condition:
-the same endpoints must be able to render another category/series fixture without code changes.
-
----
-
-# 5. Family summary tables on the EMC page
-
-The EMC wireframe has family sections with tables such as:
-
-- Product
-- Series
-- Dimension
-- Impedance Range
-- DCR Range
-- other family-specific columns
-- Download
-
-These must also be data-driven.
-
-Recommended approach:
-
-Add a reusable "view schema" or summary-field configuration attached to the family/category.
-
-Example conceptual configuration:
+Generic configuration concept:
 
 ```json
 {
   "view": "series_summary_table",
   "columns": [
     {
-      "key": "series",
-      "source": "series.name",
-      "label": "Series"
-    },
-    {
-      "key": "dimension",
-      "source": "series.metadata.dimension",
-      "label": "Dimension"
-    },
-    {
-      "key": "impedance_range",
-      "source": "series.metadata.impedance_range",
-      "label": "Impedance Range",
-      "unit": "ohm"
+      "key": "some_field",
+      "source": "series.metadata.some_field",
+      "label": "Label supplied by data"
     }
   ]
 }
 ```
 
-The API interprets generic source descriptors/configuration.
+The implementation understands generic sources/types.
 
-It does not know that EMC must contain "Impedance Range".
+It does not contain a fixed list such as:
 
-A different family can configure different summary columns.
+- Dimension
+- Impedance Range
+- DCR Range
 
----
-
-# 6. Latest release model
-
-The `/products` page requires a latest-release row.
-
-Do not query "latest" only by newest database ID.
-
-Use an explicit publication/release model.
-
-Options:
-
-A. add fields to series/product:
-- `published_at`
-- `is_featured`
-
-or
-
-B. use a generic collection:
-
-```
-catalog_collection
-catalog_collection_item
-```
-
-Recommended for flexibility:
-
-```
-catalog_collection
-- id
-- key
-- title
-- owner_type
-- owner_id
-- display_order
-- is_public
-
-catalog_collection_item
-- collection_id
-- item_type
-- item_id
-- display_order
-- metadata_json
-```
-
-Then `latest_release` is a data collection, not controller logic.
-
-This can also support homepage sliders later.
+Those values must come from the imported schema/configuration.
 
 ---
 
-# 7. Slug and canonical path behaviour
+# 10. Recursive hierarchy requirement
 
-Add persistent slug storage.
+The existing SpecSearch logic includes shallow assumptions in some queries.
 
-Rules:
-
-- slug is stored, not recalculated on every request
-- sibling slugs must be unique
-- slug can differ from display name
-- canonical path is built from ancestor slugs
-- path traversal supports unlimited category depth
-- series are terminal catalog nodes for part-number ownership
-- path changes should be deliberate
-
-Test example:
+The V1 public API must support:
 
 ```
-General Components -> general
-EMC Components -> emc
-Chip Array Ferrite Bead -> chip-array-ferrite-bead
-A4K Series -> a4k
+category
+└── category
+    └── category
+        └── series
 ```
 
-Canonical detail URL:
+and deeper structures without controller changes.
 
-```
-/products/general/emc/a4k
-```
-
-The family may exist in the ancestry/model even if the public route intentionally omits a family slug. If route flattening is required, represent that with route configuration/alias data, not a hard-coded A4K exception.
+Use recursive repository logic or recursive CTEs according to supported DB versions.
 
 ---
 
-# 8. Recursive hierarchy
+# 11. Public visibility
 
-The current SpecSearch implementation assumes a relatively shallow structure in important places.
-
-New public API queries must:
-
-- recursively resolve descendants
-- not assume series are direct children of the selected category
-- support category -> category -> category -> series
-- support future hierarchy expansion
-
-MySQL 8/MariaDB-compatible recursive CTEs or repository recursion may be used depending on supported deployment versions.
-
----
-
-# 9. Compatibility strategy
-
-Do not replace these existing contracts during V1 planning:
-
-- legacy `catalog.php?action=...`
-- current `/api/catalog/*`
-- current `/api/spec-search/*`
-- CSV import/export
-- Typst
-- LaTeX compatibility
-- existing media URLs
-- existing Laravel bridge behaviour
-
-New API lives independently under:
-
-```
-/api/v1/catalog/*
-```
-
-Reuse services/repositories where correct, but do not force old response envelopes into the new public contract.
-
----
-
-# 10. Response envelope
-
-Recommended:
-
-```json
-{
-  "data": {},
-  "meta": {},
-  "links": {},
-  "correlationId": "..."
-}
-```
-
-Errors:
-
-```json
-{
-  "error": {
-    "code": "not_found",
-    "message": "Catalog resource not found"
-  },
-  "correlationId": "..."
-}
-```
-
-Keep correlation-ID support.
-
----
-
-# 11. Public visibility rules
-
-Every public API query must exclude:
-
-- hidden fields
-- non-public blocks
-- non-public assets
-- unpublished entities if publication state is introduced
-
-For existing fields:
+A public field where:
 
 ```
 is_public_portal_hidden = 1
 ```
 
-must never leak through:
-- field schema
+must not appear in:
+
+- field schemas
 - product values
 - facets
 - search
 - summary tables
 
+Likewise:
+
+- non-public content blocks are excluded
+- non-public assets are excluded
+- unpublished entities are excluded if publication status is added
+
+No private value may be leaked merely because the underlying product has a stored value.
+
 ---
 
-# 12. Test fixture
+# 12. Pagination/filter/sort
 
-A deterministic fixture is stored beside this plan:
+The parts endpoint must perform real server-side pagination.
+
+Do not fetch a fixed large result and paginate in the browser.
+
+Example shape:
+
+```
+GET /api/v1/catalog/series/{actual-path}/parts
+?page=1
+&per_page=25
+&search={actual-part-number}
+&sort={actual-sortable-field}
+&direction=asc
+&filter[{actual-filterable-field}][]={actual-value}
+```
+
+Allowed sort/filter fields are derived from imported field definitions.
+
+Unknown/private/non-filterable/non-sortable keys must return validation errors.
+
+---
+
+# 13. Existing compatibility
+
+Do not break:
+
+- legacy `catalog.php?action=...`
+- existing catalog API
+- existing SpecSearch API
+- CSV import/export
+- Typst
+- existing media behaviour
+- existing Laravel bridge behaviour
+
+The new V1 public API is isolated under:
+
+```
+/api/v1/catalog/*
+```
+
+---
+
+# 14. Testing policy
+
+## Before actual catalog import
+
+Automated engineering tests verify behaviour using isolated temporary generic test records only.
+
+Those tests verify:
+
+- recursive hierarchy
+- slug stability
+- schema generation
+- public visibility
+- content-block ordering
+- asset ordering
+- collection ordering
+- pagination
+- search
+- filtering
+- sorting
+- validation
+- no product-specific code path
+
+Temporary test records are created/destroyed by the test suite.
+
+They are not production seed data.
+
+## After implementation
+
+The user imports actual catalog data.
+
+Then acceptance testing uses:
 
 ```
 docs/api-plan/public-product-api-v1-test-variables.json
 ```
 
-The fixture deliberately contains:
+The user fills in the actual imported values.
 
-- the four page paths
-- a realistic General -> EMC -> family -> A4K hierarchy
-- A4K metadata
-- A4K dynamic part fields
-- multiple A4K part numbers
-- an extra "B9X" test series with different fields
+Examples:
 
-The B9X series is essential.
+- actual General path
+- actual EMC path
+- actual A4K path
+- actual part number
+- actual sortable field
+- actual filterable field
+- actual expected field count
+- actual document/image expectations
 
-If B9X renders correctly through the same API without adding B9X code, the design passes the "not hard-coded" test.
-
----
-
-# 13. Verification tests to implement
-
-## Hierarchy tests
-
-1. root catalog returns General and Automotive fixture groups.
-2. `resolve/general` resolves dynamically.
-3. `resolve/general/emc` resolves dynamically.
-4. `resolve/general/emc/a4k` resolves a series.
-5. recursive descendants work beyond two category levels.
-6. changing a display name does not change the stored slug.
-7. sibling duplicate slug is rejected.
-
-## /products tests
-
-1. hero block is returned from fixture data.
-2. General and Automotive sections are ordered by data.
-3. category columns/rows come from the hierarchy.
-4. latest releases come from a collection.
-5. changing collection order changes response order without code change.
-
-## /products/general tests
-
-1. hero is data-driven.
-2. sub-navigation is data-driven.
-3. EMC/Magnetic/Transformer sections come from children/content configuration.
-4. product-family labels and thumbnails come from fixture records.
-5. adding another family shows it without controller changes.
-
-## /products/general/emc tests
-
-1. all family sections are returned dynamically.
-2. each family can have a different table schema.
-3. table headers are generated from configuration.
-4. series rows contain only configured public summary values.
-5. download resource appears only when an asset exists.
-6. a family with no download does not generate a fake URL.
-7. family/series display order follows data.
-
-## A4K detail tests
-
-1. detail endpoint resolves A4K by path.
-2. breadcrumb is built from hierarchy.
-3. title/category/status/compliance come from data.
-4. image gallery comes from assets.
-5. 3D model is optional and asset-driven.
-6. sub-navigation is generated from available public content blocks.
-7. hidden block does not appear in nav or content.
-8. Environmental block comes from fixture.
-9. Performance Curves support multiple assets.
-10. Physical Dimension supports multiple drawings.
-11. Tape & Reel comes from block/asset data.
-12. Soldering/Washing comes from block/asset data.
-13. CTA actions come from data.
-14. brochure appears only when configured.
-
-## Dynamic DataTable tests
-
-1. field definitions determine column order.
-2. hidden public field is excluded.
-3. filterable field appears in facets.
-4. non-filterable field does not.
-5. sortable field can be used in `sort`.
-6. unsupported sort key returns validation error.
-7. product values are returned by field key.
-8. pagination returns correct totals.
-9. search matches part number/SKU.
-10. multiple filters combine predictably.
-11. null/missing optional values remain valid.
-12. one series can define fields not present in another.
-
-## No-hard-code proof test
-
-Fixture series:
-- A4K
-- B9X
-
-A4K fields:
-- impedance
-- test_frequency
-- dcr
-- rated_current
-- length
-- width
-- height
-
-B9X fields:
-- inductance
-- saturation_current
-- temperature_rise_current
-
-Acceptance:
-
-- both series use the same controller/service/resource classes
-- both return different schemas
-- neither series name appears in API branching logic
-- adding B9X does not require source-code changes outside fixture/seed data
+No expected catalog values are invented by the implementation.
 
 ---
 
-# 14. Suggested implementation phases after plan approval
+# 15. Real-data acceptance checks
 
-## Phase 1 — schema additions
+After import, verify:
 
-- persistent slugs
-- field-display/filter/sort metadata
-- generic content blocks
-- generic assets
-- generic collections
+## /products
 
-No public endpoint release yet.
+- imported top-level sections appear
+- actual hierarchy/order matches data
+- Latest Release comes from actual collection data
+- no missing/extra fabricated records
 
-## Phase 2 — repositories/services
+## /products/general
 
-- recursive path resolver
-- public hierarchy service
-- public content service
-- public asset service
-- dynamic schema service
-- dynamic part query service
-- collection service
+- actual child sections appear
+- actual images/descriptions/navigation appear
+- ordering matches imported data
 
-## Phase 3 — API V1 read endpoints
+## /products/general/emc
 
-- root
-- tree
-- resolve
-- category
-- series
-- fields
-- parts
-- facets
-- search
+- actual families appear
+- each family uses its own actual summary schema
+- actual series rows appear
+- actual document links appear only where configured
+- no fixed EMC column assumptions
 
-## Phase 4 — fixture + automated verification
+## A4K
 
-- load deterministic test variables
-- execute all four page contract tests
-- execute B9X no-hard-code proof tests
-- validate hidden/public field behaviour
-- validate pagination/filter/sort
+Using the actual imported A4K data:
 
-## Phase 5 — API documentation
-
-- endpoint reference
-- request examples
-- response examples
-- error codes
-- fixture verification guide
-
-## Phase 6 — only after acceptance
-
-Integrate this proven contract into the Laravel site and then apply Passport/authentication policy there or in the eventual host application.
+- correct breadcrumb
+- correct series identity
+- correct actual status/compliance
+- actual images/assets
+- actual optional 3D asset
+- actual public content sections
+- actual specification columns
+- actual part numbers
+- actual filter values
+- actual sorting
+- actual pagination
+- actual downloads
+- hidden/private fields absent
 
 ---
 
-# 15. Definition of done for this repository-first API
+# 16. No-hard-code proof
 
-The API is ready for Laravel integration only when:
+The strongest proof will come from real imported data.
 
-- all four wireframe page requirements can be represented
+After the first real series works:
+
+1. import another real series with different fields
+2. do not change API source code
+3. call the same generic endpoints
+4. confirm the field schema changes automatically
+5. confirm its product rows use its own fields
+6. confirm its content/assets render from its own records
+
+Acceptance condition:
+
+```
+new imported series
++ different schema/content/assets
++ zero controller/service code changes
+= PASS
+```
+
+---
+
+# 17. Implementation sequence after plan approval
+
+1. Add persistent slug/path support.
+2. Add dynamic field presentation/filter/sort metadata.
+3. Add generic content blocks.
+4. Add generic assets.
+5. Add generic collections.
+6. Build recursive hierarchy/path resolver.
+7. Build public catalog services/repositories.
+8. Build `/api/v1/catalog/*` read endpoints.
+9. Build server-side field-driven parts query.
+10. Add public visibility enforcement.
+11. Add automated generic behaviour tests.
+12. Add API documentation.
+13. User imports actual catalog data.
+14. Fill actual verification variables.
+15. Verify all four pages with real data.
+16. Only after acceptance, integrate into the Laravel website and decide Passport/public authentication policy.
+
+---
+
+# Definition of done
+
+The repository-first API is ready for Laravel integration only when:
+
+- all four approved page structures are representable
+- no invented catalog seed data is required
 - no A4K-specific API code exists
 - no EMC-specific API code exists
-- no fixed specification table columns exist in application code
+- no fixed product field list exists
 - hierarchy depth is dynamic
-- slugs are persistent
-- fields are schema-driven
-- content sections are block-driven
-- images/documents are asset-driven
-- latest releases are collection-driven
+- field schema is dynamic
+- content sections are dynamic
+- assets are dynamic
+- family summary schemas are dynamic
+- collection ordering is dynamic
+- server-side pagination/filter/sort works
 - public visibility is enforced
-- pagination/filter/sort are server-side
-- A4K fixture passes
-- B9X different-schema fixture passes
-- existing legacy APIs remain functional
-- automated tests prove all of the above
+- actual imported A4K data passes
+- at least one other actual imported series works without source-code changes
+- legacy behaviour remains functional
