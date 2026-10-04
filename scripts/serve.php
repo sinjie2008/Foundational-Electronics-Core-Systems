@@ -4,6 +4,12 @@ declare(strict_types=1);
 // PHP development-server router. Production servers should use equivalent aliases.
 require_once dirname(__DIR__) . '/app/bootstrap.php';
 
+$rawPath = (string) parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+if ($rawPath === '/api/v1/catalog' || str_starts_with($rawPath, '/api/v1/catalog/')) {
+    (new CatalogSuite\Controllers\PublicCatalogV1Controller())->run();
+    return true;
+}
+
 $path = rawurldecode((string) parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH));
 $publicRoot = realpath(dirname(__DIR__) . '/public');
 $publicFile = realpath(dirname(__DIR__) . '/public' . $path);
