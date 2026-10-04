@@ -1,610 +1,101 @@
 {
   "version": "public-product-api-v1",
-  "purpose": "Deterministic verification variables for the repository-first public product API plan. Values are test fixtures, not API hard-coded constants.",
-  "page_paths": [
-    "/products",
-    "/products/general",
-    "/products/general/emc",
-    "/products/general/emc/a4k"
-  ],
-  "hierarchy": {
-    "root": {
-      "key": "products",
-      "title": "Our Products"
-    },
-    "categories": [
-      {
-        "id": 100,
-        "parent_id": null,
-        "name": "General Components",
-        "slug": "general",
-        "type": "category",
-        "display_order": 10,
-        "children": [
-          {
-            "id": 110,
-            "parent_id": 100,
-            "name": "EMC Components",
-            "slug": "emc",
-            "type": "category",
-            "display_order": 10,
-            "children": [
-              {
-                "id": 111,
-                "parent_id": 110,
-                "name": "Chip Array Ferrite Bead",
-                "slug": "chip-array-ferrite-bead",
-                "type": "category",
-                "display_order": 10,
-                "route_mode": "flatten_children",
-                "children": [
-                  {
-                    "id": 120,
-                    "parent_id": 111,
-                    "name": "A4K Series",
-                    "slug": "a4k",
-                    "type": "series",
-                    "display_order": 10
-                  },
-                  {
-                    "id": 121,
-                    "parent_id": 111,
-                    "name": "B9X Series",
-                    "slug": "b9x",
-                    "type": "series",
-                    "display_order": 20
-                  }
-                ]
-              },
-              {
-                "id": 112,
-                "parent_id": 110,
-                "name": "Chip Inductor",
-                "slug": "chip-inductor",
-                "type": "category",
-                "display_order": 20
-              },
-              {
-                "id": 113,
-                "parent_id": 110,
-                "name": "Ferrite Bead Assembly",
-                "slug": "ferrite-bead-assembly",
-                "type": "category",
-                "display_order": 30
-              },
-              {
-                "id": 114,
-                "parent_id": 110,
-                "name": "Ferrite Chip Bead",
-                "slug": "ferrite-chip-bead",
-                "type": "category",
-                "display_order": 40
-              }
-            ]
-          },
-          {
-            "id": 130,
-            "parent_id": 100,
-            "name": "Magnetic Components",
-            "slug": "magnetic",
-            "type": "category",
-            "display_order": 20
-          },
-          {
-            "id": 140,
-            "parent_id": 100,
-            "name": "Transformer",
-            "slug": "transformer",
-            "type": "category",
-            "display_order": 30
-          }
-        ]
-      },
-      {
-        "id": 200,
-        "parent_id": null,
-        "name": "Automotive Components",
-        "slug": "automotive",
-        "type": "category",
-        "display_order": 20
-      }
-    ]
+  "policy": "Fill these values only after actual catalog data has been imported. Do not populate this file with invented production-style catalog data.",
+  "fixed_page_contracts": {
+    "products": "/products",
+    "general": "/products/general",
+    "emc": "/products/general/emc",
+    "a4k": "/products/general/emc/a4k"
   },
-  "root_content": {
-    "hero": {
-      "block_type": "hero",
-      "title": "Our Products",
-      "body": "Test hero copy for dynamic verification."
-    },
-    "latest_release_collection": {
-      "key": "latest_release",
-      "items": [
-        {
-          "item_type": "series",
-          "item_id": 120,
-          "display_order": 10
-        },
-        {
-          "item_type": "series",
-          "item_id": 121,
-          "display_order": 20
-        }
-      ]
-    }
+  "actual_import_verification": {
+    "general_path": null,
+    "emc_path": null,
+    "a4k_series_path": null,
+    "a4k_series_slug": null,
+    "known_part_number": null,
+    "expected_public_field_count": null,
+    "expected_public_field_keys": [],
+    "known_filterable_field": null,
+    "known_filterable_value": null,
+    "known_sortable_field": null,
+    "expected_first_sorted_part_number": null,
+    "expected_total_part_count": null,
+    "expected_content_block_keys": [],
+    "expected_asset_roles": [],
+    "expected_download_roles": [],
+    "known_hidden_public_field_key": null
   },
-  "category_content": {
-    "general": {
-      "hero": {
-        "block_type": "hero",
-        "title": "General Components",
-        "body": "General category fixture description."
-      }
-    },
-    "emc": {
-      "hero": {
-        "block_type": "hero",
-        "title": "EMC Components",
-        "body": "Designed to reduce electrical noise and prevent interference between electronic devices."
-      },
-      "family_summary_schemas": {
-        "chip-array-ferrite-bead": [
-          {
-            "key": "product",
-            "label": "Product",
-            "source": "series.primary_image",
-            "type": "image",
-            "display_order": 10
-          },
-          {
-            "key": "series",
-            "label": "Series",
-            "source": "series.name",
-            "type": "text",
-            "display_order": 20
-          },
-          {
-            "key": "dimension",
-            "label": "Dimension",
-            "source": "series.metadata.dimension",
-            "type": "text",
-            "display_order": 30
-          },
-          {
-            "key": "impedance_range",
-            "label": "Impedance Range",
-            "source": "series.metadata.impedance_range",
-            "unit": "ohm",
-            "type": "text",
-            "display_order": 40
-          },
-          {
-            "key": "dcr_range",
-            "label": "DCR Range",
-            "source": "series.metadata.dcr_range",
-            "unit": "ohm",
-            "type": "text",
-            "display_order": 50
-          },
-          {
-            "key": "download",
-            "label": "Download",
-            "source": "series.asset.datasheet",
-            "type": "download",
-            "display_order": 60
-          }
-        ],
-        "chip-inductor": [
-          {
-            "key": "product",
-            "label": "Product",
-            "source": "series.primary_image",
-            "type": "image",
-            "display_order": 10
-          },
-          {
-            "key": "series",
-            "label": "Series",
-            "source": "series.name",
-            "type": "text",
-            "display_order": 20
-          },
-          {
-            "key": "inductance_range",
-            "label": "Inductance Range",
-            "source": "series.metadata.inductance_range",
-            "unit": "uH",
-            "type": "text",
-            "display_order": 30
-          },
-          {
-            "key": "download",
-            "label": "Download",
-            "source": "series.asset.datasheet",
-            "type": "download",
-            "display_order": 40
-          }
-        ]
-      }
-    }
+  "second_actual_series_no_hard_code_proof": {
+    "series_path": null,
+    "series_slug": null,
+    "known_part_number": null,
+    "expected_public_field_keys": [],
+    "expected_content_block_keys": [],
+    "expected_asset_roles": []
   },
-  "series": {
-    "a4k": {
-      "id": 120,
-      "canonical_path": "/products/general/emc/a4k",
-      "metadata": {
-        "family": "Chip Array Ferrite Bead",
-        "product_status": "Active",
-        "dimension": "3.20 x 1.60 x 0.90 mm",
-        "packaging_quantity": "3000/reel",
-        "impedance_range": "30 - 1000",
-        "dcr_range": "0.08 - 0.60",
-        "test_frequency_summary": "100 MHz"
-      },
-      "public_blocks": [
-        {
-          "key": "introduction",
-          "block_type": "rich_text",
-          "title": "Introduction",
-          "display_order": 10
-        },
-        {
-          "key": "features",
-          "block_type": "feature_list",
-          "title": "Features",
-          "display_order": 20
-        },
-        {
-          "key": "compliance",
-          "block_type": "compliance",
-          "title": "Compliance",
-          "display_order": 30
-        },
-        {
-          "key": "specifications",
-          "block_type": "collection",
-          "title": "Specifications",
-          "display_order": 40
-        },
-        {
-          "key": "environmental",
-          "block_type": "key_value",
-          "title": "Environmental",
-          "display_order": 50
-        },
-        {
-          "key": "performance_curves",
-          "block_type": "chart",
-          "title": "Performance Curves",
-          "display_order": 60
-        },
-        {
-          "key": "physical_dimension",
-          "block_type": "technical_drawing",
-          "title": "Physical Dimension",
-          "display_order": 70
-        },
-        {
-          "key": "tape_reel",
-          "block_type": "technical_drawing",
-          "title": "Tape & Reel",
-          "display_order": 80
-        },
-        {
-          "key": "soldering_washing",
-          "block_type": "rich_text",
-          "title": "Soldering / Washing",
-          "display_order": 90
-        },
-        {
-          "key": "cta",
-          "block_type": "cta",
-          "title": "Need Help?",
-          "display_order": 100
-        }
-      ],
-      "assets": [
-        {
-          "role": "primary_image",
-          "path": "fixtures/a4k/main.png",
-          "display_order": 10
-        },
-        {
-          "role": "thumbnail",
-          "path": "fixtures/a4k/thumb-1.png",
-          "display_order": 10
-        },
-        {
-          "role": "3d_model",
-          "path": "fixtures/a4k/model.glb",
-          "display_order": 10
-        },
-        {
-          "role": "performance_curve",
-          "path": "fixtures/a4k/curve-zrx.png",
-          "display_order": 10
-        },
-        {
-          "role": "dimension_drawing",
-          "path": "fixtures/a4k/dimension.png",
-          "display_order": 10
-        },
-        {
-          "role": "pcb_layout",
-          "path": "fixtures/a4k/pcb-layout.png",
-          "display_order": 20
-        },
-        {
-          "role": "tape_reel",
-          "path": "fixtures/a4k/tape-reel.png",
-          "display_order": 10
-        },
-        {
-          "role": "soldering_curve",
-          "path": "fixtures/a4k/reflow.png",
-          "display_order": 10
-        },
-        {
-          "role": "datasheet",
-          "path": "fixtures/a4k/a4k-datasheet.pdf",
-          "display_order": 10
-        },
-        {
-          "role": "brochure",
-          "path": "fixtures/a4k/a4k-brochure.pdf",
-          "display_order": 10
-        }
-      ],
-      "fields": [
-        {
-          "key": "impedance",
-          "label": "Impedance",
-          "type": "number",
-          "unit": "ohm",
-          "sort_order": 10,
-          "is_table_column": true,
-          "is_filterable": true,
-          "is_sortable": true,
-          "is_public_portal_hidden": false
-        },
-        {
-          "key": "test_frequency",
-          "label": "Test Frequency",
-          "type": "number",
-          "unit": "MHz",
-          "sort_order": 20,
-          "is_table_column": true,
-          "is_filterable": true,
-          "is_sortable": true,
-          "is_public_portal_hidden": false
-        },
-        {
-          "key": "dcr",
-          "label": "DCR",
-          "type": "number",
-          "unit": "mohm",
-          "sort_order": 30,
-          "is_table_column": true,
-          "is_filterable": true,
-          "is_sortable": true,
-          "is_public_portal_hidden": false
-        },
-        {
-          "key": "rated_current",
-          "label": "Rated Current",
-          "type": "number",
-          "unit": "mA",
-          "sort_order": 40,
-          "is_table_column": true,
-          "is_filterable": true,
-          "is_sortable": true,
-          "is_public_portal_hidden": false
-        },
-        {
-          "key": "length",
-          "label": "Length",
-          "type": "number",
-          "unit": "mm",
-          "sort_order": 50,
-          "is_table_column": true,
-          "is_filterable": true,
-          "is_sortable": true,
-          "is_public_portal_hidden": false
-        },
-        {
-          "key": "width",
-          "label": "Width",
-          "type": "number",
-          "unit": "mm",
-          "sort_order": 60,
-          "is_table_column": true,
-          "is_filterable": true,
-          "is_sortable": true,
-          "is_public_portal_hidden": false
-        },
-        {
-          "key": "height",
-          "label": "Height",
-          "type": "number",
-          "unit": "mm",
-          "sort_order": 70,
-          "is_table_column": true,
-          "is_filterable": true,
-          "is_sortable": true,
-          "is_public_portal_hidden": false
-        },
-        {
-          "key": "internal_note",
-          "label": "Internal Note",
-          "type": "text",
-          "sort_order": 999,
-          "is_table_column": false,
-          "is_filterable": false,
-          "is_sortable": false,
-          "is_public_portal_hidden": true
-        }
-      ],
-      "parts": [
-        {
-          "id": 12001,
-          "sku": "A4K300-RE-10",
-          "name": "A4K300-RE-10",
-          "values": {
-            "impedance": 30,
-            "test_frequency": 100,
-            "dcr": 80,
-            "rated_current": 1000,
-            "length": 3.2,
-            "width": 1.6,
-            "height": 0.9,
-            "internal_note": "must-not-leak"
-          }
-        },
-        {
-          "id": 12002,
-          "sku": "A4K600-RE-10",
-          "name": "A4K600-RE-10",
-          "values": {
-            "impedance": 60,
-            "test_frequency": 100,
-            "dcr": 120,
-            "rated_current": 800,
-            "length": 3.2,
-            "width": 1.6,
-            "height": 0.9,
-            "internal_note": "must-not-leak"
-          }
-        },
-        {
-          "id": 12003,
-          "sku": "A4K1000-RE-10",
-          "name": "A4K1000-RE-10",
-          "values": {
-            "impedance": 100,
-            "test_frequency": 100,
-            "dcr": 180,
-            "rated_current": 600,
-            "length": 3.2,
-            "width": 1.6,
-            "height": 0.9,
-            "internal_note": "must-not-leak"
-          }
-        }
-      ]
+  "verification_requests": [
+    {
+      "name": "catalog-root",
+      "method": "GET",
+      "path": "/api/v1/catalog"
     },
-    "b9x": {
-      "id": 121,
-      "canonical_path": "/products/general/emc/b9x",
-      "purpose": "No-hard-code proof: intentionally different field schema from A4K.",
-      "fields": [
-        {
-          "key": "inductance",
-          "label": "Inductance",
-          "type": "number",
-          "unit": "uH",
-          "sort_order": 10,
-          "is_table_column": true,
-          "is_filterable": true,
-          "is_sortable": true,
-          "is_public_portal_hidden": false
-        },
-        {
-          "key": "saturation_current",
-          "label": "Saturation Current",
-          "type": "number",
-          "unit": "A",
-          "sort_order": 20,
-          "is_table_column": true,
-          "is_filterable": true,
-          "is_sortable": true,
-          "is_public_portal_hidden": false
-        },
-        {
-          "key": "temperature_rise_current",
-          "label": "Temperature Rise Current",
-          "type": "number",
-          "unit": "A",
-          "sort_order": 30,
-          "is_table_column": true,
-          "is_filterable": false,
-          "is_sortable": true,
-          "is_public_portal_hidden": false
-        }
-      ],
-      "parts": [
-        {
-          "id": 12101,
-          "sku": "B9X-4R7",
-          "name": "B9X-4R7",
-          "values": {
-            "inductance": 4.7,
-            "saturation_current": 5.2,
-            "temperature_rise_current": 4.1
-          }
-        }
-      ]
-    }
-  },
-  "verification_queries": [
+    {
+      "name": "catalog-tree",
+      "method": "GET",
+      "path": "/api/v1/catalog/tree"
+    },
     {
       "name": "resolve-general",
       "method": "GET",
-      "path": "/api/v1/catalog/resolve/general",
-      "expect_status": 200
+      "path_template": "/api/v1/catalog/resolve/{general_path}"
     },
     {
       "name": "resolve-emc",
       "method": "GET",
-      "path": "/api/v1/catalog/resolve/general/emc",
-      "expect_status": 200
+      "path_template": "/api/v1/catalog/resolve/{emc_path}"
     },
     {
-      "name": "resolve-a4k",
+      "name": "series-detail",
       "method": "GET",
-      "path": "/api/v1/catalog/resolve/general/emc/a4k",
-      "expect_status": 200
+      "path_template": "/api/v1/catalog/series/{a4k_series_path}"
     },
     {
-      "name": "a4k-fields",
+      "name": "series-fields",
       "method": "GET",
-      "path": "/api/v1/catalog/series/general/emc/a4k/fields",
-      "expect_status": 200
+      "path_template": "/api/v1/catalog/series/{a4k_series_path}/fields"
     },
     {
-      "name": "a4k-parts",
+      "name": "series-parts",
       "method": "GET",
-      "path": "/api/v1/catalog/series/general/emc/a4k/parts?page=1&per_page=2",
-      "expect_status": 200
+      "path_template": "/api/v1/catalog/series/{a4k_series_path}/parts?page=1&per_page=25"
     },
     {
-      "name": "a4k-filter",
+      "name": "series-search",
       "method": "GET",
-      "path": "/api/v1/catalog/series/general/emc/a4k/parts?filter[impedance][]=30",
-      "expect_status": 200
+      "path_template": "/api/v1/catalog/series/{a4k_series_path}/parts?search={known_part_number}"
     },
     {
-      "name": "a4k-sort",
+      "name": "series-filter",
       "method": "GET",
-      "path": "/api/v1/catalog/series/general/emc/a4k/parts?sort=dcr&direction=asc",
-      "expect_status": 200
+      "path_template": "/api/v1/catalog/series/{a4k_series_path}/parts?filter[{known_filterable_field}][]={known_filterable_value}"
     },
     {
-      "name": "b9x-fields-no-hard-code",
+      "name": "series-sort",
       "method": "GET",
-      "path": "/api/v1/catalog/series/general/emc/b9x/fields",
-      "expect_status": 200
+      "path_template": "/api/v1/catalog/series/{a4k_series_path}/parts?sort={known_sortable_field}&direction=asc"
+    },
+    {
+      "name": "second-real-series-fields",
+      "method": "GET",
+      "path_template": "/api/v1/catalog/series/{second_actual_series_no_hard_code_proof.series_path}/fields"
     }
   ],
-  "acceptance_variables": {
-    "A4K_EXPECTED_PUBLIC_FIELD_COUNT": 7,
-    "A4K_EXPECTED_PART_COUNT": 3,
-    "A4K_EXPECTED_FIRST_SKU": "A4K300-RE-10",
-    "A4K_HIDDEN_FIELD_KEY": "internal_note",
-    "A4K_HIDDEN_FIELD_MUST_APPEAR_IN_PUBLIC_API": false,
-    "B9X_EXPECTED_PUBLIC_FIELD_COUNT": 3,
-    "B9X_EXPECTED_FIRST_FIELD_KEY": "inductance",
-    "EXPECTED_PRODUCTS_PAGE_PATH": "/products",
-    "EXPECTED_GENERAL_PAGE_PATH": "/products/general",
-    "EXPECTED_EMC_PAGE_PATH": "/products/general/emc",
-    "EXPECTED_A4K_PAGE_PATH": "/products/general/emc/a4k"
-  }
+  "pass_conditions": [
+    "All expected catalog values come from actual imported data.",
+    "No fabricated catalog records are needed for acceptance testing.",
+    "Hidden public fields never appear in the public API.",
+    "The A4K page contract is fulfilled using actual imported A4K data.",
+    "A second actual series with a different schema works through the same API without source-code changes.",
+    "No series/category name is used for branching in controllers, services, repositories, or resources."
+  ]
 }
