@@ -23,7 +23,10 @@
     "expected_content_block_keys": [],
     "expected_asset_roles": [],
     "expected_download_roles": [],
-    "known_hidden_public_field_key": null
+    "known_hidden_public_field_key": null,
+    "expected_table_column_keys": null,
+    "expected_filtered_part_count": null,
+    "expected_title": null
   },
   "second_actual_series_no_hard_code_proof": {
     "series_path": null,
@@ -31,7 +34,11 @@
     "known_part_number": null,
     "expected_public_field_keys": [],
     "expected_content_block_keys": [],
-    "expected_asset_roles": []
+    "expected_asset_roles": [],
+    "expected_public_field_count": null,
+    "expected_total_part_count": null,
+    "expected_table_column_keys": null,
+    "expected_download_roles": []
   },
   "verification_requests": [
     {
@@ -88,6 +95,26 @@
       "name": "second-real-series-fields",
       "method": "GET",
       "path_template": "/api/v1/catalog/series/{second_actual_series_no_hard_code_proof.series_path}/fields"
+    },
+    {
+      "name": "category-detail",
+      "method": "GET",
+      "path_template": "/api/v1/catalog/categories/{general_path}"
+    },
+    {
+      "name": "family-detail",
+      "method": "GET",
+      "path_template": "/api/v1/catalog/categories/{emc_path}"
+    },
+    {
+      "name": "series-facets",
+      "method": "GET",
+      "path_template": "/api/v1/catalog/series/{a4k_series_path}/facets"
+    },
+    {
+      "name": "global-part-search",
+      "method": "GET",
+      "path_template": "/api/v1/catalog/search?q={known_part_number}"
     }
   ],
   "pass_conditions": [
@@ -97,5 +124,49 @@
     "The A4K page contract is fulfilled using actual imported A4K data.",
     "A second actual series with a different schema works through the same API without source-code changes.",
     "No series/category name is used for branching in controllers, services, repositories, or resources."
-  ]
+  ],
+  "page_composition_verification": {
+    "expected_group_paths": [],
+    "expected_collection_keys": [],
+    "family_tables": [],
+    "responses": []
+  },
+  "verification_bindings": {
+    "categories": [
+      "actual_import_verification.general_path",
+      "actual_import_verification.emc_path"
+    ],
+    "primary_series": {
+      "path": "actual_import_verification.a4k_series_path",
+      "slug": "actual_import_verification.a4k_series_slug",
+      "part_number": "actual_import_verification.known_part_number",
+      "field_count": "actual_import_verification.expected_public_field_count",
+      "field_keys": "actual_import_verification.expected_public_field_keys",
+      "blocks": "actual_import_verification.expected_content_block_keys",
+      "asset_roles": "actual_import_verification.expected_asset_roles",
+      "download_roles": "actual_import_verification.expected_download_roles",
+      "part_count": "actual_import_verification.expected_total_part_count",
+      "filter_field": "actual_import_verification.known_filterable_field",
+      "filter_value": "actual_import_verification.known_filterable_value",
+      "filter_count": "actual_import_verification.expected_filtered_part_count",
+      "sort_field": "actual_import_verification.known_sortable_field",
+      "first_sorted_part_number": "actual_import_verification.expected_first_sorted_part_number",
+      "hidden_field": "actual_import_verification.known_hidden_public_field_key",
+      "table_columns": "actual_import_verification.expected_table_column_keys",
+      "title": "actual_import_verification.expected_title"
+    },
+    "secondary_series": {
+      "path": "second_actual_series_no_hard_code_proof.series_path",
+      "slug": "second_actual_series_no_hard_code_proof.series_slug",
+      "part_number": "second_actual_series_no_hard_code_proof.known_part_number",
+      "field_count": "second_actual_series_no_hard_code_proof.expected_public_field_count",
+      "field_keys": "second_actual_series_no_hard_code_proof.expected_public_field_keys",
+      "blocks": "second_actual_series_no_hard_code_proof.expected_content_block_keys",
+      "asset_roles": "second_actual_series_no_hard_code_proof.expected_asset_roles",
+      "download_roles": "second_actual_series_no_hard_code_proof.expected_download_roles",
+      "part_count": "second_actual_series_no_hard_code_proof.expected_total_part_count",
+      "table_columns": "second_actual_series_no_hard_code_proof.expected_table_column_keys"
+    },
+    "composition": "page_composition_verification"
+  }
 }

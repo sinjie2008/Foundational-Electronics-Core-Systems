@@ -10,6 +10,12 @@ Legacy `/catalog.php?action=...` actions use their own response helper. Successf
 
 Clients can send `X-Correlation-ID`. Download endpoints stream files. Do not interpret a file response as JSON.
 
+## Dynamic Public Product API V1
+
+The additive GET namespace `/api/v1/catalog` provides root/tree/resolve/category/series composition, per-series fields, server-side parts/facets/search, collections and guarded assets. Its JSON responses use `success`, `data` or the legacy-style `errorCode/message/details`, and `correlationId`. Read the [complete V1 contract and actual-data import instructions](docs/api-plan/PUBLIC_PRODUCT_API_V1_IMPLEMENTATION.md) for query validation, schema/content configuration and acceptance commands.
+
+Public V1 and existing catalog/SpecSearch reads exclude hidden public fields and honor publication controls after migration. Admin operations and internal document-generation access remain available. Legacy CSV replacement/pruning and endpoint envelopes are preserved. Demo seeding is now explicitly opt-in; V1 never seeds on GET. No Laravel or Passport integration is included in V1.
+
 ## File endpoints
 
 | Endpoint | Inputs / behaviour |

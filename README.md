@@ -16,9 +16,15 @@ Open `/catalog_ui.html`, `/spec-search.html`, `/catalog-csv.html`, `/global_typs
 
 The series Typst editor requires `?series_id=ID`; open it from a selected series in Catalog UI.
 
-Catalog endpoints retain their existing schema/seed setup; Typst retains its table setup. Operational SQL scripts remain in `scripts/`. Read them before running: existing migration SQL may drop tables. Configure `CATALOG_PDFLATEX_BIN` when pdflatex is not on PATH.
+Legacy catalog endpoints retain schema setup; demonstration seeding is disabled by default (opt-in: `CATALOG_SEED_DEMO=true`). Typst retains its table setup. Operational SQL scripts remain in `scripts/`. Read them before running: existing migration SQL may drop tables. Configure `CATALOG_PDFLATEX_BIN` when pdflatex is not on PATH.
 
 The development router preserves legacy `/storage/media/*` and `/storage/latex-pdfs/*` URLs while serving `public/` as the web root. Configure equivalent aliases on Apache/Nginx; existing files under `public/storage/` take priority. Do not expose the entire private `storage/` directory.
+
+## Dynamic Public Product API V1
+
+Provision the additive schema explicitly with `php scripts/migrate_public_catalog_v1.php --up`. The read-only `/api/v1/catalog` API discovers hierarchy, per-series fields/columns, content blocks, assets and ordered collections from stored data. Its requests do not run DDL or seed records. Use the actual-data merge importer and verifier described in the [implementation/import guide](docs/api-plan/PUBLIC_PRODUCT_API_V1_IMPLEMENTATION.md). The checked-in verification and import templates contain no catalog records.
+
+Run `composer lint` and `composer test` against an isolated test-capable MySQL account. The suite creates and drops disposable databases and a temporary SELECT-only account. Set `CATALOG_TEST_TYPST_BIN` and `CATALOG_TEST_PDFLATEX_BIN` to native compiler paths to run real PDF checks. See the [validation report](docs/api-plan/PUBLIC_PRODUCT_API_V1_VALIDATION.md) for coverage and limits. V1 is implemented in this repository; Laravel website and Passport integration are separate later work.
 
 ## Assets and Views
 
@@ -76,7 +82,7 @@ Optional `CATALOG_DB_HOST`, `CATALOG_DB_PORT`, `CATALOG_DB_USERNAME`, `CATALOG_D
 
 The default database host is `localhost` on Windows so Laragon can use IPv6 when WSL forwards `127.0.0.1:3306` to another database. Other platforms retain `127.0.0.1`; set `CATALOG_DB_HOST` explicitly to select a different server.
 
-There is no permanent project test directory or runner. Use PHP syntax checks, the asset build and temporary functional/API checks outside the repository. CSV restore/truncate and other destructive checks require disposable data. Do not run them against production data.
+Run the committed `tests/` suite with `composer test`, PHP syntax checks with `composer lint`, and the asset build above. The suite creates and drops disposable databases and cleans its temporary files automatically. Use the separate actual-data verifier for imported catalog acceptance; do not run the engineering suite against production data.
 
 Keep uploaded files, generated PDFs and credentials out of source-control cleanup. Do not deploy or update WordPress until API compatibility has been checked against the intended installation.
 
