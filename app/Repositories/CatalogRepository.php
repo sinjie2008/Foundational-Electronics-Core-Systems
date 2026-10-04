@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace CatalogSuite\Repositories;
 
 use mysqli;
+use CatalogSuite\Support\CatalogPublicVisibility;
 
 /**
  * Persists and retrieves catalog categories, products, and series fields.
@@ -12,6 +13,7 @@ final class CatalogRepository
 {
     private mysqli $db;
     private ?bool $hasLegacyTemplatingColumn = null;
+    private CatalogPublicVisibility $visibility;
 
     /**
      * Create the repository with the application's database connection.
@@ -19,6 +21,7 @@ final class CatalogRepository
     public function __construct(mysqli $db)
     {
         $this->db = $db;
+        $this->visibility = new CatalogPublicVisibility($db);
     }
 
     /**
@@ -35,7 +38,7 @@ final class CatalogRepository
         }
 
         $result = $this->db->query(
-            'SELECT ' . implode(', ', $columns) . ' FROM category ORDER BY display_order ASC, name ASC'
+            'SELECT ' . implode(', ', $columns) . ' FROM category WHERE ' . $this->visibility->nodes('id') . ' ORDER BY display_order ASC, name ASC'
         );
         $rows = [];
         while ($row = $result->fetch_assoc()) {
@@ -53,7 +56,7 @@ final class CatalogRepository
      */
     public function getHierarchyProducts(): array
     {
-        $result = $this->db->query('SELECT id, series_id, name, sku FROM product ORDER BY name ASC');
+        $result = $this->db->query('SELECT p.id, p.series_id, p.name, p.sku FROM product p WHERE ' . $this->visibility->products() . ' ORDER BY p.name ASC');
         $rows = [];
         while ($row = $result->fetch_assoc()) {
             $rows[] = $row;
@@ -71,7 +74,7 @@ final class CatalogRepository
     public function searchCategories(string $term): array
     {
         $searchTerm = '%' . $this->db->real_escape_string($term) . '%';
-        $stmt = $this->db->prepare('SELECT id, parent_id, name, type FROM category WHERE name LIKE ?');
+        $stmt = $this->db->prepare('SELECT id, parent_id, name, type FROM category WHERE name LIKE ? AND ' . $this->visibility->nodes('id'));
         $stmt->bind_param('s', $searchTerm);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -89,7 +92,7 @@ final class CatalogRepository
     public function searchProducts(string $term): array
     {
         $searchTerm = '%' . $this->db->real_escape_string($term) . '%';
-        $stmt = $this->db->prepare('SELECT id, series_id, name FROM product WHERE name LIKE ? OR sku LIKE ?');
+        $stmt = $this->db->prepare('SELECT p.id, p.series_id, p.name FROM product p WHERE (p.name LIKE ? OR p.sku LIKE ?) AND ' . $this->visibility->products());
         $stmt->bind_param('ss', $searchTerm, $searchTerm);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -104,9 +107,9 @@ final class CatalogRepository
      *
      * @return array<string, mixed>|null
      */
-    public function findSeries(int $seriesId): ?array
+    public function findSeries(int $seriesId, bool $publicOnly = true): ?array
     {
-        $stmt = $this->db->prepare("SELECT id, parent_id, name, type FROM category WHERE id = ? AND type = 'series'");
+        $stmt = $this->db->prepare("SELECT id, parent_id, name, type FROM category WHERE id = ? AND type = 'series' AND " . ($publicOnly ? $this->visibility->nodes('id', 'series') : '1 = 1'));
         $stmt->bind_param('i', $seriesId);
         $stmt->execute();
         $series = $stmt->get_result()->fetch_assoc() ?: null;
@@ -120,13 +123,13 @@ final class CatalogRepository
      *
      * @return list<array<string, mixed>>
      */
-    public function getSeriesMetadata(int $seriesId): array
+    public function getSeriesMetadata(int $seriesId, bool $publicOnly = true): array
     {
         $stmt = $this->db->prepare(
             "SELECT f.field_key, f.label, v.value
              FROM series_custom_field f
              LEFT JOIN series_custom_field_value v ON f.id = v.series_custom_field_id AND v.series_id = ?
-             WHERE f.series_id = ? AND f.field_scope = 'series_metadata'"
+             WHERE f.series_id = ? AND f.field_scope = 'series_metadata'" . ($publicOnly ? ' AND f.is_public_portal_hidden = 0' : '')
         );
         $stmt->bind_param('ii', $seriesId, $seriesId);
         $stmt->execute();
@@ -142,13 +145,13 @@ final class CatalogRepository
      *
      * @return list<array<string, mixed>>
      */
-    public function getProductAttributeFields(int $seriesId): array
+    public function getProductAttributeFields(int $seriesId, bool $publicOnly = true): array
     {
         $stmt = $this->db->prepare(
             "SELECT field_key, label, field_type
              FROM series_custom_field
-             WHERE series_id = ? AND field_scope = 'product_attribute'
-             ORDER BY sort_order ASC"
+             WHERE series_id = ? AND field_scope = 'product_attribute'" . ($publicOnly ? ' AND is_public_portal_hidden = 0' : '') . '
+             ORDER BY sort_order ASC'
         );
         $stmt->bind_param('i', $seriesId);
         $stmt->execute();

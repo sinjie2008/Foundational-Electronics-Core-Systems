@@ -6,6 +6,7 @@ namespace CatalogSuite\Repositories;
 use CatalogSuite\Support\Config;
 
 use mysqli;
+use CatalogSuite\Support\CatalogV1Cleanup;
 
 /**
  * Reads and persists catalog data used by CSV import and export workflows.
@@ -40,15 +41,7 @@ final class CatalogCsvRepository
      */
     public function insertCategory(?int $parentId, string $name): int
     {
-        $insert = $this->connection->prepare(
-            "INSERT INTO category (parent_id, name, type, display_order) VALUES (?, ?, 'category', 0)"
-        );
-        $insert->bind_param('is', $parentId, $name);
-        $insert->execute();
-        $id = (int) $insert->insert_id;
-        $insert->close();
-
-        return $id;
+        return (new HierarchyRepository($this->connection))->insertNode($parentId, $name, 'category', 0);
     }
 
     /**
@@ -86,15 +79,7 @@ final class CatalogCsvRepository
      */
     public function insertSeries(?int $parentId, string $name, int $displayOrder): int
     {
-        $insert = $this->connection->prepare(
-            "INSERT INTO category (parent_id, name, type, display_order) VALUES (?, ?, 'series', ?)"
-        );
-        $insert->bind_param('isi', $parentId, $name, $displayOrder);
-        $insert->execute();
-        $seriesId = (int) $insert->insert_id;
-        $insert->close();
-
-        return $seriesId;
+        return (new HierarchyRepository($this->connection))->insertNode($parentId, $name, 'series', $displayOrder);
     }
 
     /**
@@ -252,6 +237,7 @@ final class CatalogCsvRepository
         $stmt->bind_param($types, ...$ids);
         $stmt->execute();
         $stmt->close();
+        (new CatalogV1Cleanup($this->connection))->orphans();
     }
 
     /**
@@ -273,6 +259,7 @@ final class CatalogCsvRepository
         $stmt->bind_param($types, ...$ids);
         $stmt->execute();
         $stmt->close();
+        (new CatalogV1Cleanup($this->connection))->orphans();
     }
 
     /**
@@ -294,6 +281,7 @@ final class CatalogCsvRepository
         $stmt->bind_param($types, ...$ids);
         $stmt->execute();
         $stmt->close();
+        (new CatalogV1Cleanup($this->connection))->orphans();
     }
 
     /**

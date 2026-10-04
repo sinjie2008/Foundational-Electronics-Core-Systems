@@ -110,15 +110,15 @@ final class CatalogService
      *
      * @return array<string, mixed>|null
      */
-    public function getSeriesDetails(int $seriesId): ?array
+    public function getSeriesDetails(int $seriesId, bool $publicOnly = true): ?array
     {
-        $series = $this->catalog->findSeries($seriesId);
+        $series = $this->catalog->findSeries($seriesId, $publicOnly);
         if ($series === null) {
             return null;
         }
 
         $metadata = [];
-        foreach ($this->catalog->getSeriesMetadata($seriesId) as $row) {
+        foreach ($this->catalog->getSeriesMetadata($seriesId, $publicOnly) as $row) {
             $metadata[] = [
                 'key' => $row['field_key'],
                 'label' => $row['label'],
@@ -127,7 +127,7 @@ final class CatalogService
         }
 
         $customFields = [];
-        foreach ($this->catalog->getProductAttributeFields($seriesId) as $row) {
+        foreach ($this->catalog->getProductAttributeFields($seriesId, $publicOnly) as $row) {
             $customFields[] = [
                 'key' => $row['field_key'],
                 'label' => $row['label'],

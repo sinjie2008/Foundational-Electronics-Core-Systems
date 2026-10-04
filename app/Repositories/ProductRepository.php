@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace CatalogSuite\Repositories;
 
 use mysqli;
+use CatalogSuite\Support\CatalogV1Cleanup;
 
 /**
  * Reads and persists products and their custom field values.
@@ -20,17 +21,18 @@ final class ProductRepository
      * @param array<int> $seriesIds
      * @return array<int, array<string, mixed>>
      */
-    public function fetchProductsForSeriesIds(array $seriesIds): array
+    public function fetchProductsForSeriesIds(array $seriesIds, bool $publicOnly = false): array
     {
         $placeholders = implode(',', array_fill(0, count($seriesIds), '?'));
         $types = str_repeat('i', count($seriesIds));
+        $where = $publicOnly && $this->connection->query("SHOW COLUMNS FROM product LIKE 'is_published'")->num_rows > 0 ? ' AND is_published = 1' : '';
         $stmt = $this->connection->prepare(
             sprintf(
                 'SELECT id, series_id, sku, name, description
                  FROM product
-                 WHERE series_id IN (%s)
+                 WHERE series_id IN (%s)%s
                  ORDER BY series_id, id',
-                $placeholders
+                $placeholders, $where
             )
         );
         $stmt->bind_param($types, ...$seriesIds);
@@ -111,6 +113,7 @@ final class ProductRepository
         $stmt->bind_param('i', $productId);
         $stmt->execute();
         $stmt->close();
+        (new CatalogV1Cleanup($this->connection))->orphans();
     }
 
     /**

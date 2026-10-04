@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace CatalogSuite\Repositories;
 
 use mysqli;
+use CatalogSuite\Support\CatalogV1Cleanup;
 
 /**
  * Persists category and series hierarchy data.
@@ -25,6 +26,7 @@ final class HierarchyRepository
         $stmt->bind_param('issii', $parentId, $name, $type, $displayOrder, $nodeId);
         $stmt->execute();
         $stmt->close();
+        (new CatalogV1Cleanup($this->connection))->orphans();
     }
 
     /**
@@ -51,6 +53,7 @@ final class HierarchyRepository
         $stmt->bind_param('i', $nodeId);
         $stmt->execute();
         $stmt->close();
+        (new CatalogV1Cleanup($this->connection))->orphans();
     }
 
     /**
@@ -58,11 +61,12 @@ final class HierarchyRepository
      *
      * @return array<int, array<string, mixed>>
      */
-    public function fetchHierarchyRows(bool $includeLegacy): array
+    public function fetchHierarchyRows(bool $includeLegacy, bool $publicOnly = false): array
     {
+        $where = $publicOnly && $this->hasCategoryColumn('is_published') ? ' WHERE is_published = 1' : '';
         $result = $this->connection->query(sprintf(
-            'SELECT %s FROM category ORDER BY display_order, id',
-            self::getCategorySelectColumns($includeLegacy)
+            'SELECT %s FROM category%s ORDER BY display_order, id',
+            self::getCategorySelectColumns($includeLegacy), $where
         ));
 
         $rows = [];
@@ -78,10 +82,12 @@ final class HierarchyRepository
      *
      * @return array<int, array<string, mixed>>
      */
-    public function fetchSeriesOptionRows(): array
+    public function fetchSeriesOptionRows(bool $publicOnly = false): array
     {
         $result = $this->connection->query(
-            "SELECT id, name FROM category WHERE type = 'series' ORDER BY name, id"
+            "SELECT id, name FROM category WHERE type = 'series' AND "
+            . ($publicOnly ? (new \CatalogSuite\Support\CatalogPublicVisibility($this->connection))->nodes('id', 'series') : '1 = 1')
+            . ' ORDER BY name, id'
         );
 
         $rows = [];
@@ -162,6 +168,10 @@ final class HierarchyRepository
         $newId = (int) $stmt->insert_id;
         $stmt->close();
 
+        $slugs = new \CatalogSuite\Support\CatalogSlug($this->connection);
+        if ($slugs->available()) {
+            $slugs->assign($newId);
+        }
         return $newId;
     }
 

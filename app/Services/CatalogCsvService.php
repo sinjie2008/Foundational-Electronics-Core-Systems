@@ -162,7 +162,7 @@ final class CatalogCsvService
         foreach ($productFieldKeys as $fieldKey) {
             $header[] = $fieldKey;
         }
-        fputcsv($handle, $header);
+        fputcsv($handle, $header, ',', '"', '\\');
 
         foreach ($products as $product) {
             $seriesId = (int) $product['series_id'];
@@ -176,7 +176,7 @@ final class CatalogCsvService
             foreach ($productFieldKeys as $fieldKey) {
                 $row[] = $productCustom[$fieldKey] ?? '';
             }
-            fputcsv($handle, $row);
+            fputcsv($handle, $row, ',', '"', '\\');
         }
 
         fclose($handle);
@@ -332,7 +332,7 @@ final class CatalogCsvService
             throw new CatalogApiException('CSV_PARSE_ERROR', 'Unable to read CSV file.', 400);
         }
 
-        $header = fgetcsv($handle);
+        $header = fgetcsv($handle, null, ',', '"', '\\');
         if ($header === false) {
             fclose($handle);
             throw new CatalogApiException('CSV_PARSE_ERROR', 'CSV file is empty.', 400);
@@ -379,7 +379,7 @@ final class CatalogCsvService
 
         $this->connection->begin_transaction();
         try {
-            while (($row = fgetcsv($handle)) !== false) {
+            while (($row = fgetcsv($handle, null, ',', '"', '\\')) !== false) {
                 $lineNumber++;
                 if ($this->rowIsEmpty($row)) {
                     continue;

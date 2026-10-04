@@ -142,7 +142,7 @@ final class LatexService
      */
     public function compileLatex(string $latex, int $seriesId): array
     {
-        $seriesDetails = $this->catalog->getSeriesDetails($seriesId);
+        $seriesDetails = $this->catalog->getSeriesDetails($seriesId, false);
         if (!$seriesDetails) {
             throw new RuntimeException('Series not found');
         }

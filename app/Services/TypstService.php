@@ -293,7 +293,7 @@ final class TypstService
 
         if ($seriesId) {
             $catalogService = new CatalogService($this->db);
-            $seriesDetails = $catalogService->getSeriesDetails($seriesId);
+            $seriesDetails = $catalogService->getSeriesDetails($seriesId, false);
             
             if ($seriesDetails) {
                 $data['series'] = [
@@ -446,7 +446,8 @@ final class TypstService
                 foreach ($value as $v) {
                     $items[] = $this->toTypstValue($v);
                 }
-                return "(" . implode(", ", $items) . ")";
+                // Typst needs a trailing comma to distinguish a singleton array from grouping.
+                return "(" . implode(", ", $items) . (count($items) === 1 ? ',' : '') . ")";
             }
         } elseif (is_string($value)) {
             // Escape string

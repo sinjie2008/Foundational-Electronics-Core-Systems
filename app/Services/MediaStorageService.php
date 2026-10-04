@@ -219,7 +219,8 @@ final class MediaStorageService
         $absolute = $this->rootDir . DIRECTORY_SEPARATOR . $clean;
         $realRoot = realpath($this->rootDir);
         $realTarget = realpath($absolute) ?: $absolute;
-        if ($realRoot !== false && str_starts_with($realTarget, $realRoot) === false) {
+        if (in_array('..', explode('/', $clean), true) || str_contains($clean, "\0")
+            || ($realRoot !== false && !str_starts_with($realTarget, $realRoot . DIRECTORY_SEPARATOR))) {
             throw new CatalogApiException('MEDIA_PATH_INVALID', 'Invalid media path.', 400);
         }
 
