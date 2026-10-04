@@ -13,6 +13,10 @@
             "CatalogSuite\\": "app/"
         }
     },
+    "scripts": {
+        "test": "@php tests/run.php",
+        "lint": "@php scripts/lint.php"
+    },
     "extra": {
         "laravel": {
             "providers": [
