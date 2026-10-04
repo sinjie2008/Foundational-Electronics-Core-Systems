@@ -18,7 +18,7 @@ final class Seeder
     /**
      * Ensures all required tables exist.
      */
-    public function ensureSchema(): void
+    public function ensureSchema(bool $includeDemoMetadataDefaults = true): void
     {
         $schemaStatements = [
             <<<SQL
@@ -147,7 +147,9 @@ final class Seeder
         );
 
         $this->ensureFieldTypeEnumUpdated();
-        $this->ensureSeriesMetadataDefaults();
+        if ($includeDemoMetadataDefaults) {
+            $this->ensureSeriesMetadataDefaults();
+        }
         $this->ensureSeriesFieldScopeIndex();
     }
 

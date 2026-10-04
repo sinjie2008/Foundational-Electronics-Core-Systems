@@ -14,6 +14,7 @@ return [
     'base_url' => '',
     'bootstrap_schema' => true,
     'seed_name' => 'initial_catalog_v1',
+    'seed_demo' => filter_var(getenv('CATALOG_SEED_DEMO') ?: 'false', FILTER_VALIDATE_BOOLEAN),
     'storage' => [
         'csv' => $storageRoot . '/csv',
         'media' => $storageRoot . '/media',
