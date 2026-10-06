@@ -23,7 +23,7 @@ final class PublicCatalogService
      */
     public function buildSnapshot(): array
     {
-        $hierarchyPayload = $this->hierarchyService->listHierarchy(true);
+        $hierarchyPayload = $this->hierarchyService->listHierarchy();
         $hierarchy = $hierarchyPayload['hierarchy'] ?? [];
         $seriesIds = $this->collectSeriesIds($hierarchy);
 
@@ -36,19 +36,15 @@ final class PublicCatalogService
 
         $productFields = $this->seriesFieldService->fetchFieldsForSeriesIds($seriesIds, SeriesFieldService::SCOPE_PRODUCT);
         $metadataDefinitions = $this->seriesFieldService->fetchFieldsForSeriesIds($seriesIds, SeriesFieldService::SCOPE_SERIES);
-        foreach ($seriesIds as $seriesId) {
-            $productFields[$seriesId] = array_values(array_filter($productFields[$seriesId] ?? [], static fn (array $field): bool => !$field['publicPortalHidden']));
-            $metadataDefinitions[$seriesId] = array_values(array_filter($metadataDefinitions[$seriesId] ?? [], static fn (array $field): bool => !$field['publicPortalHidden']));
-        }
         $metadataPayloads = $this->seriesAttributeService->fetchMetadataPayloads($seriesIds);
-        $productsBySeries = $this->productService->fetchProductsForSeriesIds($seriesIds, $productFields, true);
+        $productsBySeries = $this->productService->fetchProductsForSeriesIds($seriesIds, $productFields);
 
         $seriesSnapshots = [];
         foreach ($seriesIds as $seriesId) {
             $seriesSnapshots[$seriesId] = [
                 'metadata' => [
                     'definitions' => $metadataDefinitions[$seriesId] ?? [],
-                    'values' => array_intersect_key($metadataPayloads[$seriesId]['values'] ?? [], array_flip(array_column($metadataDefinitions[$seriesId] ?? [], 'fieldKey'))),
+                    'values' => $metadataPayloads[$seriesId]['values'] ?? [],
                 ],
                 'productFields' => $productFields[$seriesId] ?? [],
                 'products' => $productsBySeries[$seriesId] ?? [],

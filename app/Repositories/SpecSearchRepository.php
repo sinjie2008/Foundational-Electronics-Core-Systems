@@ -4,7 +4,6 @@ declare(strict_types=1);
 namespace CatalogSuite\Repositories;
 
 use mysqli;
-use CatalogSuite\Support\CatalogPublicVisibility;
 
 /**
  * Executes the catalog queries needed by specification search.
@@ -12,7 +11,6 @@ use CatalogSuite\Support\CatalogPublicVisibility;
 final class SpecSearchRepository
 {
     private mysqli $db;
-    private CatalogPublicVisibility $visibility;
 
     /**
      * Create the repository with the application's database connection.
@@ -20,7 +18,6 @@ final class SpecSearchRepository
     public function __construct(mysqli $db)
     {
         $this->db = $db;
-        $this->visibility = new CatalogPublicVisibility($db);
     }
 
     /**
@@ -31,7 +28,7 @@ final class SpecSearchRepository
     public function getRootCategories(): array
     {
         return $this->fetchAll(
-            "SELECT id, name FROM category WHERE parent_id IS NULL AND type = 'category' AND " . $this->visibility->nodes('id') . ' ORDER BY display_order ASC, name ASC'
+            "SELECT id, name FROM category WHERE parent_id IS NULL AND type = 'category' ORDER BY display_order ASC, name ASC"
         );
     }
 
@@ -43,7 +40,7 @@ final class SpecSearchRepository
     public function getChildCategories(int $parentId): array
     {
         $stmt = $this->db->prepare(
-            "SELECT id, name FROM category WHERE parent_id = ? AND type = 'category' AND " . $this->visibility->nodes('id') . ' ORDER BY display_order ASC'
+            "SELECT id, name FROM category WHERE parent_id = ? AND type = 'category' ORDER BY display_order ASC"
         );
         $stmt->bind_param('i', $parentId);
         $stmt->execute();
@@ -66,7 +63,7 @@ final class SpecSearchRepository
         }
 
         return $this->fetchAll(
-            "SELECT name FROM category WHERE parent_id IN (" . $this->idList($categoryIds) . ") AND type = 'series' AND " . $this->visibility->nodes('id', 'series') . ' ORDER BY name ASC'
+            "SELECT name FROM category WHERE parent_id IN (" . $this->idList($categoryIds) . ") AND type = 'series' ORDER BY name ASC"
         );
     }
 
@@ -83,7 +80,7 @@ final class SpecSearchRepository
         }
 
         return $this->fetchAll(
-            "SELECT id FROM category WHERE parent_id IN (" . $this->idList($categoryIds) . ") AND type = 'series' AND " . $this->visibility->nodes('id', 'series')
+            "SELECT id FROM category WHERE parent_id IN (" . $this->idList($categoryIds) . ") AND type = 'series'"
         );
     }
 
@@ -101,7 +98,7 @@ final class SpecSearchRepository
 
         return $this->fetchAll(
             "SELECT field_key, label, id, sort_order FROM series_custom_field
-             WHERE series_id IN (" . $this->idList($seriesIds) . ") AND field_scope = 'product_attribute' AND is_public_portal_hidden = 0
+             WHERE series_id IN (" . $this->idList($seriesIds) . ") AND field_scope = 'product_attribute'
              ORDER BY sort_order ASC"
         );
     }
@@ -119,11 +116,10 @@ final class SpecSearchRepository
         }
 
         return $this->fetchAll(
-            "SELECT DISTINCT v.value FROM product_custom_field_value v
-             JOIN product p ON p.id = v.product_id
-             JOIN series_custom_field f ON f.id = v.series_custom_field_id AND f.series_id = p.series_id
-             WHERE f.id IN (" . $this->idList($fieldIds) . ") AND f.is_public_portal_hidden = 0 AND " . $this->visibility->products() . "
-               AND v.value IS NOT NULL AND v.value != '' ORDER BY v.value ASC"
+            "SELECT DISTINCT value FROM product_custom_field_value
+             WHERE series_custom_field_id IN (" . $this->idList($fieldIds) . ")
+               AND value IS NOT NULL AND value != ''
+             ORDER BY value ASC"
         );
     }
 
@@ -145,7 +141,7 @@ final class SpecSearchRepository
                 FROM product p
                 JOIN category s ON p.series_id = s.id
                 JOIN category c ON s.parent_id = c.id
-                WHERE s.parent_id IN ({$ids}) AND s.type = 'series' AND " . $this->visibility->products();
+                WHERE s.parent_id IN ({$ids}) AND s.type = 'series'";
 
         if (isset($filters['series']) && !empty($filters['series'])) {
             $seriesNames = array_map(function (string $value): string {
@@ -167,7 +163,6 @@ final class SpecSearchRepository
                 SELECT 1 FROM product_custom_field_value pcfv
                 JOIN series_custom_field scf ON pcfv.series_custom_field_id = scf.id
                 WHERE pcfv.product_id = p.id
-                AND scf.series_id = p.series_id AND scf.field_scope = 'product_attribute' AND scf.is_public_portal_hidden = 0
                 AND scf.field_key = '{$fieldKey}'
                 AND pcfv.value IN (" . implode(',', $escapedValues) . '))';
         }
@@ -195,7 +190,7 @@ final class SpecSearchRepository
              FROM series_custom_field scf
              LEFT JOIN series_custom_field_value scfv ON scf.id = scfv.series_custom_field_id AND scfv.series_id = scf.series_id
              WHERE scf.series_id IN ({$ids})
-               AND scf.field_scope = 'series_metadata' AND scf.field_key = ? AND scf.is_public_portal_hidden = 0"
+               AND scf.field_scope = 'series_metadata' AND scf.field_key = ?"
         );
         $stmt->bind_param('s', $fieldKey);
         $stmt->execute();
@@ -255,9 +250,8 @@ final class SpecSearchRepository
         return $this->fetchAll(
             "SELECT pcfv.product_id, scf.field_key, pcfv.value
              FROM product_custom_field_value pcfv
-             JOIN product p ON p.id = pcfv.product_id
-             JOIN series_custom_field scf ON pcfv.series_custom_field_id = scf.id AND scf.series_id = p.series_id
-             WHERE pcfv.product_id IN (" . $this->idList($productIds) . ") AND scf.field_scope = 'product_attribute' AND scf.is_public_portal_hidden = 0"
+             JOIN series_custom_field scf ON pcfv.series_custom_field_id = scf.id
+             WHERE pcfv.product_id IN (" . $this->idList($productIds) . ") AND scf.field_scope = 'product_attribute'"
         );
     }
 

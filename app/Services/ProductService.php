@@ -48,8 +48,7 @@ final class ProductService
      */
     public function fetchProductsForSeriesIds(
         array $seriesIds,
-        ?array $productFieldDefinitions = null,
-        bool $publicOnly = false
+        ?array $productFieldDefinitions = null
     ): array {
         if ($seriesIds === []) {
             return [];
@@ -58,7 +57,7 @@ final class ProductService
         $productsBySeries = [];
         $productIndexMap = [];
         $productIds = [];
-        foreach ($this->repository->fetchProductsForSeriesIds($seriesIds, $publicOnly) as $row) {
+        foreach ($this->repository->fetchProductsForSeriesIds($seriesIds) as $row) {
             $productId = (int) $row['id'];
             $seriesId = (int) $row['series_id'];
             $productsBySeries[$seriesId] ??= [];

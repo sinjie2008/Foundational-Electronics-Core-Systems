@@ -77,15 +77,6 @@ final class CatalogTruncateRepository
      */
     public function truncateCatalogTables(): void
     {
-        foreach (['catalog_path_alias', 'catalog_collection_item', 'catalog_collection', 'catalog_content_block', 'catalog_asset'] as $table) {
-            $stmt = $this->connection->prepare('SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?');
-            $stmt->execute([$table]);
-            $exists = (int) $stmt->get_result()->fetch_row()[0] > 0;
-            $stmt->close();
-            if ($exists) {
-                $this->connection->query("TRUNCATE TABLE `{$table}`");
-            }
-        }
         foreach ([
             'product_custom_field_value',
             'series_custom_field_value',

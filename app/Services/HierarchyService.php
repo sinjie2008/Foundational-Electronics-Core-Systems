@@ -22,11 +22,11 @@ final class HierarchyService
      *
      * @return array<string, mixed>
      */
-    public function listHierarchy(bool $publicOnly = false): array
+    public function listHierarchy(): array
     {
         $this->ensureTypstTemplatingColumn();
         $hasLegacyColumn = $this->hasLegacyTemplatingColumn();
-        $tree = $this->buildHierarchyTree($hasLegacyColumn, $publicOnly);
+        $tree = $this->buildHierarchyTree($hasLegacyColumn);
 
         /**
          * @param array<string, mixed> $node
@@ -51,7 +51,7 @@ final class HierarchyService
         };
 
         $hierarchy = array_map($transform, $tree);
-        $seriesOptions = $this->fetchSeriesOptions($publicOnly);
+        $seriesOptions = $this->fetchSeriesOptions();
 
         return [
             'hierarchy' => $hierarchy,
@@ -114,20 +114,6 @@ final class HierarchyService
                 throw new CatalogApiException('NODE_NOT_FOUND', 'Node not found.', 404);
             }
 
-            $seen = [];
-            $ancestorId = $parentId;
-            while ($ancestorId !== null) {
-                if ($ancestorId === $nodeId || isset($seen[$ancestorId])) {
-                    throw new CatalogApiException('CONFLICT', 'A hierarchy move cannot create a cycle.', 409);
-                }
-                $seen[$ancestorId] = true;
-                $ancestor = $this->loadCategory($ancestorId);
-                $ancestorId = $ancestor['parent_id'] ?? null;
-            }
-            if ($type === 'series' && $this->repository->countChildren($nodeId) > 0) {
-                throw new CatalogApiException('CONFLICT', 'Cannot convert a node with children into a series.', 409);
-            }
-
             if ($existing['type'] === 'series' && $type !== 'series') {
                 $childCount = $this->countProductsForSeries($nodeId);
                 if ($childCount > 0) {
@@ -139,14 +125,7 @@ final class HierarchyService
                 }
             }
 
-            try {
-                $this->repository->updateNode($parentId, $name, $type, $displayOrder, $nodeId);
-            } catch (\mysqli_sql_exception $error) {
-                if ($error->getCode() !== 1062) {
-                    throw $error;
-                }
-                throw new CatalogApiException('CONFLICT', 'The persistent slug conflicts with a sibling at the destination.', 409);
-            }
+            $this->repository->updateNode($parentId, $name, $type, $displayOrder, $nodeId);
             $result = $this->loadCategory($nodeId);
         } else {
             $newId = $this->insertCategoryNode($parentId, $name, $type, $displayOrder);
@@ -204,9 +183,9 @@ final class HierarchyService
      *
      * @return array<int, array<string, mixed>>
      */
-    private function buildHierarchyTree(bool $includeLegacy, bool $publicOnly = false): array
+    private function buildHierarchyTree(bool $includeLegacy): array
     {
-        $rows = $this->repository->fetchHierarchyRows($includeLegacy, $publicOnly);
+        $rows = $this->repository->fetchHierarchyRows($includeLegacy);
 
         /** @var array<int, array<string, mixed>> $nodes */
         $nodes = [];
@@ -241,10 +220,10 @@ final class HierarchyService
     /**
      * @return array<int, array<string, mixed>>
      */
-    private function fetchSeriesOptions(bool $publicOnly = false): array
+    private function fetchSeriesOptions(): array
     {
         $options = [];
-        foreach ($this->repository->fetchSeriesOptionRows($publicOnly) as $row) {
+        foreach ($this->repository->fetchSeriesOptionRows() as $row) {
             $options[] = [
                 'id' => (int) $row['id'],
                 'name' => (string) $row['name'],

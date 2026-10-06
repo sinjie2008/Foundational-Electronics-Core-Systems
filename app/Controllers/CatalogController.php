@@ -62,11 +62,8 @@ final class CatalogController
      */
     public function bootstrap(): void
     {
-        $demo = (bool) (\CatalogSuite\Support\Config::get('app')['seed_demo'] ?? false);
-        $this->seeder->ensureSchema($demo);
-        if ($demo) {
-            $this->seeder->seedInitialData();
-        }
+        $this->seeder->ensureSchema();
+        $this->seeder->seedInitialData();
     }
 
     /**

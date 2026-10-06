@@ -77,7 +77,7 @@ final class HttpResponder
         );
     }
 
-    public function sendFile(string $filePath, string $downloadName, string $contentType = 'text/csv', bool $attachment = true): void
+    public function sendFile(string $filePath, string $downloadName, string $contentType = 'text/csv'): void
     {
         if (!is_file($filePath)) {
             throw new CatalogApiException('CSV_NOT_FOUND', 'CSV file not found.', 404);
@@ -85,12 +85,7 @@ final class HttpResponder
         $this->emitCorrelationHeader();
         if (!Transport::headersSent()) {
             Transport::header('Content-Type: ' . $contentType);
-            $name = basename(str_replace('\\', '/', $downloadName));
-            $name = preg_replace('/[\x00-\x1f\x7f]/', '', $name) ?: 'download';
-            $fallback = preg_replace('/[^\x20-\x7e]/', '_', $name);
-            $fallback = addcslashes($fallback, '\\"');
-            $disposition = $attachment ? 'attachment' : 'inline';
-            Transport::header('Content-Disposition: ' . $disposition . '; filename="' . $fallback . '"; filename*=UTF-8\'\'' . rawurlencode($name));
+            Transport::header('Content-Disposition: attachment; filename="' . basename($downloadName) . '"');
             Transport::header('Cache-Control: no-store, no-cache, must-revalidate');
         }
         $result = Transport::file($filePath);
