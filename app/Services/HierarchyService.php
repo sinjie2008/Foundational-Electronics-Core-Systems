@@ -206,7 +206,7 @@ final class HierarchyService
                 'children' => [],
             ];
             $nodes[$id] = $node;
-            $children[$parentId][] = &$nodes[$id];
+            $children[$parentId ?? ''][] = &$nodes[$id];
         }
 
         foreach ($nodes as $id => &$node) {
@@ -214,7 +214,7 @@ final class HierarchyService
         }
         unset($node);
 
-        return $children[null] ?? [];
+        return $children[''] ?? [];
     }
 
     /**
