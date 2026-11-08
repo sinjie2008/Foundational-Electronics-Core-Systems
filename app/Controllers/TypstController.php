@@ -21,8 +21,7 @@ final class TypstController
     /**
      * Accept an existing service or a lazy factory for host application bindings.
      *
-     * The default preserves construction at each action's existing position,
-     * including the legacy construction-before-try behavior.
+     * Services are resolved inside the response envelope after optional media authorization.
      *
      * @param (callable(): TypstService)|null $typstServiceFactory
      */
@@ -40,10 +39,13 @@ final class TypstController
      */
     public function compile(): void
     {
-        $service = $this->newService();
         $method = $_SERVER['REQUEST_METHOD'];
 
         try {
+            if (\CatalogSuite\Http\MediaAccess::enabled()) {
+                \CatalogSuite\Http\MediaAccess::requirePermission(in_array($method, ['GET','HEAD'], true) ? 'view' : 'attach');
+            }
+            $service = $this->newService();
             if ($method === 'POST') {
                 $input = Request::json();
                 $code = (string) ($input['typst'] ?? '');
@@ -52,6 +54,8 @@ final class TypstController
             } else {
                 Response::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
             }
+        } catch (\CatalogSuite\Http\CatalogApiException $e) {
+            Response::error($e->getErrorCode(), $e->getMessage(), $e->getStatusCode(), Request::correlationId());
         } catch (Exception $e) {
             Response::error('COMPILE_ERROR', $e->getMessage(), 500);
         }
@@ -62,10 +66,13 @@ final class TypstController
      */
     public function templates(): void
     {
-        $service = $this->newService();
         $method = $_SERVER['REQUEST_METHOD'];
 
         try {
+            if (\CatalogSuite\Http\MediaAccess::enabled()) {
+                \CatalogSuite\Http\MediaAccess::requirePermission(in_array($method, ['GET','HEAD'], true) ? 'view' : 'attach');
+            }
+            $service = $this->newService();
             if ($method === 'GET') {
                 $id = Request::query('id');
                 $seriesId = Request::query('seriesId');
@@ -118,6 +125,8 @@ final class TypstController
             } else {
                 Response::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
             }
+        } catch (\CatalogSuite\Http\CatalogApiException $e) {
+            Response::error($e->getErrorCode(), $e->getMessage(), $e->getStatusCode(), Request::correlationId());
         } catch (Exception $e) {
             Response::error('INTERNAL_ERROR', $e->getMessage(), 500);
         }
@@ -128,11 +137,14 @@ final class TypstController
      */
     public function variables(): void
     {
-        $service = $this->newService();
         $method = $_SERVER['REQUEST_METHOD'];
         $correlationId = Request::correlationId();
 
         try {
+            if (\CatalogSuite\Http\MediaAccess::enabled()) {
+                \CatalogSuite\Http\MediaAccess::requirePermission(in_array($method, ['GET','HEAD'], true) ? 'view' : 'attach');
+            }
+            $service = $this->newService();
             if ($method === 'GET') {
                 $id = Request::query('id');
                 $seriesId = (int) (Request::query('seriesId') ?? 0);
@@ -160,8 +172,8 @@ final class TypstController
                     }
                     $fileUpload = isset($_FILES['file']) && is_array($_FILES['file']) ? $_FILES['file'] : null;
                     $data = $seriesId > 0
-                        ? $service->saveScopedVariable($seriesId, $key, $type, $value, $id, $fileUpload)
-                        : $service->saveGlobalVariable($key, $type, $value, $id, $fileUpload);
+                        ? $service->saveScopedVariable($seriesId, $key, $type, $value, $id, $fileUpload, !empty($_POST['mediaId']) ? ['mediaId' => (string) $_POST['mediaId']] : null)
+                        : $service->saveGlobalVariable($key, $type, $value, $id, $fileUpload, !empty($_POST['mediaId']) ? ['mediaId' => (string) $_POST['mediaId']] : null);
                 } else {
                     $input = Request::json();
                     $key = trim((string) ($input['key'] ?? ''));
@@ -178,8 +190,8 @@ final class TypstController
                     $value = (string) ($input['value'] ?? '');
                     $id = isset($input['id']) ? (int) $input['id'] : null;
                     $data = $seriesId > 0
-                        ? $service->saveScopedVariable($seriesId, $key, $type, $value, $id)
-                        : $service->saveGlobalVariable($key, $type, $value, $id);
+                        ? $service->saveScopedVariable($seriesId, $key, $type, $value, $id, null, !empty($input['mediaId']) ? ['mediaId' => (string) $input['mediaId']] : null)
+                        : $service->saveGlobalVariable($key, $type, $value, $id, null, !empty($input['mediaId']) ? ['mediaId' => (string) $input['mediaId']] : null);
                 }
                 Response::success($data, 200, $correlationId);
             } elseif ($method === 'DELETE') {
@@ -198,6 +210,8 @@ final class TypstController
             } else {
                 Response::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405, $correlationId);
             }
+        } catch (\CatalogSuite\Http\CatalogApiException $e) {
+            Response::error($e->getErrorCode(), $e->getMessage(), $e->getStatusCode(), Request::correlationId());
         } catch (Exception $e) {
             Response::error('INTERNAL_ERROR', $e->getMessage(), 500, $correlationId);
         }
@@ -208,10 +222,13 @@ final class TypstController
      */
     public function legacyTemplates(): void
     {
-        $service = $this->newService();
         $method = $_SERVER['REQUEST_METHOD'];
 
         try {
+            if (\CatalogSuite\Http\MediaAccess::enabled()) {
+                \CatalogSuite\Http\MediaAccess::requirePermission(in_array($method, ['GET','HEAD'], true) ? 'view' : 'attach');
+            }
+            $service = $this->newService();
             if ($method === 'GET') {
                 $id = Request::query('id');
                 $seriesId = Request::query('seriesId');
@@ -252,6 +269,8 @@ final class TypstController
             } else {
                 Response::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
             }
+        } catch (\CatalogSuite\Http\CatalogApiException $e) {
+            Response::error($e->getErrorCode(), $e->getMessage(), $e->getStatusCode(), Request::correlationId());
         } catch (Exception $e) {
             Response::error('INTERNAL_ERROR', $e->getMessage(), 500);
         }
@@ -262,10 +281,13 @@ final class TypstController
      */
     public function legacyVariables(): void
     {
-        $service = $this->newService();
         $method = $_SERVER['REQUEST_METHOD'];
 
         try {
+            if (\CatalogSuite\Http\MediaAccess::enabled()) {
+                \CatalogSuite\Http\MediaAccess::requirePermission(in_array($method, ['GET','HEAD'], true) ? 'view' : 'attach');
+            }
+            $service = $this->newService();
             if ($method === 'GET') {
                 $id = Request::query('id');
                 $data = $id ? $service->getGlobalVariable((int) $id) : $service->listGlobalVariables();
@@ -289,6 +311,8 @@ final class TypstController
             } else {
                 Response::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
             }
+        } catch (\CatalogSuite\Http\CatalogApiException $e) {
+            Response::error($e->getErrorCode(), $e->getMessage(), $e->getStatusCode(), Request::correlationId());
         } catch (Exception $e) {
             Response::error('INTERNAL_ERROR', $e->getMessage(), 500);
         }
@@ -299,10 +323,13 @@ final class TypstController
      */
     public function seriesPreferences(): void
     {
-        $service = $this->newService();
         $method = $_SERVER['REQUEST_METHOD'];
 
         try {
+            if (\CatalogSuite\Http\MediaAccess::enabled()) {
+                \CatalogSuite\Http\MediaAccess::requirePermission(in_array($method, ['GET','HEAD'], true) ? 'view' : 'attach');
+            }
+            $service = $this->newService();
             if ($method === 'GET') {
                 $seriesId = (int) (Request::query('seriesId') ?? 0);
                 if ($seriesId <= 0) {
@@ -339,6 +366,8 @@ final class TypstController
             Response::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
         } catch (InvalidArgumentException $e) {
             Response::error('VALIDATION_ERROR', $e->getMessage(), 400);
+        } catch (\CatalogSuite\Http\CatalogApiException $e) {
+            Response::error($e->getErrorCode(), $e->getMessage(), $e->getStatusCode(), Request::correlationId());
         } catch (Exception $e) {
             Response::error('INTERNAL_ERROR', $e->getMessage(), 500);
         }

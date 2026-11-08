@@ -71,10 +71,6 @@ final class CatalogController
      */
     public function run(): void
     {
-        if ($this->bootstrapOnRequest) {
-            $this->bootstrap();
-        }
-
         $action = isset($_GET['action']) ? (string) $_GET['action'] : '';
         if ($action === '') {
             $this->responder->sendError('ACTION_REQUIRED', 'The action query parameter is required.', 400);
@@ -93,7 +89,28 @@ final class CatalogController
         ], $correlationId);
 
         try {
+            \CatalogSuite\Http\MediaAccess::guardLegacyWrite();
+            \CatalogSuite\Http\MediaAccess::guardLegacyReadAction($action);
+            $isWrite = \CatalogSuite\Http\MediaAccess::isLegacyMutation();
+            $authorizedBootstrap = !\CatalogSuite\Http\MediaAccess::enabled();
+            if (\CatalogSuite\Http\MediaAccess::enabled() && $isWrite) {
+                \CatalogSuite\Support\MediaSchema::requireInstalled($this->connection);
+                $authorizedBootstrap = true;
+            } elseif (\CatalogSuite\Http\MediaAccess::enabled()) {
+                try {
+                    \CatalogSuite\Http\MediaAccess::requirePermission('catalog_write');
+                    $authorizedBootstrap = \CatalogSuite\Support\MediaSchema::isInstalled($this->connection);
+                } catch (CatalogApiException) {
+                    // Public read/download consumers never trigger setup or seeding.
+                }
+            }
+            if ($this->bootstrapOnRequest && $authorizedBootstrap) {
+                $this->bootstrap();
+            }
             $data = $this->dispatch($action, $method);
+            if ($isWrite) {
+                \CatalogSuite\Support\MediaRuntime::sync($this->connection);
+            }
             if ($data === self::RESPONSE_STREAMED) {
                 Logger::info('request_success', [
                     'route' => $route,

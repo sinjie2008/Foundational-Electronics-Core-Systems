@@ -1,3 +1,4 @@
+import { MediaApi } from './media_api.js';
 /**
  * catalog_csv.js
  * Dedicated CSV import/export + truncate management page bindings.
@@ -311,6 +312,7 @@ export class CatalogCsvPage {
     }
 
     renderCsvHistory(files) {
+        this.csvFiles = new Map(files.map((file) => [String(file.id), file]));
         const page = this;
         const columns = [
             { title: 'Type', data: 'type', width: '90px' },
@@ -429,12 +431,19 @@ export class CatalogCsvPage {
         }
     }
 
-    triggerCsvDownload(fileId) {
+    async triggerCsvDownload(fileId) {
         const page = this;
         if (!fileId) {
             return;
         }
-        window.location = `${page.apiBase}?action=${encodeURIComponent('v1.downloadCsv')}&id=${encodeURIComponent(fileId)}`;
+        try {
+            await MediaApi.download({
+                filename: page.csvFiles?.get(String(fileId))?.name || String(fileId).split('/').pop(),
+                downloadUrl: `${page.apiBase}?action=${encodeURIComponent('v1.downloadCsv')}&id=${encodeURIComponent(fileId)}`,
+            });
+        } catch (error) {
+            page.setStatusWithError('Unable to download CSV.', error);
+        }
     }
 
     openTruncateModal() {
@@ -648,6 +657,7 @@ export class CatalogCsvPage {
     }
 
     async init() {
+        await MediaApi.prepare();
         const page = this;
         page.bindCsvEvents();
         page.bindTruncateEvents();

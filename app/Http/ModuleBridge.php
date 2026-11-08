@@ -22,7 +22,29 @@ final class ModuleBridge
 {
     /** Existing public API contracts, including the distinct root adapter variants. */
     public const ENDPOINTS = [
+        'api/media/public.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'publicDownload'],
+        'api/media/batch-reuse.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'run'],
         'catalog.php' => [CatalogController::class, 'run'],
+        'api/media/capabilities.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'run'],
+        'api/media/list.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'run'],
+        'api/media/details.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'run'],
+        'api/media/folders.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'run'],
+        'api/media/targets.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'run'],
+        'api/media/relationships.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'run'],
+        'api/media/download.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'run'],
+        'api/media/preview.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'run'],
+        'api/media/batches.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'run'],
+        'api/media/upload.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'run'],
+        'api/media/batch-cancel.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'run'],
+        'api/media/attach.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'run'],
+        'api/media/detach.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'run'],
+        'api/media/mapping-validate.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'run'],
+        'api/media/mapping-apply.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'run'],
+        'api/media/mapping-rollback.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'run'],
+        'api/media/index.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'run'],
+        'api/media/asset.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'run'],
+        'api/media/restore.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'run'],
+        'api/media/purge.php' => [\CatalogSuite\Controllers\MediaLibraryController::class, 'run'],
         'api/catalog/hierarchy.php' => [CatalogReadController::class, 'hierarchy'],
         'api/catalog/search.php' => [CatalogReadController::class, 'search'],
         'api/catalog/csv-download.php' => [CatalogOperationsController::class, 'csvDownload'],
@@ -56,7 +78,7 @@ final class ModuleBridge
     ];
 
     public const PAGES = [
-        'catalog_ui.html', 'catalog-csv.html', 'spec-search.html',
+        'catalog_ui.html', 'catalog-csv.html', 'spec-search.html', 'media_library.html',
         'latex-templating.html', 'global_typst_template.html', 'series_typst_template.html',
     ];
 
@@ -89,7 +111,13 @@ final class ModuleBridge
             $this->normalizeUploads($request->files->all()),
             $server,
             function () use ($handler): void {
-                $this->container->make($handler[0])->{$handler[1]}();
+                try {
+                    $this->container->make($handler[0])->{$handler[1]}();
+                } catch (CatalogApiException $error) {
+                    $responder = new HttpResponder();
+                    $responder->setCorrelationId(\CatalogSuite\Http\Request::correlationId());
+                    $responder->sendError($error->getErrorCode(), $error->getMessage(), $error->getStatusCode(), $error->getDetails());
+                }
             }
         );
         if ($result['file'] !== null) {

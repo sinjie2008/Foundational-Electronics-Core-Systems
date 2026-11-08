@@ -289,6 +289,9 @@ final class SpecSearchService
         }
 
         $relative = ltrim($path, '/');
+        if (str_starts_with($relative, '__library__/')) {
+            return $this->baseUrl === '' ? '../storage/media/' . $relative : $this->baseUrl . '/storage/media/' . $relative;
+        }
         $storageMediaPath = $this->mediaStorageDir . '/' . $relative;
         if (is_file($storageMediaPath)) {
             return $this->baseUrl === ''

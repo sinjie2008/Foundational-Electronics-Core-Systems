@@ -133,6 +133,10 @@ final class ProductService
      */
     public function saveProduct(array $payload, array $files = []): array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
+        if (array_key_exists('mediaSelections', $payload) && !is_array($payload['mediaSelections'])) {
+            throw new CatalogApiException('MEDIA_SELECTION_INVALID', 'Media selections must be keyed by file field.', 422);
+        }
         $productId = isset($payload['id']) ? (int) $payload['id'] : null;
         $seriesIdRaw = $payload['series_id'] ?? $payload['seriesId'] ?? null;
         $seriesId = $seriesIdRaw !== null ? (int) $seriesIdRaw : null;
@@ -177,8 +181,17 @@ final class ProductService
             $customValues,
             $files,
             $existingRawValues,
-            $seriesId
+            $seriesId,
+            isset($payload['mediaSelections']) && is_array($payload['mediaSelections']) ? $payload['mediaSelections'] : []
         );
+
+        if (\CatalogSuite\Http\MediaAccess::enabled()) {
+            foreach ($plans as $plan) {
+                if ($plan['oldPath'] !== null && in_array($plan['action'], ['upload','attach_existing'], true)) {
+                    \CatalogSuite\Http\MediaAccess::requirePermission('replace');
+                }
+            }
+        }
 
         $newFiles = [];
         $deleteAfterCommit = [];
@@ -192,6 +205,11 @@ final class ProductService
             }
 
             foreach ($plans as $index => $plan) {
+                if ($plan['action'] === 'attach_existing') {
+                    $plans[$index]['value'] = \CatalogSuite\Support\MediaRuntime::selection(
+                        $this->connection, $payload['mediaSelections'][$plan['field']['fieldKey']], false, true
+                    );
+                }
                 if ($plan['action'] === 'upload' && isset($plan['file'])) {
                     $result = $this->mediaStorageService->saveSeriesFile(
                         $seriesId,
@@ -210,7 +228,7 @@ final class ProductService
             }
 
             $this->persistProductCustomValuesFromPlans($productId, $plans);
-
+            \CatalogSuite\Support\MediaRuntime::sync($this->connection, 'product', $productId);
             $this->connection->commit();
         } catch (Throwable $exception) {
             $this->connection->rollback();
@@ -245,9 +263,16 @@ final class ProductService
         array $customValues,
         array $files,
         array $existingValues,
-        int $seriesId
+        int $seriesId,
+        array $mediaSelections = []
     ): array {
         $plans = [];
+        $allowed = array_column($fieldMap, 'fieldType', 'fieldKey');
+        foreach ($mediaSelections as $key => $selection) {
+            if (($allowed[$key] ?? '') !== 'file' || !is_array($selection)) {
+                throw new CatalogApiException('FIELD_TYPE_INVALID', 'Media selections must target an existing file field.', 422);
+            }
+        }
         foreach ($fieldMap as $field) {
             $fieldKey = $field['fieldKey'];
             $fieldType = $field['fieldType'];
@@ -267,7 +292,13 @@ final class ProductService
             ];
 
             if ($fieldType === 'file') {
-                if (is_array($fileUpload)) {
+                if (isset($mediaSelections[$fieldKey])) {
+                    if (is_array($fileUpload) || ($incomingProvided && ($incomingValue === '' || $incomingValue === null))) {
+                        throw new CatalogApiException('MEDIA_SELECTION_CONFLICT', 'Choose upload, library selection or clear for each field.', 422);
+                    }
+                    $plan['action'] = 'attach_existing';
+                    $plan['value'] = \CatalogSuite\Support\MediaRuntime::selection($this->connection, $mediaSelections[$fieldKey]);
+                } elseif (is_array($fileUpload)) {
                     $plan['action'] = 'upload';
                 } elseif ($incomingProvided && ($incomingValue === '' || $incomingValue === null)) {
                     $plan['action'] = 'clear';
@@ -339,6 +370,7 @@ final class ProductService
 
     public function deleteProduct(int $productId): void
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
         $product = $this->fetchProductById($productId);
         if ($product === null) {
             throw new CatalogApiException('PRODUCT_NOT_FOUND', 'Product not found.', 404);
@@ -356,6 +388,7 @@ final class ProductService
         }
 
         $this->repository->deleteProduct($productId);
+        \CatalogSuite\Support\MediaRuntime::sync($this->connection, 'product', $productId);
 
         foreach ($pathsToDelete as $path) {
             $this->mediaStorageService->deleteFile($path);

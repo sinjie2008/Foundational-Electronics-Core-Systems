@@ -1,3 +1,4 @@
+import { MediaApi } from './media_api.js';
 export class LatexTemplatePage {
     constructor() {
         this.state = {
@@ -30,7 +31,8 @@ export class LatexTemplatePage {
 
 
     /** Initializes DataTables, live preview defaults, and event handlers. */
-    init() {
+    async init() {
+        await MediaApi.prepare();
         const page = this;
         page.state.table = $('#latexTemplatesTable').DataTable({
             data: [],
@@ -494,7 +496,7 @@ export class LatexTemplatePage {
         return page.withLoading(async () => {
             const opts = options || {};
             const method = opts.method || 'GET';
-            const headers = { Accept: 'application/json' };
+            const headers = { Accept: 'application/json', ...MediaApi.headers() };
             const params = new URLSearchParams({ action: action });
             if (opts.query) {
                 Object.keys(opts.query).forEach(function (key) {

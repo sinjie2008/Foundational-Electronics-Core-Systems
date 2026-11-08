@@ -71,6 +71,7 @@ final class LatexTemplateService
      */
     public function createTemplate(array $payload): array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
         [$title, $description, $latex] = $this->normalizePayload($payload);
         $templateId = $this->repository->insertTemplate($title, $description, $latex);
 
@@ -89,6 +90,7 @@ final class LatexTemplateService
      */
     public function updateTemplate(int $templateId, array $payload): array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
         $this->requireTemplate($templateId);
         [$title, $description, $latex] = $this->normalizePayload($payload);
         $this->repository->updateTemplate($templateId, $title, $description, $latex);
@@ -100,10 +102,11 @@ final class LatexTemplateService
     }
 
     /**
-     * Deletes a template and any cached PDF.
+     * Deletes a template while retaining its previously generated PDF bytes.
      */
     public function deleteTemplate(int $templateId): void
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
         $row = $this->requireTemplate($templateId);
         $pdfPath = isset($row['pdf_path']) ? (string) $row['pdf_path'] : null;
         if ($pdfPath !== null) {
@@ -111,6 +114,7 @@ final class LatexTemplateService
         }
 
         $this->repository->deleteTemplate($templateId);
+        \CatalogSuite\Support\MediaRuntime::sync($this->connection);
 
         $correlationId = $this->generateCorrelationId();
         $this->logOperation('delete', $templateId, $correlationId);
@@ -123,12 +127,18 @@ final class LatexTemplateService
      */
     public function updatePdfPath(int $templateId, string $relativePath, ?string $previousPath = null): array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
         $this->requireTemplate($templateId);
         if ($previousPath !== null && $previousPath !== $relativePath) {
             $this->deletePdfFile($previousPath);
         }
 
         $this->repository->updatePdfPath($templateId, $relativePath);
+        $location = (new \CatalogSuite\Support\MediaStorageRegistry())->locate($relativePath);
+        if ($location !== null) {
+            \CatalogSuite\Support\MediaRuntime::register($this->connection, $location['root'], $location['path'], 'generated', null, ['templateId' => $templateId]);
+        }
+        \CatalogSuite\Support\MediaRuntime::sync($this->connection);
 
         $correlationId = $this->generateCorrelationId();
         $this->logOperation('pdf_update', $templateId, $correlationId);
@@ -236,23 +246,8 @@ final class LatexTemplateService
 
     private function deletePdfFile(?string $relativePath): void
     {
-        if ($relativePath === null || $relativePath === '') {
-            return;
-        }
-        $normalizedRelative = ltrim(str_replace('\\', '/', $relativePath), '/');
-        $prefix = ltrim((string) (Config::get('app')['latex']['pdf_url_prefix'] ?? '/storage/latex-pdfs'), '/');
-        if (!str_starts_with($normalizedRelative, $prefix)) {
-            return;
-        }
-
-        $suffix = ltrim(substr($normalizedRelative, strlen($prefix)), '/');
-        if ($suffix === '') {
-            return;
-        }
-
-        $absolute = $this->pdfStorageDir . '/' . $suffix;
-        if (is_file($absolute)) {
-            @unlink($absolute);
+        if ($relativePath !== null && $relativePath !== '') {
+            \CatalogSuite\Support\MediaRuntime::retainInsteadOfDelete($this->connection, $relativePath);
         }
     }
 

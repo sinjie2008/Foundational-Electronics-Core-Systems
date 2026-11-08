@@ -182,6 +182,9 @@ final class CatalogOperationsController
         Logger::info('request_start', ['route' => $route, 'method' => $method, 'action' => $action], $correlationId);
 
         try {
+            if (\CatalogSuite\Http\MediaAccess::enabled()) {
+                \CatalogSuite\Http\MediaAccess::requirePermission(str_starts_with($action, 'catalog.csv.') && in_array($method, ['GET','HEAD'], true) ? 'view' : 'attach');
+            }
             $outcome = $operation($correlationId);
         } catch (CatalogApiException $e) {
             Logger::error('request_failed', [

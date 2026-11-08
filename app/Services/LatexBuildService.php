@@ -69,24 +69,34 @@ final class LatexBuildService
             )
         );
 
-        $descriptorSpec = [
-            0 => ['pipe', 'r'],
-            1 => ['pipe', 'w'],
-            2 => ['pipe', 'w'],
-        ];
+        if (\CatalogSuite\Http\MediaAccess::enabled()) {
+            $result = \CatalogSuite\Support\MediaCompilerProcess::run(
+                [$this->pdflatexPath, '-no-shell-escape', '-interaction=nonstopmode', '-halt-on-error', '-output-directory=.', basename($texPath)],
+                $this->workingDir
+            );
+            $stdout = $result['stdout'];
+            $stderr = $result['stderr'];
+            $exitCode = $result['exitCode'];
+        } else {
+            $descriptorSpec = [
+                0 => ['pipe', 'r'],
+                1 => ['pipe', 'w'],
+                2 => ['pipe', 'w'],
+            ];
 
-        $process = proc_open($command, $descriptorSpec, $pipes, $this->workingDir);
-        if (!is_resource($process)) {
-            $this->cleanupWorkingFiles($baseName);
-            throw new CatalogApiException('LATEX_TOOL_MISSING', 'Unable to execute MiKTeX pdflatex.', 500);
+            $process = proc_open($command, $descriptorSpec, $pipes, $this->workingDir);
+            if (!is_resource($process)) {
+                $this->cleanupWorkingFiles($baseName);
+                throw new CatalogApiException('LATEX_TOOL_MISSING', 'Unable to execute MiKTeX pdflatex.', 500);
+            }
+
+            fclose($pipes[0]);
+            $stdout = stream_get_contents($pipes[1]) ?: '';
+            fclose($pipes[1]);
+            $stderr = stream_get_contents($pipes[2]) ?: '';
+            fclose($pipes[2]);
+            $exitCode = proc_close($process);
         }
-
-        fclose($pipes[0]);
-        $stdout = stream_get_contents($pipes[1]) ?: '';
-        fclose($pipes[1]);
-        $stderr = stream_get_contents($pipes[2]) ?: '';
-        fclose($pipes[2]);
-        $exitCode = proc_close($process);
         $pdfSource = $this->workingDir . DIRECTORY_SEPARATOR . $baseName . '.pdf';
 
         try {

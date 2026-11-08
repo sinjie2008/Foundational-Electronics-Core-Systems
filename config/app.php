@@ -7,6 +7,7 @@ declare(strict_types=1);
  */
 $projectRoot = dirname(__DIR__);
 $storageRoot = getenv('CATALOG_STORAGE_ROOT') ?: $projectRoot . '/storage';
+$mediaLibraryEnabled = getenv('CATALOG_MEDIA_LIBRARY_ENABLED');
 
 return [
     'project_root' => $projectRoot,
@@ -33,6 +34,19 @@ return [
         'allowed_mime' => ['application/pdf', 'model/gltf-binary'],
         'allowed_extensions' => ['glb'],
         'download_url' => 'catalog.php',
+    ],
+    'media_library' => [
+        'enabled' => $mediaLibraryEnabled === false || $mediaLibraryEnabled === ''
+            ? true
+            : filter_var($mediaLibraryEnabled, FILTER_VALIDATE_BOOLEAN),
+        // The standalone concept has no login. Laravel hosts may provide their own policy.
+        // Callable(string $permission): ?array{actor:string, permissions:array, csrfToken?:string}.
+        'authorize' => null,
+        'atomic_mapping_limit' => 100,
+        'mapping_row_limit' => 1000,
+        'max_image_pixels' => 40000000,
+        'external_roots_enabled' => false,
+        'rate_limits' => ['read' => 600, 'write' => 120],
     ],
     'truncate' => [
         'token' => 'TRUNCATE',

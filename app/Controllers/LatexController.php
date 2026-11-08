@@ -44,6 +44,9 @@ final class LatexController
         $method = Request::method();
 
         try {
+            if (\CatalogSuite\Http\MediaAccess::enabled()) {
+                \CatalogSuite\Http\MediaAccess::requirePermission(in_array($method, ['GET','HEAD'], true) ? 'view' : 'attach');
+            }
             $service = $this->newService();
             if ($method === 'POST') {
                 $data = Request::json();
@@ -57,6 +60,8 @@ final class LatexController
             } else {
                 Response::error('method_not_allowed', 'Method not allowed', 405, $correlationId);
             }
+        } catch (\CatalogSuite\Http\CatalogApiException $e) {
+            Response::error($e->getErrorCode(), $e->getMessage(), $e->getStatusCode(), $correlationId);
         } catch (Throwable $e) {
             Logger::error('request_failed', ['route' => $route, 'method' => $method, 'exception' => $e], $correlationId);
             Response::error('internal_error', 'Unexpected error: ' . $e->getMessage(), 500, $correlationId);
@@ -73,6 +78,9 @@ final class LatexController
         $method = Request::method();
 
         try {
+            if (\CatalogSuite\Http\MediaAccess::enabled()) {
+                \CatalogSuite\Http\MediaAccess::requirePermission(in_array($method, ['GET','HEAD'], true) ? 'view' : 'attach');
+            }
             $service = $this->newService();
             if ($method === 'GET') {
                 $seriesId = (int) ($_GET['series_id'] ?? 0);
@@ -122,6 +130,8 @@ final class LatexController
             } else {
                 Response::error('method_not_allowed', 'Method not allowed', 405, $correlationId);
             }
+        } catch (\CatalogSuite\Http\CatalogApiException $e) {
+            Response::error($e->getErrorCode(), $e->getMessage(), $e->getStatusCode(), $correlationId);
         } catch (Throwable $e) {
             Logger::error('request_failed', ['route' => $route, 'method' => $method, 'exception' => $e], $correlationId);
             Response::error('internal_error', 'Unexpected error: ' . $e->getMessage(), 500, $correlationId);
@@ -138,6 +148,9 @@ final class LatexController
         $method = Request::method();
 
         try {
+            if (\CatalogSuite\Http\MediaAccess::enabled()) {
+                \CatalogSuite\Http\MediaAccess::requirePermission(in_array($method, ['GET','HEAD'], true) ? 'view' : 'attach');
+            }
             $service = $this->newService();
             if ($method === 'GET') {
                 Response::success($service->listGlobalVariables(), 200, $correlationId);
@@ -168,6 +181,8 @@ final class LatexController
             } else {
                 Response::error('method_not_allowed', 'Method not allowed', 405, $correlationId);
             }
+        } catch (\CatalogSuite\Http\CatalogApiException $e) {
+            Response::error($e->getErrorCode(), $e->getMessage(), $e->getStatusCode(), $correlationId);
         } catch (Throwable $e) {
             Logger::error('request_failed', ['route' => $route, 'method' => $method, 'exception' => $e], $correlationId);
             Response::error('internal_error', 'Unexpected error: ' . $e->getMessage(), 500, $correlationId);

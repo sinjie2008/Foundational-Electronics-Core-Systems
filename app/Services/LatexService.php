@@ -16,6 +16,7 @@ use RuntimeException;
 final class LatexService
 {
     private LatexRepository $latex;
+    private mysqli $connection;
     private CatalogService $catalog;
     private string $buildStorageDir;
     private string $pdfStorageDir;
@@ -28,6 +29,10 @@ final class LatexService
     public function __construct(?mysqli $db = null, ?LatexRepository $latex = null, ?CatalogService $catalog = null)
     {
         $connection = $db ?? Db::connection();
+        if (\CatalogSuite\Http\MediaAccess::enabled()) {
+            \CatalogSuite\Support\MediaSchema::requireInstalled($connection);
+        }
+        $this->connection = $connection;
         $this->latex = $latex ?? new LatexRepository($connection);
         $this->catalog = $catalog ?? new CatalogService($connection);
         $config = Config::get('app');
@@ -77,7 +82,9 @@ final class LatexService
      */
     public function createGlobalTemplate(string $title, string $description, string $latexCode): array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
         $id = $this->latex->insertGlobalTemplate($title, $description, $latexCode);
+        \CatalogSuite\Support\MediaRuntime::sync($this->connection);
         return $this->getGlobalTemplate($id) ?? [];
     }
 
@@ -86,7 +93,9 @@ final class LatexService
      */
     public function updateGlobalTemplate(int $id, string $title, string $description, string $latexCode): ?array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
         $this->latex->updateGlobalTemplate($id, $title, $description, $latexCode);
+        \CatalogSuite\Support\MediaRuntime::sync($this->connection);
         return $this->getGlobalTemplate($id);
     }
 
@@ -95,7 +104,10 @@ final class LatexService
      */
     public function deleteGlobalTemplate(int $id): bool
     {
-        return $this->latex->deleteGlobalTemplate($id);
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
+        $result = $this->latex->deleteGlobalTemplate($id);
+        \CatalogSuite\Support\MediaRuntime::sync($this->connection);
+        return $result;
     }
 
     /**
@@ -122,7 +134,9 @@ final class LatexService
      */
     public function createSeriesTemplate(int $seriesId, string $title, string $description, string $latexCode): array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
         $id = $this->latex->insertSeriesTemplate($seriesId, $title, $description, $latexCode);
+        \CatalogSuite\Support\MediaRuntime::sync($this->connection);
         return $this->getTemplate($id) ?? [];
     }
 
@@ -131,7 +145,9 @@ final class LatexService
      */
     public function updateSeriesTemplate(int $id, int $seriesId, string $title, string $description, string $latexCode): ?array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
         $this->latex->updateSeriesTemplate($id, $seriesId, $title, $description, $latexCode);
+        \CatalogSuite\Support\MediaRuntime::sync($this->connection);
         return $this->getTemplate($id);
     }
 
@@ -142,6 +158,7 @@ final class LatexService
      */
     public function compileLatex(string $latex, int $seriesId): array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
         $seriesDetails = $this->catalog->getSeriesDetails($seriesId);
         if (!$seriesDetails) {
             throw new RuntimeException('Series not found');
@@ -170,7 +187,7 @@ final class LatexService
             $latex = str_replace($matches[0], $productsLatex, $latex);
         }
 
-        $buildDir = $this->buildStorageDir;
+        $buildDir = $this->buildStorageDir . '/' . \CatalogSuite\Support\MediaStorageRegistry::uuid();
         if (!is_dir($buildDir)) {
             mkdir($buildDir, 0777, true);
         }
@@ -180,7 +197,13 @@ final class LatexService
         file_put_contents($texFile, $latex);
 
         $cmd = escapeshellarg($this->pdflatexBinary) . ' -interaction=nonstopmode -output-directory=' . escapeshellarg($buildDir) . ' ' . escapeshellarg($texFile);
-        exec($cmd, $output, $returnVar);
+        if (\CatalogSuite\Http\MediaAccess::enabled()) {
+            $result = \CatalogSuite\Support\MediaCompilerProcess::run([$this->pdflatexBinary,'-no-shell-escape','-interaction=nonstopmode','-halt-on-error','-output-directory=.',basename($texFile)], $buildDir);
+            $returnVar = $result['exitCode'];
+            $output = explode("\n", $result['stdout'] . $result['stderr']);
+        } else {
+            exec($cmd, $output, $returnVar);
+        }
 
         $pdfFile = $buildDir . '/' . $jobId . '.pdf';
         if (!file_exists($pdfFile)) {
@@ -192,9 +215,12 @@ final class LatexService
             mkdir($storageDir, 0777, true);
         }
 
-        $finalPdfName = 'series_' . $seriesId . '_' . date('YmdHis') . '.pdf';
+        $finalPdfName = 'series_' . $seriesId . '_' . date('YmdHis') . '_' . bin2hex(random_bytes(6)) . '.pdf';
         $finalPdfPath = $storageDir . '/' . $finalPdfName;
-        rename($pdfFile, $finalPdfPath);
+        if (!rename($pdfFile, $finalPdfPath)) {
+            throw new RuntimeException('Unable to store the generated PDF.');
+        }
+        \CatalogSuite\Support\MediaRuntime::register($this->connection, 'api_latex_pdfs', $finalPdfName, 'generated', null, ['seriesId' => $seriesId]);
 
         @unlink($texFile);
         @unlink($buildDir . '/' . $jobId . '.log');
@@ -221,13 +247,16 @@ final class LatexService
      */
     public function saveGlobalVariable(string $key, string $inputType, string $value, ?int $id = null): ?array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
         $normalizedType = $this->normalizeVariableType($inputType);
         if ($id) {
             $this->latex->updateGlobalVariable($id, $key, $normalizedType, $value);
+        \CatalogSuite\Support\MediaRuntime::sync($this->connection);
             return $this->getGlobalVariable($id);
         }
 
         $id = $this->latex->insertGlobalVariable($key, $normalizedType, $value);
+        \CatalogSuite\Support\MediaRuntime::sync($this->connection);
         return $this->getGlobalVariable($id);
     }
 
@@ -236,7 +265,10 @@ final class LatexService
      */
     public function deleteGlobalVariable(int $id): bool
     {
-        return $this->latex->deleteGlobalVariable($id);
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
+        $result = $this->latex->deleteGlobalVariable($id);
+        \CatalogSuite\Support\MediaRuntime::sync($this->connection);
+        return $result;
     }
 
     /**

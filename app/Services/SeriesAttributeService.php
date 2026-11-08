@@ -41,6 +41,10 @@ final class SeriesAttributeService
      */
     public function saveAttributes(array $payload, array $files = [], bool $wrapInTransaction = true): array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
+        if (array_key_exists('mediaSelections', $payload) && !is_array($payload['mediaSelections'])) {
+            throw new CatalogApiException('MEDIA_SELECTION_INVALID', 'Media selections must be keyed by file field.', 422);
+        }
         $seriesId = isset($payload['seriesId']) ? (int) $payload['seriesId'] : null;
         $valuesPayload = isset($payload['values']) && is_array($payload['values'])
             ? $payload['values']
@@ -71,6 +75,12 @@ final class SeriesAttributeService
 
         $errors = [];
         $plans = [];
+        $mediaSelections = isset($payload['mediaSelections']) && is_array($payload['mediaSelections']) ? $payload['mediaSelections'] : [];
+        foreach ($mediaSelections as $key => $selection) {
+            if (($definitionMap[$key]['fieldType'] ?? '') !== 'file' || !is_array($selection)) {
+                throw new CatalogApiException('FIELD_TYPE_INVALID', 'Media selections must target an existing file field.', 422);
+            }
+        }
         foreach ($definitionMap as $fieldKey => $definition) {
             $fieldType = $definition['fieldType'] ?? 'text';
             $existingValue = $existingValues[$fieldKey] ?? null;
@@ -89,7 +99,13 @@ final class SeriesAttributeService
             ];
 
             if ($fieldType === 'file') {
-                if (is_array($fileUpload)) {
+                if (isset($mediaSelections[$fieldKey])) {
+                    if (is_array($fileUpload) || ($incomingProvided && ($incomingValue === '' || $incomingValue === null))) {
+                        throw new CatalogApiException('MEDIA_SELECTION_CONFLICT', 'Choose upload, library selection or clear for each field.', 422);
+                    }
+                    $plan['action'] = 'attach_existing';
+                    $plan['value'] = \CatalogSuite\Support\MediaRuntime::selection($this->connection, $mediaSelections[$fieldKey]);
+                } elseif (is_array($fileUpload)) {
                     $plan['action'] = 'upload';
                 } elseif ($incomingProvided && ($incomingValue === '' || $incomingValue === null)) {
                     $plan['action'] = 'clear';
@@ -118,6 +134,14 @@ final class SeriesAttributeService
             throw new CatalogApiException('VALIDATION_ERROR', 'Series metadata validation failed.', 400, $errors);
         }
 
+        if (\CatalogSuite\Http\MediaAccess::enabled()) {
+            foreach ($plans as $plan) {
+                if ($plan['oldPath'] !== null && in_array($plan['action'], ['upload','attach_existing'], true)) {
+                    \CatalogSuite\Http\MediaAccess::requirePermission('replace');
+                }
+            }
+        }
+
         $newFiles = [];
         $deleteAfterCommit = [];
 
@@ -133,7 +157,10 @@ final class SeriesAttributeService
                 $value = $plan['value'];
 
                 if ($fieldType === 'file') {
-                    if ($plan['action'] === 'upload' && isset($plan['file'])) {
+                    if ($plan['action'] === 'attach_existing') {
+                        $value = \CatalogSuite\Support\MediaRuntime::selection($this->connection, $mediaSelections[$fieldKey], false, true);
+                        $plans[$index]['value'] = $value;
+                    } elseif ($plan['action'] === 'upload' && isset($plan['file'])) {
                         $result = $this->mediaStorageService->saveSeriesFile(
                             $seriesId,
                             $seriesId,
@@ -155,6 +182,7 @@ final class SeriesAttributeService
                 $this->upsertSeriesValue($seriesId, $fieldId, $this->normalizeValue($value));
             }
 
+            \CatalogSuite\Support\MediaRuntime::sync($this->connection, 'series', $seriesId);
             if ($wrapInTransaction) {
                 $this->connection->commit();
             }

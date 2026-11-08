@@ -4,6 +4,9 @@ declare(strict_types=1);
 namespace CatalogSuite\Services;
 
 use CatalogSuite\Support\Config;
+use CatalogSuite\Support\MediaRuntime;
+use CatalogSuite\Support\MediaStorageRegistry;
+use CatalogSuite\Http\MediaAccess;
 
 use mysqli;
 use CatalogSuite\Repositories\MediaStorageRepository;
@@ -25,13 +28,15 @@ final class MediaStorageService
         ?array $allowedMime = null,
         ?array $allowedExtensions = null
     ) {
+        if (\CatalogSuite\Http\MediaAccess::enabled() && \CatalogSuite\Http\MediaAccess::isLegacyMutation()) {
+            \CatalogSuite\Support\MediaSchema::requireInstalled($connection);
+        }
         $settings = Config::get('app');
         $this->maxBytes = $maxBytes ?? $settings['media']['max_bytes'];
         $this->allowedMime = $allowedMime ?? $settings['media']['allowed_mime'];
         $this->allowedExtensions = $allowedExtensions ?? $settings['media']['allowed_extensions'];
         $this->rootDir = rtrim($rootDir ?? $settings['storage']['media'], DIRECTORY_SEPARATOR);
         $this->repository = new MediaStorageRepository($connection);
-        $this->ensureRootDir();
     }
 
     /**
@@ -43,11 +48,22 @@ final class MediaStorageService
      */
     public function saveSeriesFile(int $seriesId, int $entityId, string $fieldKey, array $file): array
     {
+        if (\CatalogSuite\Http\MediaAccess::enabled()) {
+            \CatalogSuite\Http\MediaAccess::requirePermission('upload');
+        }
         $this->validateUpload($file);
         $context = $this->fetchSeriesContext($seriesId);
         $safeFilename = $this->sanitizeFilename($file['name'] ?? 'file');
         $relativePath = $this->buildRelativePath($context, $fieldKey, $entityId, $safeFilename);
         $absolutePath = $this->rootDir . DIRECTORY_SEPARATOR . $relativePath;
+        // A replacement is a new immutable file, including same-name replacements.
+        if (\CatalogSuite\Http\MediaAccess::enabled() || file_exists($absolutePath)) {
+            $extension = pathinfo($safeFilename, PATHINFO_EXTENSION);
+            $base = pathinfo($safeFilename, PATHINFO_FILENAME);
+            $safeFilename = $base . '__' . str_replace('-', '', MediaStorageRegistry::uuid()) . ($extension === '' ? '' : '.' . $extension);
+            $relativePath = $this->buildRelativePath($context, $fieldKey, $entityId, $safeFilename);
+            $absolutePath = $this->rootDir . DIRECTORY_SEPARATOR . $relativePath;
+        }
         $directory = dirname($absolutePath);
         if (!is_dir($directory) && !mkdir($directory, 0775, true) && !is_dir($directory)) {
             throw new CatalogApiException('MEDIA_WRITE_FAILED', 'Unable to create media directory.', 500);
@@ -57,6 +73,7 @@ final class MediaStorageService
         if ($moved === false && !rename($file['tmp_name'], $absolutePath)) {
             throw new CatalogApiException('MEDIA_WRITE_FAILED', 'Unable to store uploaded file.', 500);
         }
+        MediaRuntime::register($this->connection, 'catalog_media', $relativePath, 'upload', (string) ($file['name'] ?? $safeFilename));
 
         return [
             'relativePath' => $relativePath,
@@ -65,17 +82,14 @@ final class MediaStorageService
     }
 
     /**
-     * Deletes a stored media file if it exists.
+     * Retires a reference while retaining bytes for shared records and historical URLs.
      */
     public function deleteFile(?string $relativePath): void
     {
         if ($relativePath === null || $relativePath === '') {
             return;
         }
-        $absolutePath = $this->resolveAbsolutePath($relativePath);
-        if (is_file($absolutePath)) {
-            @unlink($absolutePath);
-        }
+        MediaRuntime::retainInsteadOfDelete($this->connection, $relativePath);
     }
 
     /**
@@ -122,6 +136,10 @@ final class MediaStorageService
      */
     private function validateUpload(array $file): void
     {
+        if (\CatalogSuite\Http\MediaAccess::enabled()) {
+            MediaStorageRegistry::inspectUpload($file);
+            return;
+        }
         $error = isset($file['error']) ? (int) $file['error'] : UPLOAD_ERR_NO_FILE;
         if ($error !== UPLOAD_ERR_OK) {
             throw new CatalogApiException('MEDIA_UPLOAD_ERROR', 'File upload failed.', 400, ['error' => $error]);
@@ -190,6 +208,9 @@ final class MediaStorageService
 
     private function sanitizeFilename(string $filename): string
     {
+        if (MediaAccess::enabled()) {
+            return MediaStorageRegistry::filename($filename);
+        }
         $basename = basename(str_replace('\\', '/', $filename));
         $clean = preg_replace('/[^a-zA-Z0-9._-]/', '_', $basename);
 
@@ -213,23 +234,19 @@ final class MediaStorageService
 
     private function resolveAbsolutePath(string $relativePath): string
     {
-        $clean = str_replace('\\', '/', $relativePath);
-        $clean = preg_replace('#/+#', '/', $clean);
-        $clean = ltrim($clean, '/');
+        $alias = MediaRuntime::aliasPath($this->connection, $relativePath);
+        if ($alias !== null) {
+            return $alias;
+        }
+        $clean = MediaStorageRegistry::cleanRelative($relativePath);
         $absolute = $this->rootDir . DIRECTORY_SEPARATOR . $clean;
         $realRoot = realpath($this->rootDir);
         $realTarget = realpath($absolute) ?: $absolute;
-        if ($realRoot !== false && str_starts_with($realTarget, $realRoot) === false) {
+        if ($realRoot !== false && !MediaStorageRegistry::within($realTarget, $realRoot)) {
             throw new CatalogApiException('MEDIA_PATH_INVALID', 'Invalid media path.', 400);
         }
 
         return $absolute;
     }
 
-    private function ensureRootDir(): void
-    {
-        if (!is_dir($this->rootDir)) {
-            @mkdir($this->rootDir, 0775, true);
-        }
-    }
 }

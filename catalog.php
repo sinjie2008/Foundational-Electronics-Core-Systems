@@ -6,5 +6,11 @@ require_once __DIR__ . '/app/compatibility.php';
 
 // Preserve the historical API entrypoint and library inclusion behaviour.
 if (!defined('CATALOG_NO_AUTO_BOOTSTRAP')) {
-    \CatalogSuite\Controllers\CatalogController::create()->run();
+    try {
+        CatalogSuite\Controllers\CatalogController::create()->run();
+    } catch (CatalogSuite\Http\CatalogApiException $error) {
+        $responder = new CatalogSuite\Http\HttpResponder();
+        $responder->setCorrelationId(CatalogSuite\Http\Request::correlationId());
+        $responder->sendError($error->getErrorCode(), $error->getMessage(), $error->getStatusCode(), $error->getDetails());
+    }
 }

@@ -68,6 +68,7 @@ final class HierarchyService
      */
     public function saveNode(array $payload): array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
         $nodeId = isset($payload['id']) ? (int) $payload['id'] : null;
         $name = isset($payload['name']) ? trim((string) $payload['name']) : '';
         $type = isset($payload['type']) ? (string) $payload['type'] : '';
@@ -145,6 +146,7 @@ final class HierarchyService
      */
     public function deleteNode(int $nodeId): void
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
         $node = $this->loadCategory($nodeId);
         if ($node === null) {
             throw new CatalogApiException('NODE_NOT_FOUND', 'Node not found.', 404);
@@ -174,6 +176,7 @@ final class HierarchyService
         }
 
         $this->repository->deleteNode($nodeId);
+        \CatalogSuite\Support\MediaRuntime::sync($this->connection);
     }
 
     /**
@@ -280,6 +283,7 @@ final class HierarchyService
      */
     public function setTypstTemplatingEnabled(int $seriesId, bool $enabled): array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
         $this->ensureTypstTemplatingColumn();
         $series = $this->loadCategory($seriesId);
         if ($series === null || ($series['type'] ?? '') !== 'series') {

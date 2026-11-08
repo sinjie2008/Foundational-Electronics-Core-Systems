@@ -1,3 +1,5 @@
+import { MediaApi } from './media_api.js';
+import { MediaPicker } from './media_picker.js';
 export class GlobalTypstTemplatePage {
     constructor() {
         this.state = {
@@ -22,7 +24,9 @@ export class GlobalTypstTemplatePage {
 
 
 
-    init() {
+    async init() {
+        await MediaApi.prepare();
+        MediaPicker.enhance();
         const page = this;
         page.state.lineNumberUpdater = page.initLineNumberedEditor('latexSource');
         page.bindEditorCaretTracking();
@@ -302,6 +306,7 @@ export class GlobalTypstTemplatePage {
         const requestInit = { ...options };
         requestInit.headers = {
             Accept: 'application/json',
+            ...MediaApi.headers(),
             ...(requestInit.headers || {}),
         };
         const hasBody = typeof requestInit.body === 'string';
@@ -467,6 +472,7 @@ export class GlobalTypstTemplatePage {
                     key,
                     type,
                     value,
+                    mediaId: MediaPicker.get(fileInput)?.id,
                 });
             }
 
@@ -582,6 +588,8 @@ export class GlobalTypstTemplatePage {
         const type = selectedType || $('#varType').val();
         if (type === 'file') {
             const fileInput = document.getElementById('varData');
+            const libraryAsset = MediaPicker.get(fileInput);
+            if (libraryAsset) return libraryAsset.filename;
             if (fileInput && fileInput.files && fileInput.files[0]) {
                 return fileInput.files[0].name;
             }

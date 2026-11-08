@@ -31,9 +31,18 @@ final class CatalogFactory
         bool $bootstrapOnRequest = true
     ): CatalogController
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite();
+        \CatalogSuite\Http\MediaAccess::guardLegacyReadAction((string) ($_GET['action'] ?? ''));
         if ($connection === null) {
-            $factory = new DatabaseFactory(dirname(__DIR__, 2) . '/db_config.php');
-            $connection = $factory->createConnection();
+            if (\CatalogSuite\Http\MediaAccess::enabled()) {
+                $connection = Db::connection();
+            } else {
+                $factory = new DatabaseFactory(dirname(__DIR__, 2) . '/db_config.php');
+                $connection = $factory->createConnection();
+            }
+        }
+        if (\CatalogSuite\Http\MediaAccess::isLegacyMutation()) {
+            \CatalogSuite\Http\MediaAccess::guardLegacyWrite($connection);
         }
         $responder = new HttpResponder();
         $requestReader = new HttpRequestReader();
@@ -78,7 +87,7 @@ final class CatalogFactory
             $bootstrapOnRequest
         );
 
-        if ($performBootstrap) {
+        if ($performBootstrap && !\CatalogSuite\Http\MediaAccess::enabled()) {
             $app->bootstrap();
         }
 

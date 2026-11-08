@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Media Library - Catalog Suite</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="assets/css/sidebar-nav.css">
+    <link rel="stylesheet" href="assets/css/media_library.css">
+</head>
+<body class="media-library-page">
+<div class="container-fluid px-0 app-shell"><div class="row flex-lg-nowrap g-0">
+            <aside class="col-12 col-lg-3 col-xl-2 sidebar-column">
+                <div class="sidebar-panel" id="pageSidebar" aria-label="Sidebar Navigation">
+                    <div class="sidebar-brand">
+                        <div class="brand-text">
+                            <div class="title">Catalog Suite</div>
+                            <div class="subtitle">AdminLTE-inspired</div>
+                        </div>
+                        <button class="btn btn-sm sidebar-collapse-btn" type="button" data-sidebar-collapse="true"
+                            aria-label="Collapse sidebar">
+                            <span class="btn-icon">&#9776;</span>
+                        </button>
+                    </div>
+                    <div class="sidebar-heading">Navigation</div>
+                    <nav class="sidebar-nav nav flex-column">
+                        <a class="nav-link" href="spec-search.html">
+                            <span class="sidebar-indicator"></span>
+                            <span class="nav-label">Spec Search</span>
+                        </a>
+                        <a class="nav-link" href="catalog_ui.html">
+                            <span class="sidebar-indicator"></span>
+                            <span class="nav-label">Catalog UI</span>
+                        </a>
+                        <a class="nav-link active" aria-current="page" href="media_library.html"><span class="sidebar-indicator"></span><span class="nav-label">Media Library</span></a>
+                        <a class="nav-link" href="catalog-csv.html">
+                            <span class="sidebar-indicator"></span>
+                            <span class="nav-label">CSV Import/Export</span>
+                        </a>
+                        <a class="nav-link" href="global_typst_template.html">
+                            <span class="sidebar-indicator"></span>
+                            <span class="nav-label">Global Typst Template</span>
+                        </a>
+                        <a class="nav-link" href="series_typst_template.html">
+                            <span class="sidebar-indicator"></span>
+                            <span class="nav-label">Series Typst Template</span>
+                        </a>
+                    </nav>
+                </div>
+            </aside>
+
+<main class="col-12 col-lg-9 col-xl-10 content-column media-main">
+    <header class="media-page-header"><div><h1>Media Library</h1><p class="media-subtitle">Find, reuse and connect your Catalog files.</p></div>
+        <div class="d-flex gap-2 flex-wrap"><button class="btn btn-outline-primary d-lg-none" data-sidebar-toggle>Navigation</button><button class="btn btn-outline-secondary" id="media-retry" hidden>Retry loading</button><button class="btn btn-outline-primary" id="media-index" hidden>Check existing files</button><button class="btn btn-outline-secondary" id="media-index-report" hidden>Download discovery report</button><button class="btn btn-primary" id="media-upload" hidden>Upload files</button></div>
+    </header>
+    <div id="media-status" class="media-status" role="status" aria-live="polite">Loading Media Library…</div>
+    <noscript><p class="media-status is-error">Enable JavaScript to use the Media Library.</p></noscript>
+    <div class="media-layout" id="media-workspace" hidden>
+        <aside class="media-panel media-folders" id="media-folders" aria-label="Catalog folders"><div class="media-details-header"><h2>Catalog folders</h2><button class="btn btn-sm btn-outline-secondary media-drawer-close" data-close="media-folders">Close</button></div>
+            <div class="media-folder-search">
+                <label class="visually-hidden" for="media-folder-search">Search Catalog folders</label>
+                <input type="search" class="form-control form-control-sm" id="media-folder-search" placeholder="Search catalog..." autocomplete="off" spellcheck="false" aria-controls="media-catalog-folders" aria-describedby="media-folder-search-status">
+                <p class="small text-muted" id="media-folder-search-status" role="status" aria-live="polite" hidden></p>
+            </div>
+            <div class="media-folder-list"><button data-all-folders>All folders</button></div>
+            <div class="media-folder-list" id="media-catalog-folders"></div>
+        </aside>
+        <section class="media-panel" aria-label="Media files">
+            <form id="media-search-form" class="media-toolbar"><label class="media-search">Search files, SKU or Series<input type="search" class="form-control" id="media-search" placeholder="Search your media..."></label><button class="btn btn-outline-primary">Search</button><button class="btn btn-outline-secondary media-mobile-only" type="button" id="media-folders-open">Folders</button></form>
+            <div class="media-toolbar">
+                <label>Type<select class="form-select form-select-sm" id="media-type"><option value="">All types</option><option value="image">Images</option><option value="pdf">PDF</option><option value="glb">GLB</option><option value="other">Other</option></select></label>
+                <label>Status<select class="form-select form-select-sm" id="media-status-filter"><option value="">All media</option><option value="unlinked">Unlinked</option><option value="duplicates">Duplicate content</option><option value="missing_file">Missing files</option><option value="integrity_changed">Needs integrity review</option><option value="trashed">Trash</option></select></label>
+                <label>Sort<select class="form-select form-select-sm" id="media-sort"><option value="uploadedAt">Newest discovered</option><option value="filename">Filename</option><option value="size">File size</option></select></label>
+                <button class="btn btn-sm btn-outline-secondary" id="media-view-toggle" type="button">List view</button><button class="btn btn-sm btn-link" id="media-clear-filters" type="button">Clear filters</button>
+            </div>
+            <p id="media-breadcrumb" class="small text-muted">All folders</p>
+            <div class="media-selection-bar"><label><input type="checkbox" id="media-select-page"> Select this page</label><span id="media-selection-count">0 selected</span><button class="btn btn-sm btn-primary" id="media-map" disabled>Map selected files</button><button class="btn btn-sm btn-outline-secondary" id="media-csv-map">Map with CSV</button><button class="btn btn-sm btn-outline-secondary" id="media-review-mapping">Previous mapping batch</button><button class="btn btn-sm btn-link" id="media-clear-selection">Clear</button></div>
+            <div class="media-files" id="media-files" aria-busy="false"></div>
+            <div class="media-pagination"><button class="btn btn-outline-secondary" id="media-previous">Previous</button><span id="media-page-label"></span><button class="btn btn-outline-secondary" id="media-next">Next</button></div>
+        </section>
+        <aside class="media-panel media-details" id="media-details" aria-label="File details"><div class="media-details-header"><h2>File details</h2><button class="btn btn-sm btn-outline-secondary media-drawer-close" data-close="media-details">Close</button></div><div id="media-detail-content"><p class="text-muted">Select a file to preview it and see where it is used.</p></div></aside>
+    </div>
+</main>
+</div><div class="sidebar-backdrop" aria-hidden="true"></div></div>
+<script src="assets/js/sidebar-nav.js"></script>
+<script defer src="assets/js/media_library_start.js"></script>
+</body></html>

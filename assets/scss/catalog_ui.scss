@@ -383,10 +383,29 @@ table th {
     flex-direction: column;
     gap: 6px;
     width: 100%;
+    flex: 1 1 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 .file-controls input[type="file"] {
+    width: 100%;
     max-width: 360px;
+    min-width: 0;
+}
+
+.metadata-field-row > label {
+    flex: 0 1 140px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 767px) {
+    .metadata-field-row {
+        flex-direction: column;
+        align-items: stretch;
+        > label { flex: auto; }
+    }
 }
 
 .file-clear {
@@ -534,9 +553,16 @@ table th {
 .dataTables_wrapper .dataTables_filter label {
     font-weight: 600;
     color: $color-muted;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    width: 100%;
 }
 
 .dataTables_wrapper .dataTables_filter input {
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 100%;
     margin-left: 8px;
     border: 1px solid #bcccdc;
     border-radius: 4px;

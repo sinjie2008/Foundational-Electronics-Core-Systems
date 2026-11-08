@@ -1,0 +1,10 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^storage/(?:media|typst-assets|typst-pdfs|latex-pdfs)/.*\.(?:php[0-9]*|phtml|pht|phar|cgi|pl|asp|aspx|jsp|shtml|shtm)(?:\.|$) - [F,NC,L]
+    RewriteRule ^storage/media/(__library__/[^/]+/[^/]+)$ api/media/public.php?path=$1 [B,QSA,L]
+</IfModule>
+<IfModule mod_headers.c>
+    <FilesMatch "\.html$">
+        Header set Cache-Control "no-cache"
+    </FilesMatch>
+</IfModule>

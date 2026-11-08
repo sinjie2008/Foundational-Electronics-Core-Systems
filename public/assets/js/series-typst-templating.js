@@ -1,3 +1,4 @@
+import { MediaApi } from './media_api.js?v=2612a8710c9e';
 export class SeriesTypstTemplatePage {
     constructor() {
         this.state = {
@@ -24,6 +25,7 @@ export class SeriesTypstTemplatePage {
 
 
     async init() {
+        await MediaApi.prepare();
         const page = this;
         const urlParams = new URLSearchParams(window.location.search);
         page.state.seriesId = urlParams.get('series_id');
@@ -307,6 +309,7 @@ export class SeriesTypstTemplatePage {
         const requestInit = { ...options };
         requestInit.headers = {
             Accept: 'application/json',
+            ...MediaApi.headers(),
             ...(requestInit.headers || {}),
         };
         const hasBody = typeof requestInit.body === 'string';

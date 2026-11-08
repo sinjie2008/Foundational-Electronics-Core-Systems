@@ -31,6 +31,9 @@ final class TypstService
     public function __construct(?mysqli $db = null)
     {
         $this->db = $db ?? Db::connection();
+        if (\CatalogSuite\Http\MediaAccess::enabled()) {
+            \CatalogSuite\Support\MediaSchema::requireInstalled($this->db);
+        }
         $config = Config::get('app');
         $this->projectRoot = rtrim(
             (string) ($config['project_root'] ?? dirname(__DIR__, 2)),
@@ -90,7 +93,9 @@ final class TypstService
      */
     public function createGlobalTemplate(string $title, string $description, string $typstCode, ?string $pdfPath = null): array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->db);
         $id = $this->typst->insertGlobalTemplate($title, $description, $typstCode, $pdfPath);
+        \CatalogSuite\Support\MediaRuntime::sync($this->db);
         return $this->getGlobalTemplate($id) ?? [];
     }
 
@@ -99,7 +104,9 @@ final class TypstService
      */
     public function updateGlobalTemplate(int $id, string $title, string $description, string $typstCode, ?string $pdfPath = null): ?array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->db);
         $this->typst->updateGlobalTemplate($id, $title, $description, $typstCode, $pdfPath);
+        \CatalogSuite\Support\MediaRuntime::sync($this->db);
         return $this->getGlobalTemplate($id);
     }
 
@@ -108,7 +115,10 @@ final class TypstService
      */
     public function deleteGlobalTemplate(int $id): bool
     {
-        return $this->typst->deleteGlobalTemplate($id);
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->db);
+        $result = $this->typst->deleteGlobalTemplate($id);
+        \CatalogSuite\Support\MediaRuntime::sync($this->db);
+        return $result;
     }
 
     /**
@@ -144,6 +154,7 @@ final class TypstService
      */
     public function saveSeriesPreference(int $seriesId, ?int $lastGlobalTemplateId): array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->db);
         if ($seriesId <= 0) {
             throw new RuntimeException('Invalid series id.');
         }
@@ -174,7 +185,9 @@ final class TypstService
      */
     public function createSeriesTemplate(int $seriesId, string $title, string $description, string $typstCode, ?string $pdfPath = null): array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->db);
         $id = $this->typst->insertSeriesTemplate($seriesId, $title, $description, $typstCode, $pdfPath);
+        \CatalogSuite\Support\MediaRuntime::sync($this->db);
         return $this->getTemplate($id) ?? [];
     }
 
@@ -183,7 +196,9 @@ final class TypstService
      */
     public function updateSeriesTemplate(int $id, int $seriesId, string $title, string $description, string $typstCode, ?string $pdfPath = null): ?array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->db);
         $this->typst->updateSeriesTemplate($id, $seriesId, $title, $description, $typstCode, $pdfPath);
+        \CatalogSuite\Support\MediaRuntime::sync($this->db);
         return $this->getTemplate($id);
     }
 
@@ -195,8 +210,9 @@ final class TypstService
      */
     public function compileTypst(string $typstCode, ?int $seriesId = null): array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->db);
         // Prepare build directory up front so assets can be staged for relative loading.
-        $buildDir = $this->buildStorageDir;
+        $buildDir = $this->buildStorageDir . '/' . \CatalogSuite\Support\MediaStorageRegistry::uuid();
         if (!is_dir($buildDir)) {
             mkdir($buildDir, 0777, true);
         }
@@ -236,7 +252,13 @@ final class TypstService
         // Capture output
         $output = [];
         $returnVar = 0;
-        exec($cmd . " 2>&1", $output, $returnVar);
+        if (\CatalogSuite\Http\MediaAccess::enabled()) {
+            $result = \CatalogSuite\Support\MediaCompilerProcess::run([$this->typstBinary,'compile','--root',$buildDir,$inputFile,$pdfFile], $buildDir);
+            $returnVar = $result['exitCode'];
+            $output = explode("\n", $result['stdout'] . $result['stderr']);
+        } else {
+            exec($cmd . " 2>&1", $output, $returnVar);
+        }
         
         if ($returnVar !== 0 || !file_exists($pdfFile)) {
              // Clean up?
@@ -250,9 +272,12 @@ final class TypstService
         $storageDir = $this->pdfStorageDir;
         if (!is_dir($storageDir)) mkdir($storageDir, 0777, true);
         
-        $finalPdfName = ($seriesId ? 'series_' . $seriesId : 'global') . '_' . date('YmdHis') . '.pdf';
+        $finalPdfName = ($seriesId ? 'series_' . $seriesId : 'global') . '_' . date('YmdHis') . '_' . bin2hex(random_bytes(6)) . '.pdf';
         $finalPdfPath = str_replace('\\', '/', realpath($storageDir) . '/' . $finalPdfName);
-        rename($pdfFile, $finalPdfPath);
+        if (!rename($pdfFile, $finalPdfPath)) {
+            throw new RuntimeException('Unable to store the generated PDF.');
+        }
+        \CatalogSuite\Support\MediaRuntime::register($this->db, 'typst_pdfs', $finalPdfName, 'generated', null, ['seriesId' => $seriesId]);
         
         // Cleanup
         @unlink($inputFile);
@@ -530,74 +555,50 @@ final class TypstService
      */
     private function resolveAssetPath($value, string $buildDir, bool $createPlaceholder = false)
     {
-        if (!is_string($value) || $value === '') {
+        if (!is_string($value) || $value === '' || preg_match('#^https?://#i', $value)) {
             return $value;
         }
-
+        $looksLikeAsset = preg_match('/\.(png|jpe?g|gif|webp|avif|bmp|tiff?|pdf|glb)$/i', $value)
+            || str_starts_with($value, '__library__/') || str_starts_with($value, 'typst-assets/');
+        if (!$looksLikeAsset) {
+            return $value;
+        }
+        $registry = new \CatalogSuite\Support\MediaStorageRegistry();
+        $source = null;
+        try {
+            $source = \CatalogSuite\Support\MediaRuntime::aliasPath($this->db, $value);
+            if ($source === null) {
+                $location = $registry->locate($value);
+                if ($location !== null) {
+                    $source = $registry->absolute($location['root'], $location['path']);
+                }
+            }
+        } catch (\CatalogSuite\Http\CatalogApiException $error) {
+            if (!in_array($error->getErrorCode(), ['MEDIA_NOT_FOUND','MEDIA_ROOT_MISSING'], true)) {
+                throw $error;
+            }
+        }
         $normalized = str_replace('\\', '/', $value);
-        // Skip URLs
-        if (filter_var($normalized, FILTER_VALIDATE_URL)) {
-            return $normalized;
+        $relative = preg_match('#^(?:[A-Za-z]:/|/)#', $normalized)
+            ? 'assets/' . hash('sha256', $value) . '.' . strtolower(pathinfo($value, PATHINFO_EXTENSION))
+            : \CatalogSuite\Support\MediaStorageRegistry::cleanRelative($normalized);
+        $root = realpath($buildDir);
+        $destination = $buildDir . '/' . $relative;
+        $parent = dirname($destination);
+        if (!is_dir($parent) && !mkdir($parent, 0775, true) && !is_dir($parent)) {
+            throw new RuntimeException('Unable to prepare the asset working directory.');
         }
-
-        $projectRoot = realpath($this->projectRoot) ?: $this->projectRoot;
-        $publicRoot = realpath($this->publicRoot) ?: $this->publicRoot;
-        $candidates = [];
-
-        // Absolute path as-is
-        if (str_starts_with($normalized, '/')) {
-            $candidates[] = $normalized;
-        } elseif (preg_match('/^[A-Za-z]:\\//', $normalized) === 1) { // Windows absolute
-            $candidates[] = $normalized;
+        if ($root === false || !\CatalogSuite\Support\MediaStorageRegistry::within(realpath($parent) . '/' . basename($destination), $root)) {
+            throw new RuntimeException('Invalid asset working path.');
         }
-
-        // Relative to project root, public, and storage/media
-        $candidates[] = $projectRoot . '/' . ltrim($normalized, '/');
-        $candidates[] = $publicRoot . '/' . ltrim($normalized, '/');
-        $candidates[] = $this->mediaStorageDir . '/' . ltrim($normalized, '/');
-        $candidates[] = $publicRoot . '/storage/' . ltrim($normalized, '/');
-        $candidates[] = $projectRoot . '/storage/' . ltrim($normalized, '/');
-
-        $sourcePath = null;
-        foreach ($candidates as $candidate) {
-            if (is_file($candidate)) {
-                $sourcePath = $candidate;
-                break;
+        if ($source !== null) {
+            if (!copy($source, $destination)) {
+                throw new RuntimeException('Unable to stage an image asset.');
             }
+        } elseif ($createPlaceholder && !is_file($destination)) {
+            file_put_contents($destination, base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='));
         }
-
-        if ($sourcePath === null) {
-            // Create a placeholder image if requested to avoid compilation failures.
-            if ($createPlaceholder) {
-                $relativePath = ltrim($normalized, '/');
-                $destPath = $buildDir . '/' . $relativePath;
-                $destDir = dirname($destPath);
-                if (!is_dir($destDir)) {
-                    mkdir($destDir, 0777, true);
-                }
-                if (!is_file($destPath)) {
-                    $base64Png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
-                    file_put_contents($destPath, base64_decode($base64Png));
-                }
-                return $relativePath;
-            }
-            return $value;
-        }
-
-        $relativePath = ltrim(str_replace('\\', '/', $normalized), '/');
-        $destPath = $buildDir . '/' . $relativePath;
-
-        if (!isset($this->copiedAssets[$sourcePath])) {
-            $destDir = dirname($destPath);
-            if (!is_dir($destDir)) {
-                mkdir($destDir, 0777, true);
-            }
-            @copy($sourcePath, $destPath);
-            $this->copiedAssets[$sourcePath] = $destPath;
-        }
-
-        // Return a path Typst can read relative to the build directory.
-        return $relativePath;
+        return $source !== null || $createPlaceholder ? $relative : $value;
     }
 
     /**
@@ -607,6 +608,9 @@ final class TypstService
      */
     private function storeUploadedAsset(array $fileUpload): string
     {
+        if (\CatalogSuite\Http\MediaAccess::enabled()) {
+            \CatalogSuite\Http\MediaAccess::requirePermission('upload');
+        }
         $error = (int) ($fileUpload['error'] ?? UPLOAD_ERR_NO_FILE);
         if ($error !== UPLOAD_ERR_OK) {
             throw new RuntimeException('File upload failed.');
@@ -625,7 +629,13 @@ final class TypstService
         $original = (string) ($fileUpload['name'] ?? 'upload');
         $base = preg_replace('/[^A-Za-z0-9_-]/', '_', pathinfo($original, PATHINFO_FILENAME)) ?: 'asset';
         $extension = strtolower((string) pathinfo($original, PATHINFO_EXTENSION));
-        $extension = $extension !== '' ? '.' . $extension : '';
+        if (!in_array($extension, ['png','jpg','jpeg','gif','webp','avif','bmp','tif','tiff'], true)) {
+            throw new RuntimeException('Unsupported image extension.');
+        }
+        if (\CatalogSuite\Http\MediaAccess::enabled()) {
+            \CatalogSuite\Support\MediaStorageRegistry::inspectUpload($fileUpload);
+        }
+        $extension = '.' . $extension;
         $unique = str_replace('.', '_', uniqid('typst_', true));
         $filename = $base . '_' . $unique . $extension;
 
@@ -638,6 +648,7 @@ final class TypstService
             throw new RuntimeException('Failed to store uploaded asset.');
         }
 
+        \CatalogSuite\Support\MediaRuntime::register($this->db, 'typst_assets', $filename, 'upload', $original);
         return 'typst-assets/' . $filename;
     }
 
@@ -662,9 +673,9 @@ final class TypstService
      *
      * @param array<string, mixed>|null $fileUpload
      */
-    public function saveGlobalVariable(string $key, string $inputType, string $value, ?int $id = null, ?array $fileUpload = null): ?array
+    public function saveGlobalVariable(string $key, string $inputType, string $value, ?int $id = null, ?array $fileUpload = null, ?array $mediaSelection = null): ?array
     {
-        return $this->persistVariable($key, $inputType, $value, $id, true, null, $fileUpload);
+        return $this->persistVariable($key, $inputType, $value, $id, true, null, $fileUpload, $mediaSelection);
     }
 
     /**
@@ -678,18 +689,22 @@ final class TypstService
         string $inputType,
         string $value,
         ?int $id = null,
-        ?array $fileUpload = null
+        ?array $fileUpload = null,
+        ?array $mediaSelection = null
     ): ?array {
         if ($seriesId <= 0) {
             throw new RuntimeException('Series ID is required for scoped variables.');
         }
 
-        return $this->persistVariable($key, $inputType, $value, $id, false, $seriesId, $fileUpload);
+        return $this->persistVariable($key, $inputType, $value, $id, false, $seriesId, $fileUpload, $mediaSelection);
     }
 
     public function deleteGlobalVariable(int $id): bool
     {
-        return $this->typst->deleteGlobalVariable($id);
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->db);
+        $result = $this->typst->deleteGlobalVariable($id);
+        \CatalogSuite\Support\MediaRuntime::sync($this->db);
+        return $result;
     }
 
     /**
@@ -697,7 +712,10 @@ final class TypstService
      */
     public function deleteScopedVariable(int $id, int $seriesId): bool
     {
-        return $this->typst->deleteScopedVariable($id, $seriesId);
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->db);
+        $result = $this->typst->deleteScopedVariable($id, $seriesId);
+        \CatalogSuite\Support\MediaRuntime::sync($this->db);
+        return $result;
     }
 
     public function getGlobalVariable(int $id): ?array
@@ -768,11 +786,26 @@ final class TypstService
         ?int $id,
         bool $isGlobal,
         ?int $seriesId,
-        ?array $fileUpload = null
+        ?array $fileUpload = null,
+        ?array $mediaSelection = null
     ): ?array {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->db);
         $key = trim($key);
         $normalizedType = $this->normalizeVariableType($inputType);
         $valueToStore = $value;
+        if (\CatalogSuite\Http\MediaAccess::enabled() && !$isGlobal && ($mediaSelection !== null || ($fileUpload !== null && ($fileUpload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE))
+            && (new \CatalogSuite\Repositories\MediaRepository($this->db))->one('SELECT id FROM category WHERE id=?', [$seriesId]) === null) {
+            throw new \CatalogSuite\Http\CatalogApiException('TARGET_NOT_FOUND', 'This scoped image has no valid Catalog owner.', 422);
+        }
+        if (\CatalogSuite\Http\MediaAccess::enabled() && $id !== null && ($mediaSelection !== null || ($fileUpload !== null && ($fileUpload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE))) {
+            \CatalogSuite\Http\MediaAccess::requirePermission('replace');
+        }
+        if ($mediaSelection !== null) {
+            if ($normalizedType !== 'image' || ($fileUpload !== null && ($fileUpload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE)) {
+                throw new \CatalogSuite\Http\CatalogApiException('MEDIA_SELECTION_CONFLICT', 'Select an image or upload one, not both.', 422);
+            }
+            $valueToStore = \CatalogSuite\Support\MediaRuntime::selection($this->db, $mediaSelection, true);
+        }
 
         if ($normalizedType === 'image' && $fileUpload !== null && ($fileUpload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
             if ((int) ($fileUpload['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) {
@@ -781,7 +814,18 @@ final class TypstService
             $valueToStore = $this->storeUploadedAsset($fileUpload);
         }
 
-        $row = $this->typst->saveVariable($key, $normalizedType, $valueToStore, $id, $isGlobal, $seriesId);
+        $this->db->begin_transaction();
+        try {
+            if ($mediaSelection !== null) {
+                $valueToStore = \CatalogSuite\Support\MediaRuntime::selection($this->db, $mediaSelection, true, true);
+            }
+            $row = $this->typst->saveVariable($key, $normalizedType, $valueToStore, $id, $isGlobal, $seriesId);
+            \CatalogSuite\Support\MediaRuntime::sync($this->db);
+            $this->db->commit();
+        } catch (\Throwable $error) {
+            $this->db->rollback();
+            throw $error;
+        }
         return $row === null ? null : $this->normalizeVariableRow($row);
     }
 
@@ -814,58 +858,35 @@ final class TypstService
      */
     private function buildAssetPreview(string $value): array
     {
+        $empty = ['url' => null, 'dataUri' => null];
         if ($value === '') {
-            return ['url' => null, 'dataUri' => null];
+            return $empty;
         }
-
-        // If already a URL, return as-is.
-        if (filter_var($value, FILTER_VALIDATE_URL)) {
+        if (preg_match('#^https?://#i', $value)) {
             return ['url' => $value, 'dataUri' => null];
         }
-
-        $normalized = str_replace('\\', '/', $value);
-        $projectRoot = realpath($this->projectRoot) ?: $this->projectRoot;
-        $publicRoot = realpath($this->publicRoot) ?: $this->publicRoot;
-
-        $candidates = [];
-
-        // Absolute path as-is
-        if (str_starts_with($normalized, '/')) {
-            $candidates[] = $normalized;
-        } elseif (preg_match('/^[A-Za-z]:\\//', $normalized) === 1) { // Windows absolute
-            $candidates[] = $normalized;
+        try {
+            $registry = new \CatalogSuite\Support\MediaStorageRegistry();
+            $file = \CatalogSuite\Support\MediaRuntime::aliasPath($this->db, $value);
+            if ($file === null) {
+                $location = $registry->locate($value);
+                if ($location === null) {
+                    return $empty;
+                }
+                $file = $registry->absolute($location['root'], $location['path']);
+            }
+            $mime = (new \finfo(FILEINFO_MIME_TYPE))->file($file);
+            if (!in_array($mime, ['image/png','image/jpeg','image/gif','image/webp','image/avif','image/bmp','image/tiff'], true)) {
+                return $empty;
+            }
+            $public = realpath($this->publicRoot);
+            if ($public !== false && \CatalogSuite\Support\MediaStorageRegistry::within($file, $public)) {
+                return ['url' => str_replace('\\', '/', substr($file, strlen($public) + 1)), 'dataUri' => null];
+            }
+            return ['url' => null, 'dataUri' => $this->fileToDataUri($file, 1024 * 1024)];
+        } catch (\CatalogSuite\Http\CatalogApiException) {
+            return $empty;
         }
-
-        // Relative paths to try
-        $candidates[] = $projectRoot . '/' . ltrim($normalized, '/');
-        $candidates[] = $publicRoot . '/' . ltrim($normalized, '/');
-        $candidates[] = $publicRoot . '/storage/' . ltrim($normalized, '/');
-        $candidates[] = $projectRoot . '/storage/' . ltrim($normalized, '/');
-        $candidates[] = $this->mediaStorageDir . '/' . ltrim($normalized, '/');
-
-        foreach ($candidates as $candidate) {
-            $real = realpath($candidate);
-            if ($real === false || !is_file($real)) {
-                continue;
-            }
-            $real = str_replace('\\', '/', $real);
-            $publicRootNorm = str_replace('\\', '/', $publicRoot);
-            if (str_starts_with($real, $publicRootNorm)) {
-                $relative = ltrim(substr($real, strlen($publicRootNorm)), '/');
-                $webPath = ltrim($relative, '/');
-                return ['url' => $webPath === '' ? null : $webPath, 'dataUri' => null];
-            }
-
-            // Not under public, fall back to data URI (limit size to avoid huge payloads).
-            $dataUri = $this->fileToDataUri($real, 1024 * 1024); // 1MB cap
-            if ($dataUri !== null) {
-                return ['url' => null, 'dataUri' => $dataUri];
-            }
-        }
-
-        // Last resort: treat value as relative URL
-        $fallback = ltrim($normalized, '/');
-        return ['url' => $fallback === '' ? null : $fallback, 'dataUri' => null];
     }
 
     /**
@@ -892,7 +913,10 @@ final class TypstService
      */
     public function deleteTemplate(int $id): bool
     {
-        return $this->typst->deleteTemplate($id);
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->db);
+        $result = $this->typst->deleteTemplate($id);
+        \CatalogSuite\Support\MediaRuntime::sync($this->db);
+        return $result;
     }
 
 }

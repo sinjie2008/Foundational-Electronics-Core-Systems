@@ -55,6 +55,7 @@ final class SeriesFieldService
      */
     public function saveField(array $payload): array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
         $fieldId = isset($payload['id']) ? (int) $payload['id'] : null;
         $seriesId = isset($payload['seriesId']) ? (int) $payload['seriesId'] : null;
         $label = isset($payload['label']) ? trim((string) $payload['label']) : '';
@@ -143,6 +144,7 @@ final class SeriesFieldService
             );
         }
 
+        \CatalogSuite\Support\MediaRuntime::sync($this->connection);
         $fields = $this->listFields($seriesId, $targetScope);
         $field = null;
         foreach ($fields as $item) {
@@ -172,11 +174,13 @@ final class SeriesFieldService
 
     public function deleteField(int $fieldId): void
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
         if (!$this->repository->fieldExists($fieldId)) {
             throw new CatalogApiException('FIELD_NOT_FOUND', 'Series field not found.', 404);
         }
 
         $this->repository->deleteField($fieldId);
+        \CatalogSuite\Support\MediaRuntime::sync($this->connection);
     }
 
     public function assertSeriesExists(int $seriesId): void

@@ -1,3 +1,6 @@
+import { MediaApi } from './media_api.js?v=2612a8710c9e';
+import { MediaPicker } from './media_picker.js?v=2612a8710c9e';
+
 /**
  * catalog_ui.js
  * ES6 class wrapper for the Product Catalog Manager UI (jQuery-powered).
@@ -949,6 +952,8 @@ export class CatalogUI {
 
     saveCategoryField(payload, fileInput, hasFile) {
         const page = this;
+        const libraryAsset = MediaPicker.get(fileInput);
+        if (libraryAsset) { payload.mediaId = libraryAsset.id; payload.type = 'file'; }
         if (hasFile && fileInput?.files?.length) {
             const formData = new FormData();
             formData.append('key', payload.key);
@@ -1092,7 +1097,7 @@ export class CatalogUI {
         } else {
             page.state.selectedNodeId = nodeId;
         }
-        page.updateSelectedNodePanel();
+        return page.updateSelectedNodePanel();
     }
 
     updateSelectedNodePanel() {
@@ -1148,7 +1153,7 @@ export class CatalogUI {
             page.$el('typstTemplatingControl').removeClass('d-none');
             page.applyTypstTemplatingState(Boolean(node.typstTemplatingEnabled));
             page.resetCategoryFieldsUI();
-            page.loadSeriesContext(node.id);
+            return page.loadSeriesContext(node.id);
         } else {
             page.resetSeriesUI();
             page.applyTypstTemplatingState(false);
@@ -1250,6 +1255,23 @@ export class CatalogUI {
             return;
         }
         const params = page.getQueryParams();
+        const stableNodeId = Number(params.seriesId || params.categoryId || 0);
+        if (stableNodeId && page.state.nodeIndex.has(stableNodeId)) {
+            const node = page.state.nodeIndex.get(stableNodeId);
+            page.expandAncestors(node.parentId);
+            page.renderHierarchy();
+            await page.selectNode(stableNodeId);
+            if (node.type === 'series') {
+                const product = page.state.products.find((item) => Number(item.id) === Number(params.productId));
+                if (product) {
+                    page.state.selectedProductId = product.id;
+                    page.populateProductForm(product);
+                    page.$el('productForm')[0]?.scrollIntoView({ block: 'center' });
+                }
+            }
+            page.state.deepLinkApplied = true;
+            return;
+        }
         const categoryParam = params.category || '';
         const seriesParam = params.series || '';
         const productParam = params.product || '';
@@ -2316,6 +2338,7 @@ export class CatalogUI {
             const metadataPayload = {
                 seriesId: page.state.selectedNodeId,
                 values,
+                mediaSelections: MediaPicker.selections(page.$el('seriesMetadataValues')[0], 'data-metadata-file'),
             };
             try {
                 let response;
@@ -2382,6 +2405,7 @@ export class CatalogUI {
                 name: page.$el('productName').val(),
                 description: page.$el('productDescription').val(),
                 customValues,
+                mediaSelections: MediaPicker.selections(page.$el('productCustomFields')[0], 'data-field-file'),
             };
             if (!payload.id) {
                 delete payload.id;
@@ -2731,8 +2755,11 @@ export class CatalogUI {
     }
 
     async init() {
+        await MediaApi.prepare();
         const page = this;
         const csvUiPresent = page.$el('csvHistoryTable').length > 0;
+        MediaApi.installAjax();
+        MediaPicker.enhance();
         page.bindGlobalEvents(csvUiPresent);
         page.bindLayoutReflowEvents();
         page.observeSidebarState();

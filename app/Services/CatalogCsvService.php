@@ -162,7 +162,7 @@ final class CatalogCsvService
         foreach ($productFieldKeys as $fieldKey) {
             $header[] = $fieldKey;
         }
-        fputcsv($handle, $header);
+        fputcsv($handle, $header, ',', '"', '\\');
 
         foreach ($products as $product) {
             $seriesId = (int) $product['series_id'];
@@ -176,7 +176,7 @@ final class CatalogCsvService
             foreach ($productFieldKeys as $fieldKey) {
                 $row[] = $productCustom[$fieldKey] ?? '';
             }
-            fputcsv($handle, $row);
+            fputcsv($handle, $row, ',', '"', '\\');
         }
 
         fclose($handle);
@@ -192,6 +192,10 @@ final class CatalogCsvService
 
     public function importFromUploadedFile(array $file): array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
+        if (\CatalogSuite\Http\MediaAccess::enabled()) {
+            \CatalogSuite\Http\MediaAccess::requirePermission('replace');
+        }
         $this->ensureStorageDirectory();
         $this->assertTruncateNotRunning();
         if (!isset($file['tmp_name']) || ($file['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) {
@@ -218,6 +222,10 @@ final class CatalogCsvService
 
     public function importFromPath(string $filePath, string $originalName = 'import.csv'): array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
+        if (\CatalogSuite\Http\MediaAccess::enabled()) {
+            \CatalogSuite\Http\MediaAccess::requirePermission('replace');
+        }
         $this->ensureStorageDirectory();
         $this->assertTruncateNotRunning();
         if (!is_file($filePath)) {
@@ -241,6 +249,10 @@ final class CatalogCsvService
 
     public function restoreCatalog(string $fileId): array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
+        if (\CatalogSuite\Http\MediaAccess::enabled()) {
+            \CatalogSuite\Http\MediaAccess::requirePermission('replace');
+        }
         $this->ensureStorageDirectory();
         $this->assertTruncateNotRunning();
         $fileId = trim($fileId);
@@ -332,7 +344,7 @@ final class CatalogCsvService
             throw new CatalogApiException('CSV_PARSE_ERROR', 'Unable to read CSV file.', 400);
         }
 
-        $header = fgetcsv($handle);
+        $header = fgetcsv($handle, 0, ',', '"', '\\');
         if ($header === false) {
             fclose($handle);
             throw new CatalogApiException('CSV_PARSE_ERROR', 'CSV file is empty.', 400);
@@ -379,7 +391,7 @@ final class CatalogCsvService
 
         $this->connection->begin_transaction();
         try {
-            while (($row = fgetcsv($handle)) !== false) {
+            while (($row = fgetcsv($handle, 0, ',', '"', '\\')) !== false) {
                 $lineNumber++;
                 if ($this->rowIsEmpty($row)) {
                     continue;
@@ -503,6 +515,7 @@ final class CatalogCsvService
                 $touchedCategories
             );
 
+            \CatalogSuite\Support\MediaRuntime::sync($this->connection);
             $this->connection->commit();
         } catch (Throwable $exception) {
             if (is_resource($handle)) {

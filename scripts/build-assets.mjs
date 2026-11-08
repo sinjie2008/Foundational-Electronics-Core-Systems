@@ -15,6 +15,22 @@ const seriesScript = await readFile(
     path.join(javascriptSourceDirectory, 'series-typst-templating.js')
 );
 const seriesScriptHash = createHash('sha256').update(seriesScript).digest('hex').slice(0, 12);
+let assetRevision;
+
+/** Keep entrypoints and their shared module imports on the same browser-cache revision. */
+async function computeAssetRevision() {
+    const hash = createHash('sha256');
+    for (const directory of [javascriptSourceDirectory, cssOutputDirectory, pageSourceDirectory]) {
+        const entries = (await readdir(directory, { withFileTypes: true }))
+            .filter((entry) => entry.isFile())
+            .sort((a, b) => a.name.localeCompare(b.name));
+        for (const entry of entries) {
+            hash.update(entry.name + '\0');
+            hash.update(await readFile(path.join(directory, entry.name)));
+        }
+    }
+    return hash.digest('hex').slice(0, 12);
+}
 
 /** Compile each top-level SCSS source to its matching public CSS path. */
 async function buildStylesheets() {
@@ -42,6 +58,15 @@ async function buildJavaScript() {
         recursive: true,
         force: true,
     });
+    const entries = await readdir(javascriptSourceDirectory, { withFileTypes: true });
+    for (const entry of entries.filter((item) => item.isFile() && item.name.endsWith('.js'))) {
+        const contents = await readFile(path.join(javascriptSourceDirectory, entry.name), 'utf8');
+        const versioned = contents.replace(
+            /^(\s*(?:import|export)\s+[^;\r\n]*?\bfrom\s*|^\s*import\s*)(['"])(\.{1,2}\/[^'"]+\.js)(?:\?[^'"]*)?\2/gm,
+            (_, prefix, quote, modulePath) => prefix + quote + modulePath + '?v=' + assetRevision + quote
+        );
+        await writeFile(path.join(javascriptOutputDirectory, entry.name), versioned, 'utf8');
+    }
 }
 
 /** Copy static page templates to their existing URLs without embedding PHP. */
@@ -58,11 +83,16 @@ async function buildPages() {
         if (page.name === 'series_typst_template.html') {
             contents = contents.replaceAll('__SERIES_TYPST_ASSET_HASH__', seriesScriptHash);
         }
+        contents = contents.replace(
+            /((?:src|href)=["'])(assets\/(?:js|css)\/[^"']+\.(?:js|css))(?:\?[^"']*)?(["'])/g,
+            (_, prefix, assetPath, quote) => prefix + assetPath + '?v=' + assetRevision + quote
+        );
         await writeFile(path.join(publicDirectory, page.name), contents, 'utf8');
     }
 }
 
 await buildStylesheets();
+assetRevision = await computeAssetRevision();
 await buildJavaScript();
 await buildPages();
 console.log(`Built ${await readdir(cssOutputDirectory).then((items) => items.length)} CSS files, JavaScript assets, and HTML pages.`);

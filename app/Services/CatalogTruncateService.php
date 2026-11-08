@@ -30,6 +30,7 @@ final class CatalogTruncateService
      */
     public function truncateCatalog(array $payload): array
     {
+        \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
         $reasonRaw = trim((string) ($payload['reason'] ?? ''));
         if ($reasonRaw === '') {
             throw new CatalogApiException(
@@ -103,9 +104,15 @@ final class CatalogTruncateService
     {
         $this->connection->begin_transaction();
         try {
+            if (\CatalogSuite\Http\MediaAccess::enabled()) {
+                $media = \CatalogSuite\Support\MediaRuntime::repository($this->connection);
+                $media->execute("DELETE FROM media_relationship WHERE owner_type IN ('series','product','field_default')");
+                $media->execute("UPDATE media_batch SET status='invalidated' WHERE kind='mapping'");
+            }
             $this->setForeignKeyChecks(false);
             $this->repository->truncateCatalogTables();
             $this->setForeignKeyChecks(true);
+            \CatalogSuite\Support\MediaRuntime::sync($this->connection);
             $this->connection->commit();
         } catch (Throwable $exception) {
             $this->setForeignKeyChecks(true);

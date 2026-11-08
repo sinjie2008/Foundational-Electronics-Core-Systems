@@ -49,6 +49,7 @@ final class ModuleServiceProvider extends ServiceProvider
         $this->app->bind(CatalogOperationsController::class, fn ($app) => new CatalogOperationsController(
             fn () => $app->make(CatalogController::class)
         ));
+        $this->app->bind(\CatalogSuite\Controllers\MediaLibraryController::class, fn ($app) => new \CatalogSuite\Controllers\MediaLibraryController($app->make('catalog-suite.connection')));
         $this->app->bind(ModuleBridge::class, fn ($app) => new ModuleBridge($app));
     }
 
