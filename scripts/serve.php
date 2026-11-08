@@ -12,6 +12,21 @@ if ($publicRoot !== false && $publicFile !== false && is_file($publicFile)
     return false;
 }
 
+// Keep native PHP PATH_INFO handling for the existing file endpoints.
+if (preg_match('#^(/api/.*?\.php)/#i', $path, $matches) === 1) {
+    $scriptFile = realpath(dirname(__DIR__) . '/public' . $matches[1]);
+    if ($publicRoot !== false && $scriptFile !== false && is_file($scriptFile)
+        && str_starts_with($scriptFile, $publicRoot . DIRECTORY_SEPARATOR)) {
+        return false;
+    }
+}
+
+if ($path === '/api' || str_starts_with($path, '/api/')) {
+    $_SERVER['SCRIPT_NAME'] = '/api/index.php';
+    require dirname(__DIR__) . '/public/api/index.php';
+    return true;
+}
+
 foreach ([
     '/storage/latex-pdfs/' => CatalogSuite\Support\Config::get('app')['storage']['latex_pdfs'],
     '/storage/media/' => CatalogSuite\Support\Config::get('app')['storage']['media'],

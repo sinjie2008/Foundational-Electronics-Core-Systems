@@ -115,7 +115,27 @@ final class PublicProductApiService
     {
         if($this->nodes!==null)return; $r=$this->db->query('SELECT id,parent_id,name,type,display_order FROM category ORDER BY display_order,name,id');$rows=[];$children=[];
         while($n=$r->fetch_assoc()){$id=(int)$n['id'];$pid=$n['parent_id']===null?0:(int)$n['parent_id'];$n['id']=$id;$n['parent_id']=$pid?:null;$n['display_order']=(int)$n['display_order'];$n['slug']=$this->slug($n['name']);$rows[$id]=$n;$children[$pid][]=$id;}$r->close();
-        foreach($children as $ids){$counts=[];foreach($ids as $id)$counts[$rows[$id]['slug']]=($counts[$rows[$id]['slug']]??0)+1;foreach($ids as $id)if($counts[$rows[$id]['slug']]>1)$rows[$id]['slug'].='-'.$id;}
+        foreach ($children as $ids) {
+            $counts = [];
+            $reserved = [];
+            foreach ($ids as $id) {
+                $slug = $rows[$id]['slug'];
+                $counts[$slug] = ($counts[$slug] ?? 0) + 1;
+                $reserved[$slug] = true;
+            }
+            foreach ($ids as $id) {
+                $slug = $rows[$id]['slug'];
+                if ($counts[$slug] <= 1) {
+                    continue;
+                }
+                $slug .= '-' . $id;
+                while (isset($reserved[$slug])) {
+                    $slug .= '-' . $id;
+                }
+                $rows[$id]['slug'] = $slug;
+                $reserved[$slug] = true;
+            }
+        }
         $paths=[];$path=function($id,$seen=[])use(&$path,&$rows,&$paths){if(isset($paths[$id]))return$paths[$id];if(isset($seen[$id]))throw new CatalogApiException('INVALID_HIERARCHY','Catalog hierarchy contains a cycle.',500);$seen[$id]=1;$p=$rows[$id]['parent_id'];return$paths[$id]=($p&&isset($rows[$p])?$path($p,$seen).'/':'').$rows[$id]['slug'];};
         $index=[];foreach(array_keys($rows)as$id){$rows[$id]['path']=$path($id);$index[$rows[$id]['path']]=$id;}$this->nodes=$rows;$this->paths=$index;$this->children=$children;
     }

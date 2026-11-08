@@ -10,6 +10,29 @@ Legacy `/catalog.php?action=...` actions use their own response helper. Successf
 
 Clients can send `X-Correlation-ID`. Download endpoints stream files. Do not interpret a file response as JSON.
 
+## Public Product API
+
+The read-only path API queries the existing catalog tables directly. It requires no import, synchronization job or additional schema. Its JSON responses use the legacy `success`, `data`, `correlationId` envelope; errors use `success: false`, `errorCode`, `message` and `details`.
+
+| Endpoint | Behaviour |
+|---|---|
+| `GET /api/` | API information, implemented endpoint list and catalog tree. |
+| `GET /api/health` | Database connectivity and read-only status. |
+| `GET /api/tree` | Recursive categories and series, including series part counts. |
+| `GET /api/resolve/{path}` | Resource and breadcrumb for a category or series path. |
+| `GET /api/categories/{path}` | Category resource, breadcrumb and immediate children. |
+| `GET /api/series/{path}` | Series resource, breadcrumb, public metadata, fields and part count. |
+| `GET /api/series/{path}/fields` | Public product field definitions. |
+| `GET /api/series/{path}/parts` | Parts, public custom values, fields and pagination. |
+| `GET /api/series/{path}/facets` | Value counts for public product fields. |
+| `GET /api/search?q={keyword}` | Matching category/series names and product SKU, name or description. |
+
+Use the `path` returned by the tree or resolve response. Paths follow the category hierarchy and current names; duplicate sibling names receive ID suffixes that avoid other sibling slugs. Renaming or reparenting nodes can change their paths. The parts route is `/parts`; there is no separate public `/products` route.
+
+Parts accept `search`, `filter[fieldKey]` (one value or an array of alternatives), `sort` (`id`, `sku`, `name` or a public field key), `direction` (`asc` or `desc`), `page` and `per_page` (1–100, default 25). Field filters match values case-insensitively. Public-hidden fields and metadata are excluded. Other HTTP methods return 405.
+
+The development router and Apache `api/.htaccess` rules expose these routes for both supported standalone document roots while retaining existing file endpoints. Apache requires `mod_rewrite` and permission to use these rules; Nginx needs equivalent routing. The optional Laravel bridge continues to mount its existing file/action endpoints; mounting this path API in a Laravel host requires equivalent host routing.
+
 ## File endpoints
 
 | Endpoint | Inputs / behaviour |
@@ -34,7 +57,7 @@ Clients can send `X-Correlation-ID`. Download endpoints stream files. Do not int
 | `/api/typst/series-preferences.php` | GET query `seriesId`; PUT JSON `seriesId`, `lastGlobalTemplateId` (nullable). |
 | `/api/latex/templates.php` | GET query `series_id`; POST/PUT JSON `title`, `description`, `latex`, optional `seriesId`; PUT also `id`; DELETE query `id`. POST success HTTP 201. |
 | `/api/latex/variables.php` | GET globals; POST/PUT JSON `key`, `type`, `value`, optional `id`; DELETE query `id`. |
-| `/api/latex/compile.php` | POST JSON `latex`, `seriesId`; returns PDF `url`, `path`. |
+| `/api/latex/compile.php` | POST JSON `latex`, `series_id`; returns PDF `url`, `path`. |
 
 Spec search keeps `seriesImage` and `pdfDownload`. The PDF source is the latest series Typst PDF when Typst is enabled, otherwise the `series_product_spec` metadata file.
 

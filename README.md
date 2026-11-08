@@ -20,6 +20,8 @@ Catalog endpoints retain their existing schema/seed setup; Typst retains its tab
 
 The development router preserves legacy `/storage/media/*` and `/storage/latex-pdfs/*` URLs while serving `public/` as the web root. Configure equivalent aliases on Apache/Nginx; existing files under `public/storage/` take priority. Do not expose the entire private `storage/` directory.
 
+The read-only Public Product API starts at `/api/`, with `/api/health` and `/api/tree` available through the development router. Apache installations can use the included `api/.htaccess` rules with `mod_rewrite`; configure equivalent routing on Nginx. Existing file/action API addresses remain available. See the [API reference](API.md) for the ten implemented public routes, query parameters and Laravel host routing limitation.
+
 ## Assets and Views
 
 ```powershell
