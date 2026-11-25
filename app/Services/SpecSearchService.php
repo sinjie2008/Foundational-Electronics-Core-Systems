@@ -16,6 +16,7 @@ final class SpecSearchService
     private SpecSearchRepository $catalog;
     private string $mediaStorageDir;
     private string $baseUrl;
+    private string $typstPdfStorageDir;
     private string $typstPdfUrlPrefix;
 
     /**
@@ -35,6 +36,10 @@ final class SpecSearchService
             "/\\"
         );
         $this->baseUrl = rtrim((string) ($config['base_url'] ?? ''), '/');
+        $this->typstPdfStorageDir = rtrim(
+            (string) ($storageConfig['typst_pdfs'] ?? $projectRoot . '/public/storage/typst-pdfs'),
+            "/\\"
+        );
         $this->typstPdfUrlPrefix = rtrim(
             (string) ($typstConfig['pdf_url_prefix'] ?? 'storage/typst-pdfs'),
             '/'
@@ -208,6 +213,7 @@ final class SpecSearchService
 
         $seriesImages = $this->metadataBySeries('series_product_image', $seriesIds);
         $seriesSpecs = $this->metadataBySeries('series_product_spec', $seriesIds);
+        $seriesSpq = $this->metadataBySeries('series_spq_per_reel', $seriesIds);
         $seriesTypstEnabled = [];
         foreach ($this->catalog->getTypstEnabledSeries($seriesIds) as $row) {
             $seriesTypstEnabled[(int) $row['id']] = ((int) ($row['typst_templating_enabled'] ?? 0)) === 1;
@@ -230,12 +236,17 @@ final class SpecSearchService
 
         foreach ($rawProducts as &$product) {
             $seriesId = $product['seriesId'];
+            $spq = $seriesSpq[$seriesId] ?? '';
+            if (trim($spq) !== '') {
+                $product['spq'] = $spq;
+            }
             $product['seriesImage'] = $this->formatImagePath($seriesImages[$seriesId] ?? '');
 
             $pdfUrl = '';
             if (($seriesTypstEnabled[$seriesId] ?? false) && !empty($seriesTypstPdf[$seriesId])) {
                 $pdfUrl = $this->buildTypstPdfUrl($seriesTypstPdf[$seriesId]);
-            } elseif (!empty($seriesSpecs[$seriesId])) {
+            }
+            if ($pdfUrl === '' && !empty($seriesSpecs[$seriesId])) {
                 $pdfUrl = $this->formatMediaPath($seriesSpecs[$seriesId]);
             }
             $product['pdfDownload'] = $pdfUrl;
@@ -310,7 +321,7 @@ final class SpecSearchService
     }
 
     /**
-     * Build a Typst PDF URL from a stored path.
+     * Build a Typst PDF URL when the stored output is still available.
      */
     private function buildTypstPdfUrl(?string $path): string
     {
@@ -321,8 +332,8 @@ final class SpecSearchService
             return $path;
         }
 
-        $file = basename($path);
-        if ($file === '') {
+        $file = basename(str_replace('\\', '/', $path));
+        if ($file === '' || !is_file($this->typstPdfStorageDir . '/' . $file)) {
             return '';
         }
 

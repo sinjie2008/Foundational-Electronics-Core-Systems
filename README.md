@@ -135,3 +135,48 @@ There is no permanent project test directory or runner. Use PHP syntax checks, t
 Keep uploaded files, generated PDFs and credentials out of source-control cleanup. Do not deploy or update WordPress until API compatibility has been checked against the intended installation.
 
 The separate LaTeX file API expects `latex_templates` and `latex_variables` tables. The inspected local database only had the legacy `latex_template` table; this existing setup difference was not changed by the refactor. Functional verification used disposable schemas, including these API tables. Live WordPress integration still requires checking against its actual installation.
+
+
+## Single-CSV Catalog Import
+
+Catalog CSV Import / Export accepts one UTF-8 CSV for the full hierarchy. The base export has 103 columns and includes any additional product attribute keys present in the catalog.
+
+| `record_type` | `category_path` | Fields to fill |
+|---|---|---|
+| `category` | Category labels through the owning category | Category copy, hero, banner and icon. Leave `product_name` empty. |
+| `series` | Category labels through the Series | Series order, copy, technical sections and Series files. Leave `product_name` empty. |
+| `product` | The same full path through the Series | SKU in `product_name`, part attributes and per-part files. |
+
+Separate labels with ` > ` and use `import_mode=upsert` on every row. Older product-only CSVs can still supply Series fields on product rows. Repeated non-empty Series values must agree, including values on a dedicated Series row.
+
+### Category images
+
+Place images in the configured Catalog media directory and enter their relative paths starting with `storage/media/`. You can also upload through **Media Library → Upload files** and paste the media ID from the ready asset. Import the CSV through **Catalog CSV Import / Export**.
+
+| Placement | `category_path` on the category row | CSV image column | Reference size |
+|---|---|---|---|
+| Hero on `/products/general` | `General Products` | `category_hero_image_media_id` | 560 × 320 px |
+| EMC banner on `/products/general` | `General Products > EMC Components` | `category_banner_image_media_id` | 1320 × 420 px |
+| Hero on `/products/general/emc` | `General Products > EMC Components` | `category_hero_image_media_id` | 560 × 320 px |
+| Chip Inductor icon on `/products/general` | `General Products > EMC Components > Chip Inductor` | `category_icon_image_media_id` | 86 × 66 px |
+
+Use `category_introduction` for the hero text or child category overview. Use `category_banner_description` for the family banner copy. The Automotive page uses the same column names on its own category paths.
+
+### Series and part fields
+
+| Section | Examples of supported CSV headers |
+|---|---|
+| Introduction | series_notes, series_features, series_product_type, series_test_frequency, series_spq_per_reel |
+| Media / compliance | series_image_media_id, series_3d_media_id, series_pdf_media_id, image_width_px, image_height_px, compliance_* |
+| Environmental | environment_operating_temperature, environment_storage_temperature, environment_max_humidity, environment_notes |
+| Performance Curves | performance_curve_1_image_media_id to performance_curve_3_image_media_id, captions and test conditions |
+| Physical Characteristics | physical_dimension_drawing_media_id, physical_pcb_layout_media_id, A/B/C/D1/D2/P and G/H/I/J/L values |
+| Tape & Reel | tape_chip_per_reel, tape_inner_box_qty, tape_carton_qty, tape_reel_size, tape_drawing_media_id |
+| Soldering / Washing | solder_reflow_profile_media_id, solder_reflow_max_times, solder_reflow_standard, washing notes |
+| Downloads | download_brochure_pdf_media_id, download_application_note_pdf_media_id, download_datasheet_description |
+| Per Part Number | product_image_media_id, product_pdf_media_id, product_curve_image_media_id, product_curve_pdf_media_id, acf.*, product_curve_notes |
+
+- Empty optional upsert cells preserve existing data. `import_mode=snapshot` or a legacy file with no `import_mode` keeps full-snapshot behavior and deletes omitted records.
+- Existing media columns accept ready Media Library UUIDs or paths such as `storage/media/catalog-assets/c0-datasheet.pdf`. The file must already exist in the configured Catalog media directory and match the column's file type. Imports can index a new path when the caller has Media Library index permission. Export includes UUIDs for resolvable ready assets.
+- `image_width_px` and `image_height_px` describe the Series image. `acf.length`, `acf.width` and `acf.height` describe the component in millimeters.
+- On a Series row, put one HTML list in `series_features`, such as `<ul><li>Compact package</li><li><strong>Low DCR</strong></li></ul>`. Use `<ol>` for numbering. List items accept text, emphasis, and line breaks. The three older feature columns are still accepted as fallback values and combine into the single list on export.

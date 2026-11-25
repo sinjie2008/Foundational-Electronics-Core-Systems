@@ -11,8 +11,12 @@ use RuntimeException;
 use Throwable;
 use CatalogSuite\Http\CatalogApiException;
 use CatalogSuite\Http\HttpResponder;
+use CatalogSuite\Http\MediaAccess;
 use CatalogSuite\Services\HierarchyService;
 use CatalogSuite\Services\SeriesFieldService;
+use CatalogSuite\Repositories\SeriesAttributeRepository;
+use CatalogSuite\Support\MediaRuntime;
+use CatalogSuite\Support\MediaStorageRegistry;
 
 final class CatalogCsvService
 {
@@ -150,19 +154,82 @@ final class CatalogCsvService
 
         $categories = $this->fetchAllCategories();
         $productFieldKeys = $this->fetchAllCustomFieldKeys(SeriesFieldService::SCOPE_PRODUCT);
+        // Media UUID columns are exported separately; never export their legacy paths as attributes.
+        $reservedMediaKeys = array_column(CatalogCsvProductColumns::definitions(), 0);
+        $productFieldKeys = array_values(array_diff($productFieldKeys, $reservedMediaKeys));
+        $baselinePartColumns = [
+            'acf.length', 'acf.width', 'acf.height', 'acf.impedance', 'acf.dcr',
+            'acf.irms', 'acf.qi_standard', 'acf.inductance', 'acf.isat',
+            'acf.insertion_loss', 'acf.power', 'acf.terminal_pins',
+            'acf.module_length', 'acf.module_width', 'acf.measure_result',
+            'acf.dcr_typ', 'acf.core_coper_loss_k', 'acf.core_coper_loss_x',
+            'acf.core_coper_loss_y', 'acf.test_frequency', 'product_curve_notes',
+        ];
+        $productFieldKeys = array_values(array_unique(array_merge(
+            $baselinePartColumns, $productFieldKeys
+        )));
         $products = $this->fetchProductsWithSeries();
         $customValueMap = $this->fetchProductCustomValues();
+        $seriesMetadata = $this->fetchSeriesMetadataForExport();
+        $categoryContent = $this->fetchCategoryContentForExport();
+        $mediaRepository = \CatalogSuite\Support\MediaSchema::isInstalled($this->connection)
+            ? MediaRuntime::repository($this->connection) : null;
 
         $handle = fopen($filePath, 'wb');
         if ($handle === false) {
             throw new CatalogApiException('CSV_WRITE_ERROR', 'Unable to create export file.', 500);
         }
 
-        $header = ['category_path', 'product_name'];
+        // Export the same complete one-CSV template that the importer accepts.
+        $seriesColumns = CatalogCsvSeriesColumns::definitions(false);
+        $productMediaColumns = CatalogCsvProductColumns::definitions();
+        $categoryColumns = CatalogCsvCategoryColumns::definitions();
+        $header = array_merge(
+            ['category_path', 'product_name', 'import_mode', 'record_type', 'product_description', 'series_display_order'],
+            array_keys($categoryColumns),
+            array_keys($seriesColumns),
+            array_keys($productMediaColumns)
+        );
         foreach ($productFieldKeys as $fieldKey) {
             $header[] = $fieldKey;
         }
         fputcsv($handle, $header, ',', '"', '\\');
+
+        foreach ($categories as $categoryId => $category) {
+            if ($category['type'] === 'category') {
+                $row = [
+                    $this->buildCategoryPath($categories, (int) $categoryId),
+                    '', 'upsert', 'category', '', '',
+                ];
+                foreach ($categoryColumns as $key => $definition) {
+                    $row[] = $categoryContent[$categoryId][$key] ?? '';
+                }
+                $row = array_merge(
+                    $row,
+                    array_fill(0, count($seriesColumns) + count($productMediaColumns) + count($productFieldKeys), '')
+                );
+                fputcsv($handle, $row, ',', '"', '\\');
+                continue;
+            }
+            if ($category['type'] !== 'series') {
+                continue;
+            }
+            $row = [$this->buildCategoryPath($categories, (int) $categoryId), '', 'upsert', 'series', '', $category['display_order']];
+            $row = array_merge($row, array_fill(0, count($categoryColumns), ''));
+            $metadata = $seriesMetadata[$categoryId] ?? [];
+            if (trim((string) ($metadata['series_features'] ?? '')) === '') {
+                $metadata['series_features'] = CatalogCsvSeriesColumns::legacyFeatureList($metadata);
+            }
+            foreach ($seriesColumns as $definition) {
+                $value = $metadata[$definition[0]] ?? '';
+                if ($definition[2] === 'file') {
+                    $value = $this->resolveExportMediaUuid($mediaRepository, (string) $value, (string) ($definition[3] ?? ''));
+                }
+                $row[] = $value;
+            }
+            $row = array_merge($row, array_fill(0, count($productMediaColumns) + count($productFieldKeys), ''));
+            fputcsv($handle, $row, ',', '"', '\\');
+        }
 
         foreach ($products as $product) {
             $seriesId = (int) $product['series_id'];
@@ -171,7 +238,17 @@ final class CatalogCsvService
             $row = [
                 $categoryPath,
                 $productLabel ?? '',
+                'upsert', // An exported subset is safe to reimport.
+                'product',
+                $product['description'] ?? '',
+                '',
             ];
+            $row = array_merge($row, array_fill(0, count($categoryColumns), ''));
+            $row = array_merge($row, array_fill(0, count($seriesColumns), ''));
+            foreach ($productMediaColumns as $definition) {
+                $value = $customValueMap[$product['id']][$definition[0]] ?? '';
+                $row[] = $this->resolveExportMediaUuid($mediaRepository, (string) $value, (string) $definition[2]);
+            }
             $productCustom = $customValueMap[$product['id']] ?? [];
             foreach ($productFieldKeys as $fieldKey) {
                 $row[] = $productCustom[$fieldKey] ?? '';
@@ -307,6 +384,9 @@ final class CatalogCsvService
 
         foreach ($header as $index => $rawHeader) {
             $trimmed = trim((string) $rawHeader);
+            if ($index === 0) {
+                $trimmed = preg_replace('/^\xEF\xBB\xBF/', '', $trimmed) ?? $trimmed;
+            }
             if ($trimmed === '') {
                 continue;
             }
@@ -318,8 +398,26 @@ final class CatalogCsvService
                 case 'product_name':
                     $columns['product_name'] = $index;
                     break;
+                case 'import_mode':
+                case 'record_type':
+                case 'product_description':
+                case 'series_display_order':
+                    if (isset($columns[$lower])) {
+                        throw new CatalogApiException('CSV_PARSE_ERROR', 'Duplicate CSV header: ' . $lower, 400);
+                    }
+                    $columns[$lower] = $index;
+                    break;
                 default:
-                    $attributeColumns[$index] = $trimmed;
+                    if (array_key_exists($lower, CatalogCsvSeriesColumns::definitions())
+                        || array_key_exists($lower, CatalogCsvProductColumns::definitions())
+                        || array_key_exists($lower, CatalogCsvCategoryColumns::definitions())) {
+                        if (isset($columns[$lower])) {
+                            throw new CatalogApiException('CSV_PARSE_ERROR', 'Duplicate CSV header: ' . $lower, 400);
+                        }
+                        $columns[$lower] = $index;
+                    } else {
+                        $attributeColumns[$index] = $trimmed;
+                    }
                     break;
             }
         }
@@ -384,8 +482,16 @@ final class CatalogCsvService
         $seriesFieldCache = [];
         $fieldSortSynchronized = [];
 
-        $createdCategories = 0;
         $createdSeries = 0;
+        $createdCategories = 0;
+        // The legacy format still imports a complete snapshot. Extended one-row
+        // templates explicitly opt into non-destructive upsert.
+        $importMode = isset($columns['import_mode']) ? null : 'snapshot';
+        $seriesOptions = [];
+        $categoryOptions = [];
+        $mediaPathIds = [];
+        $updatedSeriesMetadata = 0;
+        $updatedCategoryContent = 0;
 
         $lineNumber = 1;
 
@@ -395,6 +501,15 @@ final class CatalogCsvService
                 $lineNumber++;
                 if ($this->rowIsEmpty($row)) {
                     continue;
+                }
+                if (isset($columns['import_mode'])) {
+                    $mode = strtolower(trim((string) ($row[$columns['import_mode']] ?? '')));
+                    $mode = $mode === '' ? 'upsert' : $mode;
+                    $this->assertCsvValue(in_array($mode, ['upsert', 'snapshot'], true), 'import_mode (upsert/snapshot)', $lineNumber);
+                    if ($importMode !== null && $importMode !== $mode) {
+                        throw new CatalogApiException('CSV_PARSE_ERROR', 'All rows must have the same import_mode.', 400);
+                    }
+                    $importMode = $mode;
                 }
 
                 $categoryPath = trim((string) ($row[$columns['category_path']] ?? ''));
@@ -411,6 +526,61 @@ final class CatalogCsvService
                 );
                 $this->assertCsvValue($segments !== [], 'category_path', $lineNumber);
 
+                $recordType = isset($columns['record_type'])
+                    ? strtolower(trim((string) ($row[$columns['record_type']] ?? 'product'))) : 'product';
+                $recordType = $recordType === '' ? 'product' : $recordType;
+                $this->assertCsvValue(in_array($recordType, ['product', 'category', 'series'], true), 'record_type (product/category/series)', $lineNumber);
+                if ($recordType === 'category') {
+                    $this->assertCsvValue(trim((string) ($row[$columns['product_name']] ?? '')) === '', 'blank product_name on category row', $lineNumber);
+                    foreach (CatalogCsvSeriesColumns::definitions() as $column => $_definition) {
+                        $this->assertCsvValue(trim((string) ($row[$columns[$column] ?? -1] ?? '')) === '', 'blank ' . $column . ' on category row', $lineNumber);
+                    }
+                    foreach (CatalogCsvProductColumns::definitions() as $column => $_definition) {
+                        $this->assertCsvValue(trim((string) ($row[$columns[$column] ?? -1] ?? '')) === '', 'blank ' . $column . ' on category row', $lineNumber);
+                    }
+                    foreach ($attributeColumns as $index => $fieldKey) {
+                        $this->assertCsvValue(trim((string) ($row[$index] ?? '')) === '', 'blank product attribute ' . $fieldKey . ' on category row', $lineNumber);
+                    }
+                    if ($importMode !== 'upsert') {
+                        throw new CatalogApiException(
+                            'CSV_MODE_INVALID',
+                            'Category-content rows require import_mode=upsert to avoid snapshot deletions.',
+                            400
+                        );
+                    }
+                    $categoryId = null;
+                    foreach ($segments as $segment) {
+                        $categoryId = $this->upsertCategory(
+                            $categoryId, $segment, $categoryCache, $touchedCategories, $createdCategories
+                        );
+                    }
+                    foreach (CatalogCsvCategoryColumns::definitions() as $column => $definition) {
+                        if (!isset($columns[$column])) {
+                            continue;
+                        }
+                        $value = trim((string) ($row[$columns[$column]] ?? ''));
+                        if ($value === '') {
+                            continue;
+                        }
+                        if ($definition[1] === 'image') {
+                            $value = $this->resolveCsvMediaPath($value, $column, $lineNumber, $mediaPathIds);
+                            $this->assertCsvValue(
+                                preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $value) === 1,
+                                $column . ' (Media Library UUID or storage/media/ path)', $lineNumber
+                            );
+                        }
+                        if (isset($categoryOptions[$categoryId][$column])
+                            && $categoryOptions[$categoryId][$column] !== $value) {
+                            throw new CatalogApiException(
+                                'CSV_CONFLICT', 'Conflicting Category content for ' . $column,
+                                400, ['row' => $lineNumber]
+                            );
+                        }
+                        $categoryOptions[$categoryId][$column] = $value;
+                    }
+                    continue;
+                }
+
                 $seriesName = array_pop($segments);
                 $this->assertCsvValue($seriesName !== null && $seriesName !== '', 'series_name', $lineNumber);
 
@@ -425,14 +595,88 @@ final class CatalogCsvService
                     );
                 }
 
+                $seriesOrder = null;
+                if (isset($columns['series_display_order'])) {
+                    $rawOrder = trim((string) ($row[$columns['series_display_order']] ?? ''));
+                    if ($rawOrder !== '') {
+                        $this->assertCsvValue(ctype_digit($rawOrder) && (float) $rawOrder <= 2147483647, 'series_display_order (non-negative integer)', $lineNumber);
+                        $seriesOrder = (int) $rawOrder;
+                    }
+                }
                 $seriesId = $this->upsertSeries(
                     $parentId,
                     $seriesName,
-                    0,
+                    $seriesOrder,
                     $seriesCache,
                     $touchedSeries,
                     $createdSeries
                 );
+
+                foreach (CatalogCsvSeriesColumns::definitions() as $optionKey => $definition) {
+                    if (!isset($columns[$optionKey])) {
+                        continue;
+                    }
+                    $optionValue = trim((string) ($row[$columns[$optionKey]] ?? ''));
+                    if ($optionValue === '') {
+                        continue; // A blank column does not replace existing content.
+                    }
+                    if ($optionKey === 'series_features') {
+                        $this->assertCsvValue(
+                            CatalogCsvSeriesColumns::isFeatureList($optionValue),
+                            'series_features (one <ul> or <ol> with <li> items)',
+                            $lineNumber
+                        );
+                    }
+                    if ($definition[2] === 'number') {
+                        $max = in_array($optionKey, ['image_width_px', 'image_height_px'], true) ? 10000 : 2147483647;
+                        $this->assertCsvValue(
+                            ctype_digit($optionValue) && (float) $optionValue <= $max
+                                && ($max !== 10000 || (int) $optionValue >= 1),
+                            $optionKey . ' (whole number, max ' . $max . ')',
+                            $lineNumber
+                        );
+                    }
+                    if ($definition[2] === 'file') {
+                        $optionValue = $this->resolveCsvMediaPath($optionValue, $optionKey, $lineNumber, $mediaPathIds);
+                        $this->assertCsvValue(
+                            preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $optionValue) === 1,
+                            $optionKey . ' (Media Library UUID or storage/media/ path)',
+                            $lineNumber
+                        );
+                    }
+                    if (isset($seriesOptions[$seriesId][$optionKey]) && $seriesOptions[$seriesId][$optionKey] !== $optionValue) {
+                        throw new CatalogApiException(
+                            'CSV_CONFLICT', 'Conflicting ' . $optionKey . ' within Series ' . $seriesName, 400,
+                            ['row' => $lineNumber]
+                        );
+                    }
+                    $seriesOptions[$seriesId][$optionKey] = $optionValue;
+                }
+
+                if ($recordType === 'series') {
+                    if ($importMode !== 'upsert') {
+                        throw new CatalogApiException(
+                            'CSV_MODE_INVALID',
+                            'Series metadata rows require import_mode=upsert to avoid snapshot deletions.',
+                            400
+                        );
+                    }
+                    $this->assertCsvValue(trim((string) ($row[$columns['product_name']] ?? '')) === '', 'blank product_name on series row', $lineNumber);
+                    foreach (CatalogCsvProductColumns::definitions() as $mediaColumn => $_field) {
+                        $this->assertCsvValue(trim((string) ($row[$columns[$mediaColumn] ?? -1] ?? '')) === '', 'blank ' . $mediaColumn . ' on series row', $lineNumber);
+                    }
+                    foreach ($attributeColumns as $index => $fieldKey) {
+                        $this->assertCsvValue(trim((string) ($row[$index] ?? '')) === '', 'blank product attribute ' . $fieldKey . ' on series row', $lineNumber);
+                    }
+                    foreach (CatalogCsvCategoryColumns::definitions() as $column => $_definition) {
+                        $this->assertCsvValue(trim((string) ($row[$columns[$column] ?? -1] ?? '')) === '', 'blank ' . $column . ' on series row', $lineNumber);
+                    }
+                    continue;
+                }
+
+                foreach (CatalogCsvCategoryColumns::definitions() as $column => $_definition) {
+                    $this->assertCsvValue(trim((string) ($row[$columns[$column] ?? -1] ?? '')) === '', 'blank ' . $column . ' on product row', $lineNumber);
+                }
 
                 if (!isset($seriesFieldCache[$seriesId])) {
                     $seriesFieldCache[$seriesId] = [
@@ -454,6 +698,10 @@ final class CatalogCsvService
                     $customValues[$fieldKey] = $value;
                     $desiredOrder = $attributeOrder[$fieldKey] ?? 0;
                     if (!isset($productFieldMap[$fieldKey])) {
+                        // One-row upserts never manufacture empty custom fields.
+                        if ($importMode === 'upsert' && $value === '') {
+                            continue;
+                        }
                         $label = $this->deriveCustomFieldLabel($fieldKey);
                         $field = $this->seriesFieldService->saveField([
                             'seriesId' => $seriesId,
@@ -463,12 +711,13 @@ final class CatalogCsvService
                             'fieldScope' => SeriesFieldService::SCOPE_PRODUCT,
                             'isRequired' => false,
                             'sortOrder' => $desiredOrder,
-                        ]);
+                        ], syncMedia: false);
                         $productFieldMap[$fieldKey] = $field;
                     } else {
                         $existingOrder = (int) ($productFieldMap[$fieldKey]['sortOrder'] ?? 0);
                         if (
                             $existingOrder !== $desiredOrder
+                            && $importMode !== 'upsert'
                             && !isset($fieldSortSynchronized[$seriesId][$fieldKey])
                         ) {
                             $field = $this->seriesFieldService->saveField([
@@ -481,7 +730,7 @@ final class CatalogCsvService
                                 'defaultValue' => $productFieldMap[$fieldKey]['defaultValue'] ?? null,
                                 'isRequired' => (bool) ($productFieldMap[$fieldKey]['isRequired'] ?? false),
                                 'sortOrder' => $desiredOrder,
-                            ]);
+                            ], syncMedia: false);
                             $productFieldMap[$fieldKey] = $field;
                             $fieldSortSynchronized[$seriesId][$fieldKey] = true;
                         }
@@ -491,30 +740,49 @@ final class CatalogCsvService
                 $productLabel = trim((string) ($row[$columns['product_name']] ?? ''));
                 $this->assertCsvValue($productLabel !== '', 'product_name', $lineNumber);
 
+                $description = isset($columns['product_description'])
+                    ? trim((string) ($row[$columns['product_description']] ?? '')) : '';
                 $productId = $this->upsertProduct(
                     $seriesId,
                     $productLabel,
                     $productLabel,
-                    null,
+                    $description === '' ? null : $description,
                     $customValues,
-                    $productFieldMap
+                    $productFieldMap,
+                    $importMode === 'upsert'
                 );
 
+                foreach (CatalogCsvProductColumns::definitions() as $fileColumn => $productField) {
+                    if (!isset($columns[$fileColumn])) {
+                        continue;
+                    }
+                    $mediaId = trim((string) ($row[$columns[$fileColumn]] ?? ''));
+                    if ($mediaId === '') {
+                        continue;
+                    }
+                    $mediaId = $this->resolveCsvMediaPath($mediaId, $fileColumn, $lineNumber, $mediaPathIds);
+                    $this->saveCsvProductAsset($seriesId, $productId, $productField, $mediaId);
+                }
                 $touchedProducts[$productId] = true;
                 $touchedSeries[$seriesId] = true;
             }
 
             fclose($handle);
 
-            $this->pruneMissingRecords(
-                $existingProducts,
-                $existingSeries,
-                $existingCategories,
-                $touchedProducts,
-                $touchedSeries,
-                $touchedCategories
-            );
+            $updatedSeriesMetadata = $this->saveCsvSeriesOptions($seriesOptions);
+            $updatedCategoryContent = $this->saveCsvCategoryOptions($categoryOptions);
+            if ($importMode === 'snapshot') {
+                $this->pruneMissingRecords(
+                    $existingProducts,
+                    $existingSeries,
+                    $existingCategories,
+                    $touchedProducts,
+                    $touchedSeries,
+                    $touchedCategories
+                );
+            }
 
+            // Field saves defer relationship reconciliation until the entire CSV is applied.
             \CatalogSuite\Support\MediaRuntime::sync($this->connection);
             $this->connection->commit();
         } catch (Throwable $exception) {
@@ -529,7 +797,162 @@ final class CatalogCsvService
             'importedProducts' => count($touchedProducts),
             'createdSeries' => $createdSeries,
             'createdCategories' => $createdCategories,
+            'importMode' => $importMode ?? 'upsert',
+            'updatedSeriesMetadata' => $updatedSeriesMetadata,
+            'updatedCategoryContent' => $updatedCategoryContent,
         ];
+    }
+
+    /** @param array<string, string> $mediaPathIds */
+    private function resolveCsvMediaPath(string $value, string $column, int $lineNumber, array &$mediaPathIds): string
+    {
+        $path = str_replace('\\', '/', $value);
+        $prefix = 'storage/media/';
+        if (!str_starts_with($path, $prefix)) {
+            return $value;
+        }
+
+        try {
+            MediaAccess::requirePermission('attach');
+            $relativePath = MediaStorageRegistry::cleanRelative(substr($path, strlen($prefix)));
+            if (isset($mediaPathIds[$relativePath])) {
+                return $mediaPathIds[$relativePath];
+            }
+            $storage = new MediaStorageRegistry();
+            $storage->absolute('catalog_media', $relativePath);
+            $repository = MediaRuntime::repository($this->connection);
+            $asset = $repository->at('catalog_media', $relativePath);
+            if ($asset === null) {
+                $identity = MediaAccess::requirePermission('index');
+                $asset = (new MediaIndexService($repository, $storage))->register(
+                    'catalog_media', $relativePath, 'legacy', null, (string) $identity['actor']
+                );
+            }
+            return $mediaPathIds[$relativePath] = (string) $asset['id'];
+        } catch (CatalogApiException $error) {
+            throw new CatalogApiException(
+                $error->getErrorCode(),
+                sprintf('Invalid %s on CSV row %d. %s', $column, $lineNumber, $error->getMessage()),
+                $error->getStatusCode(),
+                $error->getDetails() + ['row' => $lineNumber, 'column' => $column]
+            );
+        }
+    }
+
+    private function saveCsvCategoryOptions(array $options): int
+    {
+        $updated = 0;
+        $definitions = CatalogCsvCategoryColumns::definitions();
+        $stmt = $this->connection->prepare(
+            'INSERT INTO category_content (category_id, field_key, value)
+             VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)'
+        );
+        foreach ($options as $categoryId => $fields) {
+            foreach ($fields as $key => $value) {
+                if ($definitions[$key][1] === 'image') {
+                    $asset = MediaRuntime::repository($this->connection)->asset($value);
+                    if (!str_starts_with((string) ($asset['mime_type'] ?? ''), 'image/')) {
+                        throw new CatalogApiException(
+                            'MEDIA_TYPE_INCOMPATIBLE', $key . ' must reference an image.', 422
+                        );
+                    }
+                    // Validate integrity and permissions; persist UUID so export can round-trip.
+                    MediaRuntime::selection($this->connection, ['mediaId' => $value], true);
+                }
+                $stmt->bind_param('iss', $categoryId, $key, $value);
+                $stmt->execute();
+                $updated++;
+            }
+        }
+        $stmt->close();
+        return $updated;
+    }
+
+    private function saveCsvProductAsset(int $seriesId, int $productId, array $field, string $mediaId): void
+    {
+        [$key, $label, $mediaType] = $field;
+        if (preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $mediaId) !== 1) {
+            throw new CatalogApiException('MEDIA_ID_INVALID', $key . ' requires a Media Library UUID or storage/media/ path.', 422);
+        }
+        $asset = MediaRuntime::repository($this->connection)->asset($mediaId);
+        $mime = (string) ($asset['mime_type'] ?? '');
+        if (!(($mediaType === 'image' && str_starts_with($mime, 'image/'))
+            || ($mediaType === 'pdf' && $mime === 'application/pdf'))) {
+            throw new CatalogApiException('MEDIA_TYPE_INCOMPATIBLE', $key . ' requires a ' . $mediaType, 422);
+        }
+        $fields = $this->buildSeriesFieldMap($seriesId, SeriesFieldService::SCOPE_PRODUCT);
+        if (!isset($fields[$key])) {
+            $fields[$key] = $this->seriesFieldService->saveField([
+                'seriesId' => $seriesId,
+                'fieldKey' => $key,
+                'label' => $label,
+                'fieldType' => 'file',
+                'fieldScope' => SeriesFieldService::SCOPE_PRODUCT,
+                'sortOrder' => count($fields),
+            ], syncMedia: false);
+        } elseif ($fields[$key]['fieldType'] !== 'file') {
+            throw new CatalogApiException('FIELD_TYPE_INVALID', $key . ' must be a file field', 422);
+        }
+        $relativePath = MediaRuntime::selection(
+            $this->connection, ['mediaId' => $mediaId], $mediaType === 'image'
+        );
+        $this->repository->mergeProductCustomValues(
+            $productId, [$key => $relativePath], [$key => $fields[$key]]
+        );
+    }
+
+    private function saveCsvSeriesOptions(array $seriesOptions): int
+    {
+        if ($seriesOptions === []) {
+            return 0;
+        }
+        $values = new SeriesAttributeRepository($this->connection);
+        $updated = 0;
+        $mapping = CatalogCsvSeriesColumns::definitions();
+        foreach ($seriesOptions as $seriesId => $options) {
+            $existing = $this->buildSeriesFieldMap((int) $seriesId, SeriesFieldService::SCOPE_SERIES);
+            foreach ($options as $column => $raw) {
+                [$key, $label, $type] = $mapping[$column];
+                if (isset($existing[$key]) && $existing[$key]['fieldType'] !== $type) {
+                    throw new CatalogApiException('FIELD_TYPE_INVALID', 'Existing Series field ' . $key . ' must be ' . $type, 422);
+                }
+                if (!isset($existing[$key])) {
+                    $existing[$key] = $this->seriesFieldService->saveField([
+                        'seriesId' => (int) $seriesId,
+                        'fieldKey' => $key,
+                        'label' => $label,
+                        'fieldType' => $type,
+                        'fieldScope' => SeriesFieldService::SCOPE_SERIES,
+                        'sortOrder' => count($existing),
+                    ], syncMedia: false);
+                }
+                $value = $raw;
+                if ($type === 'file') {
+                    $expectedMime = $mapping[$column][3] ?? '';
+                    $asset = MediaRuntime::repository($this->connection)->asset($raw);
+                    $mime = (string) ($asset['mime_type'] ?? '');
+                    $valid = match ($expectedMime) {
+                        'image' => str_starts_with($mime, 'image/'),
+                        'pdf' => $mime === 'application/pdf',
+                        'glb' => $mime === 'model/gltf-binary',
+                        default => false,
+                    };
+                    if (!$valid) {
+                        throw new CatalogApiException(
+                            'MEDIA_TYPE_INCOMPATIBLE',
+                            $column . ' requires a ' . $expectedMime . ' asset.',
+                            422
+                        );
+                    }
+                    $value = MediaRuntime::selection(
+                        $this->connection, ['mediaId' => $raw], $expectedMime === 'image'
+                    );
+                }
+                $values->upsertValue((int) $seriesId, (int) $existing[$key]['id'], $value);
+                $updated++;
+            }
+        }
+        return $updated;
     }
 
     private function deriveCustomFieldLabel(string $fieldKey): string
@@ -592,7 +1015,7 @@ final class CatalogCsvService
     private function upsertSeries(
         ?int $parentId,
         string $name,
-        int $displayOrder,
+        ?int $displayOrder,
         array &$cache,
         array &$touchedSeries,
         int &$createdSeries
@@ -609,11 +1032,11 @@ final class CatalogCsvService
 
         if ($row) {
             $seriesId = (int) $row['id'];
-            if ((int) $row['display_order'] !== $displayOrder) {
+            if ($displayOrder !== null && (int) $row['display_order'] !== $displayOrder) {
                 $this->repository->updateSeriesDisplayOrder($seriesId, $displayOrder);
             }
         } else {
-            $seriesId = $this->repository->insertSeries($parentId, $normalizedName, $displayOrder);
+            $seriesId = $this->repository->insertSeries($parentId, $normalizedName, $displayOrder ?? 0);
             $createdSeries++;
         }
 
@@ -632,7 +1055,8 @@ final class CatalogCsvService
         string $name,
         ?string $description,
         array $customValues,
-        array $seriesFieldMap
+        array $seriesFieldMap,
+        bool $mergeValues = false
     ): int {
         $row = $this->repository->findProductBySku($seriesId, $sku);
 
@@ -643,7 +1067,11 @@ final class CatalogCsvService
             $productId = $this->repository->insertProduct($seriesId, $sku, $name, $description);
         }
 
-        $this->replaceProductCustomValues($productId, $seriesId, $customValues, $seriesFieldMap);
+        if ($mergeValues) {
+            $this->repository->mergeProductCustomValues($productId, $customValues, $seriesFieldMap);
+        } else {
+            $this->replaceProductCustomValues($productId, $seriesId, $customValues, $seriesFieldMap);
+        }
 
         return $productId;
     }
@@ -773,6 +1201,63 @@ final class CatalogCsvService
     /**
      * @return array<int, array<string, mixed>>
      */
+    /**
+     * Historical legacy file paths are not the same as Media Library UUIDs.
+     * Export textual metadata safely; media ID columns stay blank until mapped.
+     */
+    private function fetchCategoryContentForExport(): array
+    {
+        $rows = $this->connection->query('SELECT category_id,field_key,value FROM category_content');
+        $result = [];
+        while ($row = $rows->fetch_assoc()) {
+            $result[(int) $row['category_id']][(string) $row['field_key']] = $row['value'];
+        }
+        $rows->free();
+        return $result;
+    }
+
+    private function fetchSeriesMetadataForExport(): array
+    {
+        $result = $this->connection->query(
+            "SELECT v.series_id, f.field_key, COALESCE(v.value, f.default_value) AS value
+             FROM series_custom_field_value v
+             JOIN series_custom_field f ON f.id = v.series_custom_field_id
+             WHERE f.field_scope = 'series_metadata'"
+        );
+        $map = [];
+        while ($row = $result->fetch_assoc()) {
+            $map[(int) $row['series_id']][(string) $row['field_key']] = $row['value'] ?? '';
+        }
+        $result->free();
+        return $map;
+    }
+
+    /** Return a media UUID only when the stored reference resolves to a ready catalog asset. */
+    private function resolveExportMediaUuid(?\CatalogSuite\Repositories\MediaRepository $repository, string $value, string $expectedType): string
+    {
+        if ($repository === null || $value === '') {
+            return '';
+        }
+        try {
+            $asset = preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $value) === 1
+                ? $repository->asset($value)
+                : $repository->byAlias($value);
+        } catch (Throwable) {
+            return '';
+        }
+        if ($asset === null || ($asset['status'] ?? '') !== 'ready' || ($asset['visibility'] ?? '') !== 'public_catalog') {
+            return '';
+        }
+        $mime = (string) ($asset['mime_type'] ?? '');
+        $matches = match ($expectedType) {
+            'image' => str_starts_with($mime, 'image/'),
+            'pdf' => $mime === 'application/pdf',
+            'glb' => $mime === 'model/gltf-binary',
+            default => false,
+        };
+        return $matches ? (string) ($asset['id'] ?? '') : '';
+    }
+
     private function fetchAllCategories(): array
     {
         $categories = [];

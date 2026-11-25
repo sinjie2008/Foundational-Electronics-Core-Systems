@@ -53,7 +53,7 @@ final class SeriesFieldService
      *
      * @return array<string, mixed>
      */
-    public function saveField(array $payload): array
+    public function saveField(array $payload, bool $syncMedia = true): array
     {
         \CatalogSuite\Http\MediaAccess::guardLegacyWrite($this->connection);
         $fieldId = isset($payload['id']) ? (int) $payload['id'] : null;
@@ -144,7 +144,9 @@ final class SeriesFieldService
             );
         }
 
-        \CatalogSuite\Support\MediaRuntime::sync($this->connection);
+        if ($syncMedia) {
+            \CatalogSuite\Support\MediaRuntime::sync($this->connection);
+        }
         $fields = $this->listFields($seriesId, $targetScope);
         $field = null;
         foreach ($fields as $item) {

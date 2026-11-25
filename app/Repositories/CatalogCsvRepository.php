@@ -6,12 +6,22 @@ namespace CatalogSuite\Repositories;
 use CatalogSuite\Support\Config;
 
 use mysqli;
+use mysqli_stmt;
 
 /**
  * Reads and persists catalog data used by CSV import and export workflows.
  */
 final class CatalogCsvRepository
 {
+    private const PRODUCT_VALUE_BATCH_SIZE = 16;
+    private ?int $productValueBatchBytes = null;
+    private ?mysqli_stmt $productLookup = null;
+    private ?mysqli_stmt $productInsert = null;
+    private ?mysqli_stmt $productRename = null;
+    private ?mysqli_stmt $productUpdate = null;
+    /** @var array<int, mysqli_stmt> */
+    private array $productValueUpserts = [];
+
     public function __construct(private mysqli $connection)
     {
     }
@@ -104,14 +114,14 @@ final class CatalogCsvRepository
      */
     public function findProductBySku(int $seriesId, string $sku): ?array
     {
-        $select = $this->connection->prepare(
+        $select = $this->productLookup ??= $this->connection->prepare(
             'SELECT id FROM product WHERE series_id = ? AND sku = ? LIMIT 1'
         );
         $select->bind_param('is', $seriesId, $sku);
         $select->execute();
         $result = $select->get_result();
         $row = $result->fetch_assoc();
-        $select->close();
+        $result->free();
 
         return $row;
     }
@@ -121,12 +131,17 @@ final class CatalogCsvRepository
      */
     public function updateProductFromImport(string $name, ?string $description, int $productId): void
     {
-        $update = $this->connection->prepare(
-            'UPDATE product SET name = ?, description = ? WHERE id = ?'
-        );
-        $update->bind_param('ssi', $name, $description, $productId);
+        // A CSV without a non-empty description must never erase existing copy.
+        if ($description === null) {
+            $update = $this->productRename ??= $this->connection->prepare('UPDATE product SET name = ? WHERE id = ?');
+            $update->bind_param('si', $name, $productId);
+        } else {
+            $update = $this->productUpdate ??= $this->connection->prepare(
+                'UPDATE product SET name = ?, description = ? WHERE id = ?'
+            );
+            $update->bind_param('ssi', $name, $description, $productId);
+        }
         $update->execute();
-        $update->close();
     }
 
     /**
@@ -134,15 +149,12 @@ final class CatalogCsvRepository
      */
     public function insertProduct(int $seriesId, string $sku, string $name, ?string $description): int
     {
-        $insert = $this->connection->prepare(
+        $insert = $this->productInsert ??= $this->connection->prepare(
             'INSERT INTO product (series_id, sku, name, description) VALUES (?, ?, ?, ?)'
         );
         $insert->bind_param('isss', $seriesId, $sku, $name, $description);
         $insert->execute();
-        $productId = (int) $insert->insert_id;
-        $insert->close();
-
-        return $productId;
+        return (int) $insert->insert_id;
     }
 
     /**
@@ -182,6 +194,52 @@ final class CatalogCsvRepository
             $insert->execute();
         }
         $insert->close();
+    }
+
+    /**
+     * Non-destructive CSV upsert: omitted/empty attributes retain their current values.
+     */
+    public function mergeProductCustomValues(int $productId, array $customValues, array $seriesFieldMap): void
+    {
+        $maxBytes = $this->productValueBatchBytes ??= max(
+            0,
+            (int) $this->connection->query('SELECT @@max_allowed_packet')->fetch_row()[0] - 1024
+        );
+        $parameters = [];
+        $bytes = 0;
+        foreach ($customValues as $fieldKey => $value) {
+            $value = trim((string) $value);
+            if ($value === '' || !isset($seriesFieldMap[$fieldKey])) {
+                continue;
+            }
+            // Allow for the two IDs and parameter metadata when bounding the packet.
+            $valueBytes = strlen($value) + 64;
+            if ($parameters !== [] && (count($parameters) === self::PRODUCT_VALUE_BATCH_SIZE * 3
+                || $bytes + $valueBytes > $maxBytes)) {
+                $this->upsertProductValueBatch($parameters);
+                $parameters = [];
+                $bytes = 0;
+            }
+            array_push($parameters, $productId, (int) $seriesFieldMap[$fieldKey]['id'], $value);
+            $bytes += $valueBytes;
+        }
+        if ($parameters !== []) {
+            $this->upsertProductValueBatch($parameters);
+        }
+    }
+
+    /** @param list<int|string> $parameters */
+    private function upsertProductValueBatch(array $parameters): void
+    {
+        $count = intdiv(count($parameters), 3);
+        if (!isset($this->productValueUpserts[$count])) {
+            $placeholders = implode(', ', array_fill(0, $count, '(?, ?, ?)'));
+            $this->productValueUpserts[$count] = $this->connection->prepare(
+                'INSERT INTO product_custom_field_value (product_id, series_custom_field_id, value)
+                 VALUES ' . $placeholders . ' ON DUPLICATE KEY UPDATE value = VALUES(value)'
+            );
+        }
+        $this->productValueUpserts[$count]->execute($parameters);
     }
 
     /**

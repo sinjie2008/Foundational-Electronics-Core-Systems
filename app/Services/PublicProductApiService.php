@@ -4,6 +4,8 @@ declare(strict_types=1);
 namespace CatalogSuite\Services;
 
 use CatalogSuite\Http\CatalogApiException;
+use CatalogSuite\Repositories\MediaRepository;
+use CatalogSuite\Support\MediaSchema;
 use mysqli;
 
 /** Read-only adapter over the existing Product Catalog Manager tables. */
@@ -12,6 +14,8 @@ final class PublicProductApiService
     private ?array $nodes = null;
     private array $paths = [];
     private array $children = [];
+    private ?bool $mediaInstalled = null;
+    private array $mediaUrls = [];
 
     public function __construct(private mysqli $db) {}
 
@@ -59,13 +63,19 @@ final class PublicProductApiService
             if ($x['type'] === 'series') $x['partCount'] = $this->countParts($id);
             $items[] = $x;
         }
-        return ['resource'=>$this->pub($n),'breadcrumb'=>$this->breadcrumb((int)$n['id']),'children'=>$items];
+        $content = $this->categoryContent((int) $n['id']);
+        $imageFields = array_filter(CatalogCsvCategoryColumns::definitions(), static fn (array $field): bool => $field[1] === 'image');
+        return ['resource'=>$this->pub($n),'breadcrumb'=>$this->breadcrumb((int)$n['id']),'children'=>$items,
+            'content'=>$content,'media'=>$this->publicMedia(array_intersect_key($content, $imageFields), true)];
     }
 
     public function series(string $path): array
     {
         $n = $this->seriesNode($path); $id = (int)$n['id'];
-        return ['resource'=>$this->pub($n),'breadcrumb'=>$this->breadcrumb($id),'metadata'=>$this->metadata($id),'fields'=>$this->fieldsById($id),'partCount'=>$this->countParts($id)];
+        $metadata = $this->metadata($id);
+        $fileFields = array_filter($metadata, static fn (array $field): bool => $field['type'] === 'file');
+        return ['resource'=>$this->pub($n),'breadcrumb'=>$this->breadcrumb($id),'metadata'=>$metadata,'fields'=>$this->fieldsById($id),
+            'partCount'=>$this->countParts($id),'media'=>$this->publicMedia(array_column($fileFields, 'value', 'key'))];
     }
 
     public function fields(string $path): array { return $this->fieldsById((int)$this->seriesNode($path)['id']); }
@@ -92,7 +102,16 @@ final class PublicProductApiService
         if (!in_array($dir,['asc','desc'],true)) throw new CatalogApiException('INVALID_QUERY','direction must be asc or desc.',422);
         usort($rows, function($a,$b) use($sort,$dir) { $av=$a[$sort]??$a['values'][$sort]??''; $bv=$b[$sort]??$b['values'][$sort]??''; $c=strnatcasecmp((string)$av,(string)$bv); if(!$c)$c=$a['id']<=>$b['id']; return $dir==='desc'?-$c:$c; });
         $page = max(1,(int)($q['page']??1)); $per = max(1,min(100,(int)($q['per_page']??25))); $total=count($rows); $last=max(1,(int)ceil($total/$per)); $page=min($page,$last); $off=($page-1)*$per;
-        return ['series'=>$this->pub($n),'fields'=>$fields,'parts'=>array_slice($rows,$off,$per),'pagination'=>['page'=>$page,'per_page'=>$per,'total'=>$total,'last_page'=>$last]];
+        $fileFields = array_filter($map, static fn (array $field): bool => $field['type'] === 'file');
+        $parts = array_slice($rows, $off, $per);
+        foreach ($parts as &$part) {
+            $media = $this->publicMedia(array_intersect_key($part['values'], $fileFields));
+            if ($media !== []) {
+                $part['media'] = $media;
+            }
+        }
+        unset($part);
+        return ['series'=>$this->pub($n),'fields'=>$fields,'parts'=>$parts,'pagination'=>['page'=>$page,'per_page'=>$per,'total'=>$total,'last_page'=>$last]];
     }
 
     public function facets(string $path): array
@@ -142,6 +161,61 @@ final class PublicProductApiService
 
     private function treeNode(int $id): array {$n=$this->pub($this->nodes[$id]);$n['children']=[];foreach($this->children[$id]??[]as$c)$n['children'][]=$this->treeNode($c);if($n['type']==='series')$n['partCount']=$this->countParts($id);return$n;}
     private function node(string $path): array {$this->load();$path=trim(rawurldecode($path),'/');if($path===''||str_contains($path,'..'))throw new CatalogApiException('INVALID_PATH','A valid catalog path is required.',422);$id=$this->paths[$path]??null;if(!$id)throw new CatalogApiException('NOT_FOUND','Public catalog path not found.',404,['path'=>$path]);return$this->nodes[$id];}
+    private function categoryContent(int $id): array
+    {
+        // Existing installations may not yet have run the additive schema setup.
+        $table = $this->db->query("SHOW TABLES LIKE 'category_content'");
+        $installed = $table->num_rows > 0;
+        $table->free();
+        if (!$installed) return [];
+
+        $stmt = $this->db->prepare('SELECT field_key,value FROM category_content WHERE category_id=?');
+        $stmt->bind_param('i', $id);
+        $stmt->execute();
+        $rows = $stmt->get_result();
+        $content = [];
+        $allowed = CatalogCsvCategoryColumns::definitions();
+        while ($row = $rows->fetch_assoc()) {
+            $key = (string) $row['field_key'];
+            if (isset($allowed[$key])) {
+                $content[$key] = $row['value'];
+            }
+        }
+        $stmt->close();
+        return $content;
+    }
+
+    /** @return array<string, string> */
+    private function publicMedia(array $values, bool $byId = false): array
+    {
+        $media = [];
+        foreach ($values as $key => $raw) {
+            $value = trim((string) $raw);
+            if ($value === '') {
+                continue;
+            }
+            $this->mediaInstalled ??= MediaSchema::isInstalled($this->db);
+            if (!$this->mediaInstalled) {
+                return [];
+            }
+            $lookup = ($byId ? 'id:' : 'path:') . $value;
+            if (!array_key_exists($lookup, $this->mediaUrls)) {
+                $repository = new MediaRepository($this->db);
+                $asset = $byId
+                    ? $repository->one('SELECT * FROM media_asset WHERE id = ?', [$value])
+                    : $repository->byAlias($value);
+                $this->mediaUrls[$lookup] = $asset !== null && $asset['visibility'] === 'public_catalog'
+                    && in_array($asset['status'], ['ready', 'trashed'], true)
+                    ? '/api/media/public.php?path=' . rawurlencode('__library__/' . $asset['id'] . '/' . $asset['stored_filename'])
+                    : null;
+            }
+            if ($this->mediaUrls[$lookup] !== null) {
+                $media[$key] = $this->mediaUrls[$lookup];
+            }
+        }
+        return $media;
+    }
+
     private function seriesNode(string $path): array {$n=$this->node($path);if($n['type']!=='series')throw new CatalogApiException('SERIES_NOT_FOUND','Public series not found.',404);return$n;}
     private function pub(array $n): array {return ['id'=>(int)$n['id'],'parentId'=>$n['parent_id']===null?null:(int)$n['parent_id'],'name'=>$n['name'],'type'=>$n['type'],'slug'=>$n['slug'],'path'=>$n['path'],'displayOrder'=>(int)$n['display_order']];}
     private function breadcrumb(int $id): array {$this->load();$o=[];$seen=[];while(isset($this->nodes[$id])&&!isset($seen[$id])){$seen[$id]=1;array_unshift($o,$this->pub($this->nodes[$id]));$p=$this->nodes[$id]['parent_id'];if($p===null)break;$id=(int)$p;}return$o;}

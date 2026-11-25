@@ -212,14 +212,14 @@ export class MediaLibraryPage {
             const physicalLocation = asset.absolutePath || asset.storageLocation;
             content.innerHTML = '<div class="media-preview">Preview unavailable</div><h2>' + e(asset.filename) + '</h2><dl>' +
                 '<dt>Type</dt><dd>' + e(asset.mimeType) + '</dd><dt>Size</dt><dd>' + e(formatSize(asset.sizeBytes)) + ' (' + asset.sizeBytes + ' bytes)</dd>' +
-                '<dt>Uploaded</dt><dd>' + e(asset.uploadedAt || 'Unknown — discovered existing file') + '</dd><dt>Physical storage location</dt><dd>' + e(physicalLocation) + '</dd>' +
+                '<dt>Uploaded</dt><dd>' + e(asset.uploadedAt || 'Unknown — discovered existing file') + '</dd><dt>Media ID (CSV)</dt><dd><code>' + e(asset.id) + '</code></dd><dt>Physical storage location</dt><dd>' + e(physicalLocation) + '</dd>' +
                 '<dt>Source</dt><dd>' + e(asset.sourceKind) + '</dd><dt>Catalog references</dt><dd>' + asset.referenceCount + ' (' + asset.confirmedReferenceCount + ' confirmed)</dd></dl>' +
-                '<div class="media-details-actions"><button class="btn btn-sm btn-outline-secondary" data-copy="path">Copy path</button><button class="btn btn-sm btn-outline-secondary" data-copy="url">Copy media URL</button><button class="btn btn-sm btn-primary" data-download>Download</button></div>' +
+                '<div class="media-details-actions"><button class="btn btn-sm btn-outline-primary" data-copy="id">Copy media ID (CSV)</button><button class="btn btn-sm btn-outline-secondary" data-copy="path">Copy path</button><button class="btn btn-sm btn-outline-secondary" data-copy="url">Copy media URL</button><button class="btn btn-sm btn-primary" data-download>Download</button></div>' +
                 '<div class="media-details-actions"><button class="btn btn-sm btn-outline-danger" data-trash ' + (asset.referenceCount || !this.can('trash') ? 'disabled' : '') + '>' + (asset.status === 'trashed' ? 'Restore file' : 'Move to Trash') + '</button></div><h2>Where it is used</h2><div class="media-usages"></div>';
             content.querySelector('[data-download]').disabled = !['ready','unsupported'].includes(asset.status);
             content.querySelector('[data-download]').addEventListener('click', () => MediaApi.download(asset).catch((error) => this.message(error.message, true)));
             content.querySelectorAll('[data-copy]').forEach((button) => button.addEventListener('click', async () => {
-                try { await navigator.clipboard.writeText(button.dataset.copy === 'path' ? physicalLocation : new URL(asset.publicUrl || asset.downloadUrl, window.location.href).href); this.message('Copied.'); }
+                try { await navigator.clipboard.writeText(button.dataset.copy === 'id' ? asset.id : (button.dataset.copy === 'path' ? physicalLocation : new URL(asset.publicUrl || asset.downloadUrl, window.location.href).href)); this.message('Copied.'); }
                 catch { this.message('Copy is unavailable in this browser. Select and copy the text instead.', true); }
             }));
             content.querySelector('[data-trash]').addEventListener('click', async () => {

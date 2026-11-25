@@ -20,16 +20,18 @@ The read-only path API queries the existing catalog tables directly. It requires
 | `GET /api/health` | Database connectivity and read-only status. |
 | `GET /api/tree` | Recursive categories and series, including series part counts. |
 | `GET /api/resolve/{path}` | Resource and breadcrumb for a category or series path. |
-| `GET /api/categories/{path}` | Category resource, breadcrumb and immediate children. |
-| `GET /api/series/{path}` | Series resource, breadcrumb, public metadata, fields and part count. |
+| `GET /api/categories/{path}` | Category resource, breadcrumb, immediate children, CSV-backed `content` and public image URLs in `media`. |
+| `GET /api/series/{path}` | Series resource, breadcrumb, public metadata, fields, part count and registered public file URLs in `media`. |
 | `GET /api/series/{path}/fields` | Public product field definitions. |
-| `GET /api/series/{path}/parts` | Parts, public custom values, fields and pagination. |
+| `GET /api/series/{path}/parts` | Parts, public custom values, fields and pagination. Parts with registered public file values include a `media` map. |
 | `GET /api/series/{path}/facets` | Value counts for public product fields. |
 | `GET /api/search?q={keyword}` | Matching category/series names and product SKU, name or description. |
 
 Use the `path` returned by the tree or resolve response. Paths follow the category hierarchy and current names; duplicate sibling names receive ID suffixes that avoid other sibling slugs. Renaming or reparenting nodes can change their paths. The parts route is `/parts`; there is no separate public `/products` route.
 
 Parts accept `search`, `filter[fieldKey]` (one value or an array of alternatives), `sort` (`id`, `sku`, `name` or a public field key), `direction` (`asc` or `desc`), `page` and `per_page` (1–100, default 25). Field filters match values case-insensitively. Public-hidden fields and metadata are excluded. Other HTTP methods return 405.
+
+Category media URLs use the CSV image column as their key. Series and part media URLs use the existing metadata or part field key. Each URL targets the registered public-alias route `/api/media/public.php`.
 
 The development router and Apache `api/.htaccess` rules expose these routes for both supported standalone document roots while retaining existing file endpoints. Apache requires `mod_rewrite` and permission to use these rules; Nginx needs equivalent routing. The optional Laravel bridge continues to mount its existing file/action endpoints; mounting this path API in a Laravel host requires equivalent host routing.
 
@@ -39,7 +41,7 @@ The development router and Apache `api/.htaccess` rules expose these routes for 
 |---|---|
 | `/api/catalog/hierarchy.php` | Category, series and product tree; Typst enablement flag retained. |
 | `/api/catalog/search.php` | Query `q`; flat category/product matches. |
-| `/api/catalog/csv-import.php` | Multipart `file`; success HTTP 202. |
+| `/api/catalog/csv-import.php` | Multipart `file`. Media columns accept a Media Library UUID or an existing `storage/media/` path. Success HTTP 202. |
 | `/api/catalog/csv-export.php` | Export catalog and return stored file metadata. |
 | `/api/catalog/csv-download.php` | Query `id`; streams stored CSV. |
 | `/api/catalog/csv-history.php` | Stored CSV history and truncate state. |
@@ -50,6 +52,8 @@ The development router and Apache `api/.htaccess` rules expose these routes for 
 | `/api/spec-search/product-categories.php` | Query `root_id`; returns `data.groups`. |
 | `/api/spec-search/facets.php` | JSON `category_ids`; returns `data.facets`. |
 | `/api/spec-search/products.php` | JSON `category_ids`, `filters`; returns `data.items` and `data.total`; maximum 500 products. |
+
+Product items include `spq` as a string when the Series has a stored `series_spq_per_reel` value. The `pdfDownload` URL uses the Series datasheet when a locally generated Typst PDF is unavailable.
 | `/api/series/details.php` | GET query `id`; series details. |
 | `/api/typst/templates.php` | GET query `id`/`seriesId`; POST/PUT JSON `title`, `description`, `typst`, optional `seriesId`, `lastPdfPath`; PUT also `id`; DELETE query `id`. |
 | `/api/typst/variables.php` | GET query `id`/`seriesId`; POST creates or updates with `key`, `type`, `value`, optional `id`, `seriesId`; supports multipart file uploads; DELETE query `id`, optional `seriesId`. |

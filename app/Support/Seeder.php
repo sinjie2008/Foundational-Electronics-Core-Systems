@@ -34,6 +34,16 @@ final class Seeder
                 CONSTRAINT fk_category_parent FOREIGN KEY (parent_id) REFERENCES category(id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             SQL,
+            <<<SQL
+            CREATE TABLE IF NOT EXISTS category_content (
+                category_id INT NOT NULL,
+                field_key VARCHAR(64) NOT NULL,
+                value TEXT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (category_id, field_key),
+                CONSTRAINT fk_category_content_owner FOREIGN KEY (category_id) REFERENCES category(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            SQL,
                         <<<SQL
             CREATE TABLE IF NOT EXISTS product (
                 id INT AUTO_INCREMENT PRIMARY KEY,

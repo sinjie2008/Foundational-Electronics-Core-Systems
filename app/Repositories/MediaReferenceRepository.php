@@ -39,6 +39,25 @@ final class MediaReferenceRepository
              FROM product_custom_field_value v JOIN series_custom_field f ON f.id=v.series_custom_field_id WHERE f.field_type='file' AND COALESCE(v.value,'')<>''",
             "SELECT 'field_default' AS owner_type,series_id AS owner_id,id AS field_id,field_scope,default_value AS value FROM series_custom_field WHERE field_type='file' AND COALESCE(default_value,'')<>''",
         ];
+        // Category-level hero/banner/icon media are first-class references.
+        if ($this->has('category_content')) {
+            $queries[] = "SELECT 'category_content' AS owner_type,
+                c.category_id AS owner_id,
+                CASE c.field_key
+                    WHEN 'category_hero_image_media_id' THEN 1
+                    WHEN 'category_banner_image_media_id' THEN 2
+                    WHEN 'category_icon_image_media_id' THEN 3
+                    ELSE 0 END AS field_id,
+                'category_content' AS field_scope,
+                CONCAT('__library__/', a.id, '/', a.stored_filename) AS value
+                FROM category_content c
+                JOIN media_asset a ON a.id=c.value
+                WHERE c.field_key IN (
+                    'category_hero_image_media_id',
+                    'category_banner_image_media_id',
+                    'category_icon_image_media_id'
+                )";
+        }
         foreach (['typst_variables' => 'typst_variable', 'latex_variables' => 'latex_variable'] as $table => $type) {
             if ($this->hasColumn($table, 'field_value')) {
                 $queries[] = "SELECT '$type' AS owner_type,id AS owner_id,id AS field_id,'image' AS field_scope,field_value AS value FROM $table WHERE field_type IN ('image','file') AND COALESCE(field_value,'')<>''";

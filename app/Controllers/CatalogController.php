@@ -108,7 +108,8 @@ final class CatalogController
                 $this->bootstrap();
             }
             $data = $this->dispatch($action, $method);
-            if ($isWrite) {
+            // CSV import and restore already synchronize relationships inside their transaction.
+            if ($isWrite && !in_array($action, ['v1.importCsv', 'v1.restoreCsv'], true)) {
                 \CatalogSuite\Support\MediaRuntime::sync($this->connection);
             }
             if ($data === self::RESPONSE_STREAMED) {

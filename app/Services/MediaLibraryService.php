@@ -85,7 +85,7 @@ final class MediaLibraryService
                 }
             }
             $ownerPredicate = "(
-                (r.owner_type IN ('series','field_default') AND r.owner_id IN ($ids))
+                (r.owner_type IN ('series','field_default','category_content') AND r.owner_id IN ($ids))
                 OR (r.owner_type='product' AND r.owner_id IN (SELECT id FROM product WHERE series_id IN ($ids)))
                 $typst)";
             $where[] = "(EXISTS (SELECT 1 FROM media_relationship r WHERE r.asset_id=a.id AND $ownerPredicate)
@@ -188,7 +188,7 @@ final class MediaLibraryService
                 $node = $product['series_id'] ?? null;
                 $row['productSku'] = $product['sku'] ?? null;
                 $row['productId'] = $product === null ? null : (int) $product['id'];
-            } elseif (in_array($row['owner_type'], ['series','field_default'], true)) {
+            } elseif (in_array($row['owner_type'], ['series','field_default','category_content'], true)) {
                 $node = $row['owner_id'];
             } elseif ($row['owner_type'] === 'typst_variable') {
                 $variable = $this->repository->one('SELECT id,field_key,series_id FROM typst_variables WHERE id=?', [$row['owner_id']]);
@@ -202,6 +202,9 @@ final class MediaLibraryService
             }
             if (in_array($row['owner_type'], ['series','product','field_default'], true)) {
                 $row['field'] = $this->repository->one('SELECT id,field_key,label FROM series_custom_field WHERE id=?', [$row['field_id']]);
+            } elseif ($row['owner_type'] === 'category_content') {
+                $labels = [1 => 'Hero Image', 2 => 'Category Banner', 3 => 'Category Icon'];
+                $row['field'] = ['id' => (int)$row['field_id'], 'field_key' => 'category_image', 'label' => $labels[(int)$row['field_id']] ?? 'Category Image'];
             }
             if ($row['owner_type'] === 'field_default') {
                 if ($row['field_scope'] === 'product_attribute') {
