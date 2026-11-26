@@ -27,7 +27,7 @@ final class PublicProductApiController
                 $route==='tree' => $api->tree(),
                 $route==='search' => $api->search((string)($_GET['q']??'')),
                 str_starts_with($route,'resolve/') => $api->resolve(substr($route,8)),
-                str_starts_with($route,'categories/') => $api->category(substr($route,11)),
+                str_starts_with($route,'categories/') => $this->category($api, substr($route, 11)),
                 str_starts_with($route,'series/') => $this->series($api,substr($route,7)),
                 default => throw new CatalogApiException('NOT_FOUND','API route not found.',404),
             };
@@ -40,10 +40,29 @@ final class PublicProductApiController
         }
     }
 
+    private function category(PublicProductApiService $api, string $path): array
+    {
+        if (!str_ends_with($path, '/summaries')) {
+            return $api->category($path);
+        }
+        // Preserve a canonical category path which happens to end in "summaries".
+        try {
+            return $api->category($path);
+        } catch (CatalogApiException $error) {
+            if ($error->getStatusCode() !== 404) {
+                throw $error;
+            }
+        }
+        return $api->categorySummaries(substr($path, 0, -strlen('/summaries')), $_GET);
+    }
+
     private function series(PublicProductApiService $api,string $path): mixed
     {
         $path=trim($path,'/');
         try { return $api->series($path); } catch (CatalogApiException $e) { if($e->getStatusCode()!==404)throw $e; }
+        if (str_ends_with($path, '/summary')) {
+            return $api->seriesSummary(substr($path, 0, -strlen('/summary')));
+        }
         foreach(['fields','parts','facets'] as $sub){$suffix='/'.$sub;if(str_ends_with($path,$suffix)){$p=substr($path,0,-strlen($suffix));return match($sub){'fields'=>$api->fields($p),'parts'=>$api->parts($p,$_GET),'facets'=>$api->facets($p)};}}
         throw new CatalogApiException('SERIES_NOT_FOUND','Public series not found.',404);
     }

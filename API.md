@@ -26,6 +26,8 @@ The read-only path API queries the existing catalog tables directly. It requires
 | `GET /api/series/{path}/parts` | Parts, public custom values, fields and pagination. Parts with registered public file values include a `media` map. |
 | `GET /api/series/{path}/facets` | Value counts for public product fields. |
 | `GET /api/search?q={keyword}` | Matching category/series names and product SKU, name or description. |
+| `GET /api/series/{path}/summary` | Part count, engineering summaries and public media for one Series. |
+| `GET /api/categories/{path}/summaries` | The same summaries for a category and its descendants, grouped by direct parent category. |
 
 Use the `path` returned by the tree or resolve response. Paths follow the category hierarchy and current names; duplicate sibling names receive ID suffixes that avoid other sibling slugs. Renaming or reparenting nodes can change their paths. The parts route is `/parts`; there is no separate public `/products` route.
 
@@ -33,7 +35,128 @@ Parts accept `search`, `filter[fieldKey]` (one value or an array of alternatives
 
 Category media URLs use the CSV image column as their key. Series and part media URLs use the existing metadata or part field key. Each URL targets the registered public-alias route `/api/media/public.php`.
 
+Series responses add `mediaDetails`, keyed by file field and containing `{filename,mimeType}` only when the public alias is registered and its readable file bytes match a supported image, PDF or GLB type. Valid raster image details also include their actual `width` and `height`. Parts responses add the same `mediaDetails` map to each part with validated files. Existing `media` URL maps and product values are unchanged; invalid or missing files are omitted from `mediaDetails`. File entries in Series `facets` include `validPdfCount`, the full-Series number of products whose registered alias for that field validates as a readable PDF. This count is independent of the current parts page. Media validation is local and read-only; it does not make HTTP requests to public URLs.
+
 The development router and Apache `api/.htaccess` rules expose these routes for both supported standalone document roots while retaining existing file endpoints. Apache requires `mod_rewrite` and permission to use these rules; Nginx needs equivalent routing. The optional Laravel bridge continues to mount its existing file/action endpoints; mounting this path API in a Laravel host requires equivalent host routing.
+
+### Series summaries
+
+Request one Series using its canonical tree path, for example
+`GET /api/series/general-products/emc-components/chip-array-ferrite-bead/a4k-series/summary`.
+Request a family using the canonical category path, for example
+`GET /api/categories/general-products/emc-components/summaries`.
+Both requests use the Public Product API response and error envelopes described above.
+
+The single endpoint returns a summary row in `data`. The category endpoint returns
+`data.category`, `data.groups` and `data.pagination`. Each group has the direct parent
+`category`, semantic `columns`, and `series` containing summary rows. A row's `series`
+includes `id`, `parentId`, `parentPath`, `type`, `path`, `slug`, `name` and
+`displayOrder`. Use the ID to associate rows and the current path for navigation.
+Groups follow category tree order, and rows follow their Series display order
+with the same name and ID tie breaks as the catalog tree.
+
+Category pagination is over Series rows across groups. The default and maximum
+`per_page` is 300. Optional `page` defaults to 1. Both must be positive integers.
+Values above the maximum page size or last page are clamped. Read `page`,
+`per_page`, `total`, and `last_page` from `pagination`. When a group spans pages,
+merge it by category ID or path and merge its rows by Series ID. Its column
+metadata describes the whole group. An empty category returns an empty
+`groups` list with `total: 0`.
+
+`columns` entries have a semantic `key`, `label`, `type` and, where applicable,
+`unit`. They describe columns for a compact family table. Additional applicable
+specifications are in each row's `specifications` map. A table consumer can map
+`series` to the Series name and `partCount`, `dimensions` to `dimensions.display`,
+each technical field key to its `display`, and `media.series_product_image` and
+`media.series_product_spec` to the corresponding image and download.
+
+#### Aggregation and availability
+
+- `partCount` counts every Product row assigned to the Series, as in Tree and Parts.
+- Dimensions list separate `length`, `width` and `height` ranges with display text in
+  millimetres. A variable dimension displays component-wise ranges. The endpoints
+  of different axes can come from different parts.
+- Numeric fields return `min`, `max`, `unit`, `display` and `status`. Categorical values
+  such as Qi Standard have a distinct value list and display text. Consumers can
+  render the provided display strings directly.
+- Summary fields derive from supported engineering definitions and public data in
+  the direct category group. Public, stored or effectively defaulted values and
+  required definitions are evidence of applicability. Imported optional blank
+  definitions alone do not establish applicability.
+- The importer can store engineering values as text. The summary recognises finite
+  decimals and scientific notation, retains zero, and excludes unrecognised or
+  incompatible values from numeric bounds. The public definition's default only
+  applies when the product value row is absent. An explicit blank or null row stays
+  missing. Hidden fields and private metadata stay outside the response.
+- Canonical display units include mm for dimensions, Ω for impedance and DCR,
+  mA for current, µH for inductance, W for power, and dB for insertion loss.
+  Bare values in `acf.dcr` follow the original catalog's mΩ import convention.
+  FECS divides those values by 1,000 to produce Ω. The legacy
+  `acf.dcr_typ` values use mixed units, so the summary requires an explicit
+  unit in the value or field label when interpreting Typical DCR.
+- The imported `acf.irms` field is shared by source sheets with different current
+  definitions. The summary keeps it separate from saturation current (`acf.isat`)
+  and uses a specific current label where the source semantics are established.
+- `available` means valid data contributes to the summary. `missing` means the
+  field applies but no value is present. `not_applicable` means the field has no
+  applicable public definition. `invalid` means supplied values were unusable
+  and no valid value contributes. `invalidCount` records rejected values,
+  including when valid values still contribute to a range. A specification
+  outside the group's supported field set is omitted.
+
+#### Media and downloads
+
+`media` uses the existing `series_product_image` and `series_product_spec`
+keys with a public alias URL or `null`. `mediaStatus` reports `available`,
+`missing` or `invalid` for each key. `mediaDetails` provides available image alt
+text or a safe PDF filename. The specification is the mapped Series datasheet.
+Product-level PDFs and generated product documents continue to come from their
+existing APIs.
+
+Use the aliased URLs with the public Media Library route. If the API base is
+`https://catalog.example.com/fecs/api/`, resolve an alias beginning `/api/` by
+appending the part after `/api/` to that base. With a same-origin proxy like
+Superworld's, the returned `/api/media/public.php?path=…` URL works directly.
+Fetch the PDF through that URL. Media delivery supports HEAD and checks public
+visibility and eligibility before serving the asset. Superworld uses a same-origin
+download link with the provided filename.
+
+Summary paths share the existing `GET`-only routing. Existing canonical paths
+take precedence over a suffix match. Unknown paths return 404, invalid paths
+or pagination inputs return 422, and other HTTP methods return 405. The endpoints
+read the live Catalog and Media Library on each request with `Cache-Control: no-store`.
+Part and media updates are visible without an aggregate refresh job.
+
+For example, this is an excerpt from the local A4K summary response. The series
+also appears in the same shape under the Chip Array Ferrite Bead group in the
+General EMC batch.
+
+```json
+{
+  "series": {
+    "id": 160,
+    "name": "A4K SERIES",
+    "slug": "a4k-series",
+    "path": "general-products/emc-components/chip-array-ferrite-bead/a4k-series",
+    "parentId": 159,
+    "parentPath": "general-products/emc-components/chip-array-ferrite-bead",
+    "displayOrder": 0
+  },
+  "partCount": 6,
+  "dimensions": { "display": "3.2 × 1.6 × 0.9 mm", "unit": "mm", "status": "available" },
+  "specifications": {
+    "acf.impedance": { "min": 30, "max": 1000, "unit": "Ω", "display": "30–1000 Ω", "status": "available" },
+    "acf.dcr": { "min": 0.2, "max": 0.75, "unit": "Ω", "display": "0.2–0.75 Ω", "status": "available" },
+    "acf.irms": { "label": "Rated Current", "min": 150, "max": 500, "unit": "mA", "display": "150–500 mA", "status": "available" }
+  },
+  "media": {
+    "series_product_image": "/api/media/public.php?path=__library__%2Fd45fa1e8-9475-4ec7-be13-3bad09c74831%2FA4K.jpg",
+    "series_product_spec": "/api/media/public.php?path=__library__%2F721059d1-630f-413c-b68d-4b2f6979401b%2FA4K-SERIES.pdf"
+  },
+  "mediaStatus": { "series_product_image": "available", "series_product_spec": "available" },
+  "mediaDetails": { "series_product_image": { "filename": "A4K.jpg" }, "series_product_spec": { "filename": "A4K-SERIES.pdf" } }
+}
+```
 
 ## File endpoints
 

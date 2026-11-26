@@ -4,8 +4,7 @@ declare(strict_types=1);
 namespace CatalogSuite\Services;
 
 use CatalogSuite\Http\CatalogApiException;
-use CatalogSuite\Repositories\MediaRepository;
-use CatalogSuite\Support\MediaSchema;
+use CatalogSuite\Repositories\ProductSeriesSummaryRepository;
 use mysqli;
 
 /** Read-only adapter over the existing Product Catalog Manager tables. */
@@ -14,8 +13,8 @@ final class PublicProductApiService
     private ?array $nodes = null;
     private array $paths = [];
     private array $children = [];
-    private ?bool $mediaInstalled = null;
-    private array $mediaUrls = [];
+    private array $partCounts = [];
+    private ?PublicCatalogMediaResolver $mediaResolver = null;
 
     public function __construct(private mysqli $db) {}
 
@@ -28,8 +27,8 @@ final class PublicProductApiService
             'requiresMigration' => false,
             'requiresImport' => false,
             'requiresManualSync' => false,
-            'endpointCount' => 10,
-            'endpoints' => ['/api/','/api/health','/api/tree','/api/resolve/{path}','/api/categories/{path}','/api/series/{path}','/api/series/{path}/fields','/api/series/{path}/parts','/api/series/{path}/facets','/api/search?q={keyword}'],
+            'endpointCount' => 12,
+            'endpoints' => ['/api/','/api/health','/api/tree','/api/resolve/{path}','/api/categories/{path}','/api/series/{path}','/api/series/{path}/fields','/api/series/{path}/parts','/api/series/{path}/facets','/api/search?q={keyword}', '/api/series/{path}/summary', '/api/categories/{path}/summaries'],
             'tree' => $this->tree(),
         ];
     }
@@ -43,6 +42,7 @@ final class PublicProductApiService
     public function tree(): array
     {
         $this->load(); $out = [];
+        $this->loadPartCounts($this->seriesIds(array_keys($this->nodes)));
         foreach ($this->children[0] ?? [] as $id) $out[] = $this->treeNode($id);
         return $out;
     }
@@ -58,7 +58,9 @@ final class PublicProductApiService
         $n = $this->node($path);
         if ($n['type'] !== 'category') throw new CatalogApiException('CATEGORY_NOT_FOUND','Public category not found.',404);
         $items = [];
-        foreach ($this->children[(int)$n['id']] ?? [] as $id) {
+        $childIds = $this->children[(int)$n['id']] ?? [];
+        $this->loadPartCounts($this->seriesIds($childIds));
+        foreach ($childIds as $id) {
             $x = $this->pub($this->nodes[$id]);
             if ($x['type'] === 'series') $x['partCount'] = $this->countParts($id);
             $items[] = $x;
@@ -74,8 +76,95 @@ final class PublicProductApiService
         $n = $this->seriesNode($path); $id = (int)$n['id'];
         $metadata = $this->metadata($id);
         $fileFields = array_filter($metadata, static fn (array $field): bool => $field['type'] === 'file');
+        $mediaDetails = $this->mediaResolver()->registeredMediaDetails(array_column($fileFields, 'value', 'key'));
         return ['resource'=>$this->pub($n),'breadcrumb'=>$this->breadcrumb($id),'metadata'=>$metadata,'fields'=>$this->fieldsById($id),
-            'partCount'=>$this->countParts($id),'media'=>$this->publicMedia(array_column($fileFields, 'value', 'key'))];
+            'partCount'=>$this->countParts($id),'media'=>$this->publicMedia(array_column($fileFields, 'value', 'key')),
+            'mediaDetails'=>$mediaDetails];
+    }
+
+    public function seriesSummary(string $path): array
+    {
+        $node = $this->seriesNode($path);
+        $parent = $this->nodes[$node['parent_id']] ?? null;
+        $group = $parent === null
+            ? ['category' => null, 'series' => [$this->pub($node)]]
+            : $this->summaryGroup($parent);
+        return $this->summarize([$group], [$node['id']])[0]['series'][0];
+    }
+
+    public function categorySummaries(string $path, array $query): array
+    {
+        $node = $this->node($path);
+        if ($node['type'] !== 'category') {
+            throw new CatalogApiException('CATEGORY_NOT_FOUND', 'Public category not found.', 404);
+        }
+        $perPage = min(300, $this->positiveInteger($query, 'per_page', 300));
+        $groups = $this->summaryGroups($node);
+        $ids = [];
+        foreach ($groups as $group) {
+            array_push($ids, ...array_column($group['series'], 'id'));
+        }
+        $total = count($ids);
+        $lastPage = max(1, (int)ceil($total / $perPage));
+        $page = min($lastPage, $this->positiveInteger($query, 'page', 1));
+        $selected = array_slice($ids, ($page - 1) * $perPage, $perPage);
+        return [
+            'category' => $this->pub($node),
+            'groups' => $selected === [] ? [] : $this->summarize($groups, $selected),
+            'pagination' => ['page' => $page, 'per_page' => $perPage, 'total' => $total, 'last_page' => $lastPage],
+        ];
+    }
+
+    private function positiveInteger(array $query, string $key, int $default): int
+    {
+        if (!array_key_exists($key, $query)) {
+            return $default;
+        }
+        $value = $query[$key];
+        if ((!is_int($value) && !is_string($value)) || !ctype_digit((string)$value) || (int)$value < 1) {
+            throw new CatalogApiException('INVALID_QUERY', "$key must be a positive integer.", 422, ['field' => $key]);
+        }
+        return (int)$value;
+    }
+
+    private function summaryGroups(array $category): array
+    {
+        $group = $this->summaryGroup($category);
+        $groups = $group['series'] === [] ? [] : [$group];
+        foreach ($this->children[$category['id']] ?? [] as $childId) {
+            if ($this->nodes[$childId]['type'] === 'category') {
+                array_push($groups, ...$this->summaryGroups($this->nodes[$childId]));
+            }
+        }
+        return $groups;
+    }
+
+    private function summaryGroup(array $category): array
+    {
+        $ids = $this->seriesIds($this->children[$category['id']] ?? []);
+        return [
+            'category' => $this->pub($category),
+            'series' => array_map(fn(int $id): array => $this->pub($this->nodes[$id]), $ids),
+        ];
+    }
+
+    private function summarize(array $groups, array $seriesIds): array
+    {
+        $selected = array_fill_keys($seriesIds, true);
+        $groups = array_values(array_filter(
+            $groups,
+            static fn (array $group): bool => array_intersect_key(array_column($group['series'], 'id', 'id'), $selected) !== []
+        ));
+        $summaries = (new ProductSeriesSummaryService($this->db))->summarize($groups, $seriesIds);
+        $media = $this->mediaResolver()->seriesSummaries($seriesIds);
+        foreach ($summaries as &$group) {
+            foreach ($group['series'] as &$series) {
+                $series += $media[$series['series']['id']];
+            }
+            unset($series);
+        }
+        unset($group);
+        return $summaries;
     }
 
     public function fields(string $path): array { return $this->fieldsById((int)$this->seriesNode($path)['id']); }
@@ -104,10 +193,15 @@ final class PublicProductApiService
         $page = max(1,(int)($q['page']??1)); $per = max(1,min(100,(int)($q['per_page']??25))); $total=count($rows); $last=max(1,(int)ceil($total/$per)); $page=min($page,$last); $off=($page-1)*$per;
         $fileFields = array_filter($map, static fn (array $field): bool => $field['type'] === 'file');
         $parts = array_slice($rows, $off, $per);
+        $mediaDetails = $this->mediaResolver()->productMediaDetails($parts, array_keys($fileFields))['details'];
         foreach ($parts as &$part) {
             $media = $this->publicMedia(array_intersect_key($part['values'], $fileFields));
             if ($media !== []) {
                 $part['media'] = $media;
+            }
+            $details = $mediaDetails[$part['id']] ?? [];
+            if ($details !== []) {
+                $part['mediaDetails'] = $details;
             }
         }
         unset($part);
@@ -117,7 +211,14 @@ final class PublicProductApiService
     public function facets(string $path): array
     {
         $n=$this->seriesNode($path); $fields=$this->fieldsById((int)$n['id']); $map=[]; foreach($fields as $f)$map[$f['key']]=$f; $rows=$this->partRows((int)$n['id'],$map); $out=[];
-        foreach($fields as $f){$c=[];foreach($rows as $r){$v=$r['values'][$f['key']]??null;if($v===null||$v==='')continue;$c[(string)$v]=($c[(string)$v]??0)+1;}ksort($c,SORT_NATURAL|SORT_FLAG_CASE);$vals=[];foreach($c as $v=>$count)$vals[]=['value'=>$v,'count'=>$count];$out[]=['key'=>$f['key'],'label'=>$f['label'],'type'=>$f['type'],'values'=>$vals];}
+        $fileKeys = array_values(array_map(
+            static fn (array $field): string => (string) $field['key'],
+            array_filter($fields, static fn (array $field): bool => $field['type'] === 'file')
+        ));
+        $validPdfCounts = $fileKeys === []
+            ? []
+            : $this->mediaResolver()->productMediaDetails($rows, $fileKeys)['validPdfCounts'];
+        foreach($fields as $f){$c=[];foreach($rows as $r){$v=$r['values'][$f['key']]??null;if($v===null||$v==='')continue;$c[(string)$v]=($c[(string)$v]??0)+1;}ksort($c,SORT_NATURAL|SORT_FLAG_CASE);$vals=[];foreach($c as $v=>$count)$vals[]=['value'=>$v,'count'=>$count];$facet=['key'=>$f['key'],'label'=>$f['label'],'type'=>$f['type'],'values'=>$vals];if($f['type']==='file')$facet['validPdfCount']=$validPdfCounts[$f['key']]??0;$out[]=$facet;}
         return ['series'=>$this->pub($n),'totalParts'=>count($rows),'facets'=>$out];
     }
 
@@ -188,38 +289,36 @@ final class PublicProductApiService
     /** @return array<string, string> */
     private function publicMedia(array $values, bool $byId = false): array
     {
-        $media = [];
-        foreach ($values as $key => $raw) {
-            $value = trim((string) $raw);
-            if ($value === '') {
-                continue;
-            }
-            $this->mediaInstalled ??= MediaSchema::isInstalled($this->db);
-            if (!$this->mediaInstalled) {
-                return [];
-            }
-            $lookup = ($byId ? 'id:' : 'path:') . $value;
-            if (!array_key_exists($lookup, $this->mediaUrls)) {
-                $repository = new MediaRepository($this->db);
-                $asset = $byId
-                    ? $repository->one('SELECT * FROM media_asset WHERE id = ?', [$value])
-                    : $repository->byAlias($value);
-                $this->mediaUrls[$lookup] = $asset !== null && $asset['visibility'] === 'public_catalog'
-                    && in_array($asset['status'], ['ready', 'trashed'], true)
-                    ? '/api/media/public.php?path=' . rawurlencode('__library__/' . $asset['id'] . '/' . $asset['stored_filename'])
-                    : null;
-            }
-            if ($this->mediaUrls[$lookup] !== null) {
-                $media[$key] = $this->mediaUrls[$lookup];
-            }
-        }
-        return $media;
+        return $this->mediaResolver()->legacyUrls($values, $byId);
+    }
+
+    private function mediaResolver(): PublicCatalogMediaResolver
+    {
+        return $this->mediaResolver ??= new PublicCatalogMediaResolver($this->db);
     }
 
     private function seriesNode(string $path): array {$n=$this->node($path);if($n['type']!=='series')throw new CatalogApiException('SERIES_NOT_FOUND','Public series not found.',404);return$n;}
     private function pub(array $n): array {return ['id'=>(int)$n['id'],'parentId'=>$n['parent_id']===null?null:(int)$n['parent_id'],'name'=>$n['name'],'type'=>$n['type'],'slug'=>$n['slug'],'path'=>$n['path'],'displayOrder'=>(int)$n['display_order']];}
     private function breadcrumb(int $id): array {$this->load();$o=[];$seen=[];while(isset($this->nodes[$id])&&!isset($seen[$id])){$seen[$id]=1;array_unshift($o,$this->pub($this->nodes[$id]));$p=$this->nodes[$id]['parent_id'];if($p===null)break;$id=(int)$p;}return$o;}
-    private function countParts(int $sid): int {$s=$this->db->prepare('SELECT COUNT(1) FROM product WHERE series_id=?');$s->bind_param('i',$sid);$s->execute();$c=(int)($s->get_result()->fetch_row()[0]??0);$s->close();return$c;}
+    private function seriesIds(array $ids): array
+    {
+        return array_values(array_filter($ids, fn(int $id): bool => $this->nodes[$id]['type'] === 'series'));
+    }
+
+    private function loadPartCounts(array $seriesIds): void
+    {
+        $requested = array_diff_key(array_fill_keys($seriesIds, 0), $this->partCounts);
+        if ($requested !== []) {
+            $counts = (new ProductSeriesSummaryRepository($this->db))->partCounts(array_keys($requested));
+            $this->partCounts += $counts + $requested;
+        }
+    }
+
+    private function countParts(int $sid): int
+    {
+        $this->loadPartCounts([$sid]);
+        return $this->partCounts[$sid];
+    }
 
     private function fieldsById(int $sid): array
     {
