@@ -8,6 +8,7 @@ use CatalogSuite\Services\SpecSearchService;
 use CatalogSuite\Support\Logger;
 use CatalogSuite\Http\Request;
 use CatalogSuite\Http\Response;
+use InvalidArgumentException;
 use Throwable;
 
 /**
@@ -79,6 +80,24 @@ final class SpecSearchController
     {
         $this->run('spec-search.products', function (string $correlationId): array {
             $payload = Request::json();
+            if (array_key_exists('pagination', $payload)) {
+                try {
+                    $request = $this->readProductPageRequest($payload);
+                } catch (InvalidArgumentException $error) {
+                    Response::error('validation_error', $error->getMessage(), 400, $correlationId);
+                    return ['status' => 400, 'errorCode' => 'validation_error'];
+                }
+
+                $result = $this->newService()->getProductPage(
+                    $request['root_id'],
+                    $request['category_ids'],
+                    $request['filters'],
+                    $request['options']
+                );
+                Response::success($result, 200, $correlationId);
+                return ['itemCount' => count($result['items'])];
+            }
+
             $categoryIds = isset($payload['category_ids']) && is_array($payload['category_ids'])
                 ? $payload['category_ids']
                 : [];
@@ -90,6 +109,75 @@ final class SpecSearchController
             Response::success(['items' => $products, 'total' => count($products)], 200, $correlationId);
             return ['itemCount' => count($products)];
         });
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function readProductPageRequest(array $payload): array
+    {
+        $pagination = $payload['pagination'];
+        if (!is_array($pagination)) {
+            throw new InvalidArgumentException('pagination must contain page and per_page.');
+        }
+        $page = $pagination['page'] ?? null;
+        $perPage = $pagination['per_page'] ?? null;
+        if (!is_int($page) || $page < 1 || !is_int($perPage) || $perPage < 1 || $perPage > 100) {
+            throw new InvalidArgumentException('page must be a positive integer and per_page must be between 1 and 100.');
+        }
+
+        $rootId = $payload['root_id'] ?? null;
+        if ($rootId !== null && (!is_int($rootId) || $rootId < 1)) {
+            throw new InvalidArgumentException('root_id must be a positive integer or null.');
+        }
+
+        $search = $payload['search'] ?? '';
+        $key = $payload['sort_key'] ?? null;
+        $direction = $payload['sort_direction'] ?? 'asc';
+        if (!is_string($search) || ($key !== null && (!is_string($key) || $key === '')) || !in_array($direction, ['asc', 'desc'], true)) {
+            throw new InvalidArgumentException('search and sort_key must be strings and sort_direction must be asc or desc.');
+        }
+
+        $filters = $payload['filters'] ?? [];
+        if (!is_array($filters)) {
+            throw new InvalidArgumentException('filters must map specification keys to lists of strings.');
+        }
+        foreach ($filters as $field => $values) {
+            if (!is_string($field) || $field === '' || !is_array($values) || !array_is_list($values)) {
+                throw new InvalidArgumentException('filters must map specification keys to lists of strings.');
+            }
+            foreach ($values as $value) {
+                if (!is_string($value)) {
+                    throw new InvalidArgumentException('filters must map specification keys to lists of strings.');
+                }
+            }
+        }
+
+        return [
+            'root_id' => $rootId,
+            'category_ids' => $this->readPositiveIds($payload['category_ids'] ?? [], 'category_ids'),
+            'filters' => $filters,
+            'options' => [
+                'page' => $page,
+                'per_page' => $perPage,
+                'search' => trim($search),
+                'sort_key' => $key,
+                'sort_direction' => $direction,
+                'inquiry_ids' => $this->readPositiveIds($payload['inquiry_ids'] ?? [], 'inquiry_ids'),
+            ],
+        ];
+    }
+
+    /** @return list<int> */
+    private function readPositiveIds(mixed $ids, string $field): array
+    {
+        if (!is_array($ids) || !array_is_list($ids)) {
+            throw new InvalidArgumentException($field . ' must be a list of positive integers.');
+        }
+        foreach ($ids as $id) {
+            if (!is_int($id) || $id < 1) {
+                throw new InvalidArgumentException($field . ' must be a list of positive integers.');
+            }
+        }
+        return array_values(array_unique($ids));
     }
 
     /**
@@ -131,7 +219,7 @@ final class SpecSearchController
         if (is_array($successContext)) {
             $context = array_merge($context, $successContext);
         }
-        Logger::info('request_success', $context, $correlationId);
+        Logger::info($context['status'] < 400 ? 'request_success' : 'request_failed', $context, $correlationId);
     }
 
     /** Create or resolve the service only when an endpoint needs it. */

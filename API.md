@@ -174,9 +174,7 @@ General EMC batch.
 | `/api/spec-search/root-categories.php` | Returns `data.categories`. |
 | `/api/spec-search/product-categories.php` | Query `root_id`; returns `data.groups`. |
 | `/api/spec-search/facets.php` | JSON `category_ids`; returns `data.facets`. |
-| `/api/spec-search/products.php` | JSON `category_ids`, `filters`; returns `data.items` and `data.total`; maximum 500 products. |
-
-Product items include `spq` as a string when the Series has a stored `series_spq_per_reel` value. The `pdfDownload` URL uses the Series datasheet when a locally generated Typst PDF is unavailable.
+| `/api/spec-search/products.php` | JSON `category_ids`, `filters`; accepts `pagination` to page the eligible catalogue. |
 | `/api/series/details.php` | GET query `id`; series details. |
 | `/api/typst/templates.php` | GET query `id`/`seriesId`; POST/PUT JSON `title`, `description`, `typst`, optional `seriesId`, `lastPdfPath`; PUT also `id`; DELETE query `id`. |
 | `/api/typst/variables.php` | GET query `id`/`seriesId`; POST creates or updates with `key`, `type`, `value`, optional `id`, `seriesId`; supports multipart file uploads; DELETE query `id`, optional `seriesId`. |
@@ -186,7 +184,30 @@ Product items include `spq` as a string when the Series has a stored `series_spq
 | `/api/latex/variables.php` | GET globals; POST/PUT JSON `key`, `type`, `value`, optional `id`; DELETE query `id`. |
 | `/api/latex/compile.php` | POST JSON `latex`, `series_id`; returns PDF `url`, `path`. |
 
-Spec search keeps `seriesImage` and `pdfDownload`. The PDF source is the latest series Typst PDF when Typst is enabled, otherwise the `series_product_spec` metadata file.
+### Specification Search products
+
+Include `pagination` to query the complete catalogue exposed by the Specification Search category picker. The existing `/api/spec-search/products/` route accepts the same request.
+
+```json
+{
+  "root_id": null,
+  "category_ids": [],
+  "filters": {},
+  "pagination": { "page": 1, "per_page": 10 },
+  "search": "",
+  "sort_key": null,
+  "sort_direction": "asc"
+}
+```
+
+- Omit `root_id` or use `null` to cover every eligible root. An empty or omitted `category_ids` covers all product categories in that scope. A nonempty list is intersected with the eligible scope.
+- `filters` maps field keys (including `series`) to lists of exact values. Values within a field are alternatives. Different fields are combined.
+- `search` matches literal text case-insensitively across SKUs, product names, Series names, category names and displayed specification values. `sort_key` accepts a product table field key. The default order and sort tie-breaker are product ID ascending.
+- `page` is one-based. `per_page` accepts 1–100. `data.pagination` reports the returned page and page size. Requests beyond the last page return the last page, or page 1 when empty. `data.total` is the full matching count and `data.items` contains the current page.
+- `data.column_keys` contains product attribute keys in the category and specification-filter scope, independent of text search. Optional `inquiry_ids` requests matching `{id, sku}` pairs in `data.inquiry_items` within that same scope.
+- Requests without `pagination` retain the legacy `data.items` and `data.total` contract with the existing 500-row cap and explicit category selection.
+
+Product items keep `seriesImage` and `pdfDownload`. They include `spq` as a string when the Series has a stored `series_spq_per_reel` value. The PDF URL uses the latest available Typst PDF for an enabled Series and otherwise uses its `series_product_spec` datasheet.
 
 ## Legacy catalog actions
 

@@ -186,15 +186,48 @@ final class SpecSearchService
      */
     public function getProducts(array $categoryIds, array $filters): array
     {
-        if (empty($categoryIds)) {
-            return [];
-        }
+        return $this->formatProductRows($this->catalog->searchProducts(array_map('intval', $categoryIds), $filters));
+    }
 
-        $catIds = array_map('intval', $categoryIds);
+    /**
+     * Resolve the same leaf categories exposed by the category picker before paging products.
+     *
+     * @param list<int> $categoryIds
+     * @param array<string, list<string>> $filters
+     * @param array{page: int, per_page: int, search: string, sort_key: ?string, sort_direction: string, inquiry_ids: list<int>} $options
+     * @return array{items: list<array<string, mixed>>, total: int, pagination: array{page: int, per_page: int}, column_keys: list<string>, inquiry_items: list<array{id: int, sku: string}>}
+     */
+    public function getProductPage(?int $rootId, array $categoryIds, array $filters, array $options): array
+    {
+        $eligibleIds = [];
+        foreach ($this->getRootCategories() as $root) {
+            if ($rootId !== null && $root['id'] !== $rootId) {
+                continue;
+            }
+            foreach ($this->getProductCategories($root['id']) as $group) {
+                foreach ($group['categories'] as $category) {
+                    $eligibleIds[$category['id']] = true;
+                }
+            }
+        }
+        $scope = $categoryIds === [] ? array_keys($eligibleIds) : array_values(array_intersect($categoryIds, array_keys($eligibleIds)));
+        $result = $this->catalog->searchProductPage($scope, $filters, $options);
+        $result['items'] = $this->formatProductRows($result['items']);
+        return $result;
+    }
+
+    /**
+     * Add the existing attributes, image, and PDF data to the selected rows.
+     *
+     * @param list<array<string, mixed>> $rows
+     * @return list<array<string, mixed>>
+     */
+    private function formatProductRows(array $rows): array
+    {
         $rawProducts = [];
         $productIds = [];
         $seriesIds = [];
-        foreach ($this->catalog->searchProducts($catIds, $filters) as $row) {
+        foreach ($rows as $row) {
             $seriesId = (int) $row['series_id'];
             $rawProducts[$row['id']] = [
                 'id' => (int) $row['id'],
